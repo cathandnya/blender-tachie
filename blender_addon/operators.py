@@ -241,6 +241,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int) -> l
     for s in strips:
         s["tachie_id"] = clip.frames_dir
         s["tachie_text"] = text
+        s["tachie_placed_text"] = text  # 置いたときのテキスト（パネルで編集されたストリップを見分ける）
         s["tachie_character"] = ch.name
         s["tachie_speaker"] = ch.speaker
         s["tachie_folder"] = ch.folder
@@ -257,6 +258,14 @@ def shift_after(sed, frame: int, delta: int, ignore=()) -> None:
         s.frame_start += delta
 
 
+def line_text(strips) -> str:
+    """セリフの今のテキスト。パネルの編集は 3 本のうち 1 本にしか入らないので、置いたときから変わったものを優先する。"""
+    for s in strips:
+        if s.get("tachie_text") != s.get("tachie_placed_text", s.get("tachie_text")):
+            return s["tachie_text"]
+    return strips[0]["tachie_text"]
+
+
 def regenerate(context, clip_id: str, text: str | None = None, preset: str | None = None) -> list:
     """セリフを作り直して同じ位置に置き直す。新しいストリップを返す。"""
     settings = seq_scene(context).tachie
@@ -264,7 +273,7 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     old = line_strips(sed, clip_id)
     if not old:
         raise ValueError("セリフのストリップが見つかりません")
-    text = text if text is not None else old[0]["tachie_text"]
+    text = text if text is not None else line_text(old)
     preset = preset if preset is not None else old[0].get("tachie_expression", "")
     ch = find_character(settings, old[0]["tachie_character"])
     start = min(s.left_handle for s in old)
@@ -363,6 +372,7 @@ def remake_still(context, strip, preset: str | None = None):
     if preset:
         find_expression(ch, preset)
     start, frames = strip.left_handle, strip.right_handle - strip.left_handle
+    character_cache(context, ch, preset)  # 素材が読めないときは消す前に失敗させる
     sed.strips.remove(strip)
     return place_still(context, ch, preset, start, frames)
 
@@ -447,6 +457,7 @@ class TACHIE_OT_add_still(bpy.types.Operator):
                                    "他のストリップがあります")
             return {"CANCELLED"}
         try:
+            character_cache(context, ch, settings.expression)  # 待機を消す前に素材を確かめる
             if sed:
                 remove_idle(sed)
             strip = place_still(context, ch, settings.expression, start, frames)
@@ -477,8 +488,11 @@ class TACHIE_OT_remake_still(bpy.types.Operator):
     def execute(self, context):
         sed = seq_scene(context).sequence_editor
         try:
+            strip = sed.active_strip
+            ch = find_character(seq_scene(context).tachie, strip["tachie_still"])
+            character_cache(context, ch, strip.get("tachie_expression", ""))  # 待機を消す前に素材を確かめる
             remove_idle(sed)
-            strip = remake_still(context, sed.active_strip)
+            strip = remake_still(context, strip)
             if seq_scene(context).tachie.auto_idle:
                 refresh_idle(context)
         except ERRORS as e:
@@ -730,14 +744,19 @@ class TACHIE_OT_reload_character(bpy.types.Operator):
 
     bl_idname = "tachie.reload_character"
     bl_label = "素材を読み直す"
+    bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         _characters.clear()
         _caches.clear()
         load_image.cache_clear()
         shutil.rmtree(output_dir(context) / "cache", ignore_errors=True)
-        # 待機ストリップはキャッシュの画像を直接指しているので作り直す
+        # 待機と手動の立ち絵はキャッシュの画像を直接指しているので作り直す
+        sed = seq_scene(context).sequence_editor
         try:
+            if sed is not None:
+                for s in [s for s in sed.strips if s.get("tachie_still")]:
+                    remake_still(context, s)
             refresh_idle(context)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
@@ -852,8 +871,8 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
             self.report({"ERROR"}, f"{placed + 1} 個目のセリフ（{line.character}: {line.text}）で止まりました: {e}")
         finally:
             wm.progress_end()
-            if placed and settings.auto_idle:
-                refresh_idle(context)
+            if settings.auto_idle:
+                refresh_idle(context)  # 1 本も置けなくても、消した待機を戻す
         if placed and settings.advance:
             scene.frame_current = cursor
         if placed == len(lines):
@@ -913,7 +932,7 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
             return {"FINISHED"}
         # 選択中のセリフはその表情で作り直す
         try:
-            strips = regenerate(context, active_line_id(context), preset=value)
+            strips = regenerate(context, active_line_id(context), sed.active_strip["tachie_text"], preset=value)
             if seq_scene(context).tachie.auto_idle:
                 refresh_idle(context)
         except ERRORS as e:

@@ -30,7 +30,8 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
 
     configs = load_characters(args.characters)
-    lines = parse_script(args.script.read_text(encoding="utf-8"), set(configs))
+    # BOM 付きでも読めるように。表情プリセット名も書き出し前に検査する
+    lines = parse_script(args.script.read_text(encoding="utf-8-sig"), configs)
     started = time.monotonic()
     manifest = render_script(lines, configs, args.output, client=VoicevoxClient(args.url), fps=args.fps,
                              scale=args.scale, idle_seconds=args.idle, progress=print)
