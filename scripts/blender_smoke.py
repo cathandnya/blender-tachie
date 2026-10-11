@@ -5,6 +5,7 @@ TOML への書き出しを確かめ、途中のフレームを PNG に書き出�
 引数: -- <キャラ設定 TOML> <出力フォルダ>
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ out.mkdir(parents=True, exist_ok=True)
 addon_utils.enable("bl_ext.user_default.blender_tachie", default_set=True)
 prefs = bpy.context.preferences.addons["bl_ext.user_default.blender_tachie"].preferences
 prefs.output_dir = str(out / "tachie")
+prefs.voicevox_url = os.environ.get("VOICEVOX_URL", prefs.voicevox_url)
 
 scene = bpy.context.scene
 scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = 1920, 1080, 50
@@ -187,8 +189,40 @@ zunda_images = [x for x in sed.strips if x.type == "IMAGE" and "ずんだもん"
 assert not any(x.use_flip_x for x in zunda_images)
 assert s.characters[0].speaker_name, "話者名が入っていない"
 
+# セリフなしの立ち絵を最後のセリフの後ろに置く → 他のキャラの待機もそこまで伸びる
+stills = lambda: [x for x in sed.strips if x.get("tachie_still")]
+last_end = max(r for _, r, _ in lines().values())
+s.active_character, s.expression, s.still_seconds = 0, "困り", 2.0
+scene.frame_current = last_end
+run(bpy.ops.tachie.add_still)
+(still,) = stills()
+assert (still.left_handle, still.right_handle, still.channel) == (last_end, last_end + 60, zunda.channel)
+assert still["tachie_expression"] == "困り" and not still.use_flip_x
+assert scene.frame_end == still.right_handle - 1
+metan_idle = [(x.left_handle, x.right_handle) for x in sed.strips if x.get("tachie_idle") == "四国めたん"]
+assert max(r for _, r in metan_idle) == still.right_handle, metan_idle
+# セリフに重ねては置けない
+scene.frame_current = list(lines().values())[0][0]
+try:
+    bpy.ops.tachie.add_still()
+    raise AssertionError("重なっているのに置けた")
+except RuntimeError as e:
+    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
+# 伸ばして作り直すと、まばたきが伸ばした長さぶん入る（待機の作り直しでは消えない）
+still.right_handle = still.left_handle + 90
+still["tachie_expression"] = ""
+sed.active_strip = still
+run(bpy.ops.tachie.remake_still)
+(still,) = stills()
+assert still.right_handle - still.left_handle == 90 and len(still.elements) == 90, len(still.elements)
+assert still["tachie_expression"] == ""
+run(bpy.ops.tachie.refresh_idle)
+run(bpy.ops.tachie.regenerate_all, character_only=False)
+assert [(x.left_handle, x.right_handle) for x in stills()] == [(last_end, last_end + 90)]
+s.expression = ""
+
 scene.render.image_settings.file_format = "PNG"
-spans = [(l, r) for l, r, _ in lines().values()]
+spans = [(l, r) for l, r, _ in lines().values()] + [(last_end, last_end + 90)]
 for i, (l, r) in enumerate(spans):
     frame = (l + r) // 2
     scene.frame_set(frame)

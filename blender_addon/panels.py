@@ -57,6 +57,10 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         row.scale_y = 1.4
         row.enabled = ch is not None
         row.operator("tachie.add_line", text=f"{ch.name}のセリフを追加" if ch else "セリフを追加", icon="ADD")
+        row = layout.row(align=True)
+        row.enabled = ch is not None
+        row.operator("tachie.add_still", text="立ち絵だけを置く", icon="IMAGE_DATA")
+        row.prop(s, "still_seconds")
         layout.prop(s, "advance")
         row = layout.row(align=True)
         row.prop(s, "auto_idle")
@@ -73,7 +77,13 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
         layout = self.layout
         sed = seq_scene(context).sequence_editor
         strip = sed.active_strip if sed else None
-        if strip is None or not strip.get("tachie_id"):
+        if strip is not None and strip.get("tachie_still"):
+            layout.label(text=f"{strip['tachie_still']}の立ち絵（セリフなし）", icon="USER")
+            row = layout.row(align=True)
+            row.label(text="表情")
+            row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "STILL"
+            layout.operator("tachie.remake_still", icon="FILE_REFRESH")
+        elif strip is None or not strip.get("tachie_id"):
             layout.label(text="セリフのストリップを選ぶと編集できます")
         else:
             layout.label(text=f"{strip.get('tachie_character', '?')}（話者 {strip.get('tachie_speaker', '?')}）",

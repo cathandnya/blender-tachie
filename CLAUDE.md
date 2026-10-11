@@ -23,8 +23,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   待機ストリップ（`tachie_idle` = キャラ名）は各キャラの立ち絵チャンネルの隙間を、シーン開始から最後のセリフの終わりまで埋める。
   セリフの追加・再生成のたびに全部消して作り直す（重なり判定・ずらしの対象外）。画像は `cache/` の合成画像を
   `elements` で直接並べる（同じファイル名を何度並べてもよい。1.8 万フレームで 1.4 秒）。
+  「立ち絵だけを置く」はセリフなしの立ち絵（まばたきのみ、`tachie_still` = キャラ名、`tachie_expression`）を
+  再生位置に置く。待機の作り直しでは消えず、待機の範囲の終わりにも数える。伸ばしたら「作り直す」で今の長さに合わせる。
 - `scripts/build_addon.py` — Pillow の wheel（cp313 / macOS arm64）を取ってきて `dist/blender_tachie-<ver>.zip` を作る。`--install` で Blender に入れる。
 - `scripts/smoke.sh` + `scripts/blender_smoke.py` — 一時ユーザーフォルダ（`BLENDER_USER_RESOURCES`）に入れて 2 キャラ分置き、フレームを `out/smoke/` に書き出す結合テスト。
+  エンジンが別のマシンなら `VOICEVOX_URL=http://pino.local:50021 scripts/smoke.sh`。
 - `scripts/blender_screenshot.py` — smoke.sh のあとに、Blender を画面ありで起動して 立ち絵パネルとシーケンサーを
   `out/screenshots/sequencer.png` に撮る（`bpy.ops.screen.screenshot`。画面収録の許可は不要）。コマンドはファイル冒頭。
 - `char/` — 手元の立ち絵素材（ずんだもん、四国めたん）。利用規約があるので git 管理外。テストは無ければ skip する。

@@ -290,14 +290,14 @@ def remove_idle(sed) -> None:
 
 
 def refresh_idle(context) -> int:
-    """待機ストリップを作り直す。各キャラの立ち絵チャンネルの隙間を、シーンの開始から最後のセリフの
-    終わりまで、まばたきだけの立ち絵で埋める。置いた本数を返す。"""
+    """待機ストリップを作り直す。各キャラの立ち絵チャンネルの隙間を、シーンの開始から最後のセリフ
+    （か手動の立ち絵）の終わりまで、まばたきだけの立ち絵で埋める。置いた本数を返す。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor
     if sed is None:
         return 0
     remove_idle(sed)
-    line_ends = [s.right_handle for s in sed.strips if s.get("tachie_id")]
+    line_ends = [s.right_handle for s in sed.strips if s.get("tachie_id") or s.get("tachie_still")]
     if not line_ends:
         return 0
     start, end = scene.frame_start, max(line_ends)
@@ -319,16 +319,52 @@ def refresh_idle(context) -> int:
             continue
         cache = character_cache(context, ch)
         for a, b in gaps:
-            paths = idle_frames(cache, b - a, fps, seed=(ch.name, a))
-            strip = sed.strips.new_image(name=f"待機 {ch.name}", filepath=_path_for_blend(paths[0]),
-                                         channel=ch.channel, frame_start=a, fit_method="ORIGINAL")
-            for p in paths[1:]:
-                strip.elements.append(p.name)
-            strip.blend_type = "ALPHA_OVER"
-            apply_placement(strip, ch)
+            strip = _blink_strip(sed, ch, cache, f"待機 {ch.name}", a, b - a, fps)
             strip["tachie_idle"] = ch.name
             count += 1
     return count
+
+
+def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int, fps: float):
+    """まばたきだけの立ち絵（口は閉じ）のストリップを置く。"""
+    paths = idle_frames(cache, frames, fps, seed=(ch.name, start))
+    strip = sed.strips.new_image(name=name, filepath=_path_for_blend(paths[0]),
+                                 channel=ch.channel, frame_start=start, fit_method="ORIGINAL")
+    for p in paths[1:]:
+        strip.elements.append(p.name)
+    strip.blend_type = "ALPHA_OVER"
+    apply_placement(strip, ch)
+    return strip
+
+
+def place_still(context, ch, preset: str, start: int, frames: int):
+    """セリフなしの立ち絵（まばたきのみ）を置く。待機ストリップと違い、作り直しでは消えない。"""
+    scene = seq_scene(context)
+    sed = scene.sequence_editor or scene.sequence_editor_create()
+    if scene.view_settings.view_transform != "Standard":
+        scene.view_settings.view_transform = "Standard"
+    cache = character_cache(context, ch, preset)
+    strip = _blink_strip(sed, ch, cache, f"立ち絵 {ch.name}" + (f"({preset})" if preset else ""),
+                         start, frames, scene_fps(scene))
+    strip["tachie_still"] = ch.name
+    strip["tachie_character"] = ch.name
+    strip["tachie_expression"] = preset or ""
+    if strip.right_handle - 1 > scene.frame_end:
+        scene.frame_end = strip.right_handle - 1
+    return strip
+
+
+def remake_still(context, strip, preset: str | None = None):
+    """手動の立ち絵を今の位置・長さ・キャラクター設定で作り直す。新しいストリップを返す。"""
+    settings = seq_scene(context).tachie
+    sed = seq_scene(context).sequence_editor
+    ch = find_character(settings, strip["tachie_still"])
+    preset = preset if preset is not None else strip.get("tachie_expression", "")
+    if preset:
+        find_expression(ch, preset)
+    start, frames = strip.left_handle, strip.right_handle - strip.left_handle
+    sed.strips.remove(strip)
+    return place_still(context, ch, preset, start, frames)
 
 
 def connect(context, strips) -> None:
@@ -388,6 +424,70 @@ class TACHIE_OT_add_line(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class TACHIE_OT_add_still(bpy.types.Operator):
+    """選択中のキャラクターの立ち絵（まばたきのみ）を、セリフなしで再生位置に置く"""
+
+    bl_idname = "tachie.add_still"
+    bl_label = "立ち絵だけを置く"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scene = seq_scene(context)
+        settings = scene.tachie
+        ch = settings.character()
+        if ch is None:
+            self.report({"ERROR"}, "キャラクターを追加してください")
+            return {"CANCELLED"}
+        ensure_sequencer_scene(context)
+        start = scene.frame_current
+        frames = max(1, round(settings.still_seconds * scene_fps(scene)))
+        sed = scene.sequence_editor
+        if sed and _overlaps(sed, ch.channel, start, start + frames):
+            self.report({"ERROR"}, f"チャンネル {ch.channel} の {start}〜{start + frames} フレームに"
+                                   "他のストリップがあります")
+            return {"CANCELLED"}
+        try:
+            if sed:
+                remove_idle(sed)
+            strip = place_still(context, ch, settings.expression, start, frames)
+            if settings.auto_idle:
+                refresh_idle(context)
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        scene.sequence_editor.active_strip = strip
+        if settings.advance:
+            scene.frame_current = strip.right_handle
+        self.report({"INFO"}, f"{ch.name}の立ち絵を {frames} フレーム置きました")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_remake_still(bpy.types.Operator):
+    """選択中の立ち絵を、今の位置・長さ・キャラクター設定で作り直す（伸ばしたあとなど）"""
+
+    bl_idname = "tachie.remake_still"
+    bl_label = "作り直す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        sed = seq_scene(context).sequence_editor
+        return bool(sed and sed.active_strip and sed.active_strip.get("tachie_still"))
+
+    def execute(self, context):
+        sed = seq_scene(context).sequence_editor
+        try:
+            remove_idle(sed)
+            strip = remake_still(context, sed.active_strip)
+            if seq_scene(context).tachie.auto_idle:
+                refresh_idle(context)
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        sed.active_strip = strip
+        return {"FINISHED"}
+
+
 class TACHIE_OT_regenerate(bpy.types.Operator):
     """選択中のセリフを、今のテキストとキャラクター設定で作り直す"""
 
@@ -436,6 +536,7 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
             cid = s.get("tachie_id")
             if cid and (only is None or s.get("tachie_character") == only):
                 firsts[cid] = min(firsts.get(cid, s.left_handle), s.left_handle)
+        stills = [s for s in sed.strips if s.get("tachie_still") and (only is None or s["tachie_still"] == only)]
         # 後ろから作り直すと、長さが変わってずらしても未処理のセリフの位置を追いかけなくてよい
         count = 0
         wm = context.window_manager
@@ -445,14 +546,18 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
                 connect(context, regenerate(context, cid))
                 count += 1
                 wm.progress_update(count)
+            # 手動の立ち絵はずらし終わった位置で作り直す
+            remove_idle(sed)
+            for s in stills:
+                remake_still(context, s)
         except ERRORS as e:
             self.report({"ERROR"}, f"{count} 件作り直したところで失敗しました: {e}")
             return {"FINISHED"} if count else {"CANCELLED"}
         finally:
             wm.progress_end()
-            if count and settings.auto_idle:
+            if (count or stills) and settings.auto_idle:
                 refresh_idle(context)
-        self.report({"INFO"}, f"{count} 件のセリフを作り直しました")
+        self.report({"INFO"}, f"{count} 件のセリフ" + (f"と {len(stills)} 本の立ち絵" if stills else "") + "を作り直しました")
         return {"FINISHED"}
 
 
@@ -768,12 +873,13 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
     bl_property = "expression"
     bl_options = {"REGISTER", "UNDO"}
 
-    target: bpy.props.EnumProperty(items=[("ADD", "追加するセリフ", ""), ("LINE", "選択中のセリフ", "")])
+    target: bpy.props.EnumProperty(items=[("ADD", "追加するセリフ", ""), ("LINE", "選択中のセリフ", ""),
+                                          ("STILL", "選択中の立ち絵", "")])
     expression: bpy.props.EnumProperty(items=_expressions)
 
     def _character(self, context):
         settings = seq_scene(context).tachie
-        if self.target == "LINE":
+        if self.target in ("LINE", "STILL"):
             sed = seq_scene(context).sequence_editor
             return find_character(settings, sed.active_strip["tachie_character"])
         return settings.character()
@@ -795,6 +901,15 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
         value = "" if self.expression == NONE else self.expression
         if self.target == "ADD":
             seq_scene(context).tachie.expression = value
+            return {"FINISHED"}
+        sed = seq_scene(context).sequence_editor
+        if self.target == "STILL":
+            try:
+                strip = remake_still(context, sed.active_strip, value)
+            except ERRORS as e:
+                self.report({"ERROR"}, str(e))
+                return {"CANCELLED"}
+            sed.active_strip = strip
             return {"FINISHED"}
         # 選択中のセリフはその表情で作り直す
         try:
@@ -867,6 +982,8 @@ class TACHIE_OT_refresh_idle(bpy.types.Operator):
 
 _classes = (
     TACHIE_OT_add_line,
+    TACHIE_OT_add_still,
+    TACHIE_OT_remake_still,
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,
     TACHIE_OT_expression_add,
