@@ -10,7 +10,8 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .properties import PART_PROPS, SLOT_CATEGORIES, apply_placement, apply_subtitle, system_fonts
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
-from .tachie_studio.pipeline.config import dump_characters, parse_characters
+from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
+                                            load_material_table, merge_tables, parse_characters)
 from .tachie_studio.tachie import Expression, load_character
 from .tachie_studio.tachie.compose import load_image
 from .tachie_studio.voicevox import VoicevoxClient, VoicevoxError
@@ -98,7 +99,8 @@ def find_expression(ch, preset: str):
 
 
 def config_of(ch) -> CharacterConfig:
-    base = parse_characters({ch.name: {"folder": "", "speaker": ch.speaker, "parts": _parts_dict(ch)}}, Path("."))
+    base = parse_characters({ch.name: {"folder": "", "speaker": ch.speaker, "parts": _parts_dict(ch)}}, Path("."),
+                            use_material=False)
     return CharacterConfig(
         name=ch.name, folder=Path(bpy.path.abspath(ch.folder)), speaker=ch.speaker,
         expression=base[ch.name].expression, mouth=ch.mouth,
@@ -146,6 +148,57 @@ def apply_config(ch, config: CharacterConfig) -> None:
                       ("subtitle_y", "y")):
         if key in sub:
             setattr(ch, prop, sub[key])
+
+
+# ---- キャラクター追加の初期値 ----
+
+def character_defaults_path() -> Path:
+    """アドオン設定のキャラクターごとの既定値（全 .blend 共通）。キーは素材フォルダ名。"""
+    return Path(bpy.utils.extension_path_user(__package__, create=True)) / "character_defaults.toml"
+
+
+def load_character_defaults() -> dict:
+    """{素材フォルダ名: テーブル}。テーブルでない値（手で書いた誤り）は無視する。"""
+    import tomllib
+
+    path = character_defaults_path()
+    if not path.is_file():
+        return {}
+    with path.open("rb") as f:
+        try:
+            data = tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            raise ValueError(f"{path} を読めません: {e}") from None
+    return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+
+def save_character_defaults(tables: dict) -> None:
+    """{素材フォルダ名: dump_table の TOML 文字列} を書く。"""
+    character_defaults_path().write_text("\n".join(tables.values()), encoding="utf-8")
+
+
+def _defaults_texts() -> dict:
+    """今の既定値ファイルを {キー: TOML 文字列} にする（1 キャラ分だけ書き換えるため）。
+
+    他のキャラの分は解釈せずにそのまま書き戻す（speaker や mouth を足すと素材の tachie.toml より優先されてしまい、
+    検査で落ちる項目があると消すこともできなくなるため）。
+    """
+    return {key: dump_raw_table(table, key) for key, table in load_character_defaults().items()}
+
+
+def material_key(folder: str) -> str:
+    import unicodedata
+
+    return unicodedata.normalize("NFC", os.path.basename(os.path.normpath(bpy.path.abspath(folder))))
+
+
+def _free_channel(settings, ch, wanted: int | None = None) -> int:
+    """他のキャラ・音声・字幕と重ならないチャンネル。`wanted` が空いていればそれ。"""
+    used = {c.channel for c in settings.characters if c != ch}
+    used |= {settings.audio_channel, settings.subtitle_channel}
+    if wanted is not None and wanted not in used:
+        return wanted
+    return next(c for c in range(min(used | {wanted or 3, 3}), 129) if c not in used)
 
 
 def find_character(settings, name: str):
@@ -592,20 +645,105 @@ class TACHIE_OT_character_add(bpy.types.Operator):
         settings = seq_scene(context).tachie
         try:
             character = load_material(self.directory)
-        except ERRORS as e:
+            key = material_key(self.directory)
+            material = load_material_table(character.path)
+            saved = load_character_defaults().get(key, {})
+            # 優先: アドオン設定 → 素材の tachie.toml → 固定値
+            table = merge_tables({"speaker": 3}, material, saved)
+            name = str(table.pop("name", "") or key)
+            config = parse_characters({name: {**table, "folder": self.directory}}, Path("."), use_material=False)[name]
+        except (*ERRORS, OSError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         ch = settings.characters.add()
-        ch.name = character.name
+        try:
+            apply_config(ch, config)
+        except (TypeError, ValueError, KeyError) as e:  # tachie.toml の値の型や範囲が合わない
+            settings.characters.remove(len(settings.characters) - 1)
+            self.report({"ERROR"}, f"初期値を当てはめられません: {e}")
+            return {"CANCELLED"}
         ch.folder = self.directory
-        # 2 人目以降は左右を入れ替え、別のチャンネルに置く
         n = len(settings.characters)
-        if n > 1:
+        # 立ち位置が決まっていなければ、2 人目以降は左右を入れ替える
+        if "position" not in config.layout and n > 1:
             ch.position_x = -0.3 if n % 2 == 0 else 0.3
-            used = {c.channel for c in settings.characters if c != ch}
-            used |= {settings.audio_channel, settings.subtitle_channel}
-            ch.channel = next(c for c in range(min(used | {3}), 129) if c not in used)
+        # チャンネルは他のキャラと重なるなら空いている番号へ
+        if n > 1 or "channel" in config.layout:
+            ch.channel = _free_channel(settings, ch, config.layout.get("channel"))
+        try:  # エンジンが止まっていても追加は待たせない
+            names = VoicevoxClient(prefs(context).voicevox_url, timeout=3.0).styles()
+            ch.speaker_name = dict(names).get(ch.speaker, "")
+        except (VoicevoxError, OSError):
+            pass
         settings.active_character = n - 1
+        sources = [label for label, t in (("アドオン設定", saved), (MATERIAL_CONFIG, material)) if t]
+        if sources:
+            self.report({"INFO"}, f"{ch.name} を {'と'.join(sources)} の初期値で追加しました")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_save_defaults(bpy.types.Operator):
+    """選択中のキャラクターの設定を、次にこの素材を追加するときの初期値として保存する"""
+
+    bl_idname = "tachie.save_defaults"
+    bl_label = "初期値として保存"
+
+    target: bpy.props.EnumProperty(items=[
+        ("PREFS", "アドオン設定", "アドオン設定に保存する（全 .blend 共通。素材の tachie.toml より優先）"),
+        ("MATERIAL", "素材フォルダ", "素材フォルダの tachie.toml に書く（素材と一緒に持ち運べる）"),
+    ])
+
+    @classmethod
+    def poll(cls, context):
+        ch = seq_scene(context).tachie.character()
+        return ch is not None and bool(ch.folder)
+
+    def execute(self, context):
+        ch = seq_scene(context).tachie.character()
+        config = config_of(ch)
+        key = material_key(ch.folder)
+        name = ch.name if ch.name != key else None
+        try:
+            if self.target == "PREFS":
+                texts = _defaults_texts()
+                texts[key] = dump_table(config, key=key, name=name)
+                save_character_defaults(texts)
+                where = "アドオン設定"
+            else:
+                folder = Path(bpy.path.abspath(ch.folder))
+                # アドオンにはまだ声の調整が無いので、tachie.toml にあるものは残す
+                old = load_material_table(folder)
+                config.voice = {VOICE_KEYS[k]: float(v) for k, v in old.items() if k in VOICE_KEYS}
+                path = folder / MATERIAL_CONFIG
+                try:
+                    path.write_text(dump_table(config, name=name), encoding="utf-8")
+                except OSError as e:
+                    self.report({"ERROR"}, f"{path} に書けません（{e.strerror}）。アドオン設定に保存してください")
+                    return {"CANCELLED"}
+                where = str(path)
+        except (ValueError, OSError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"{ch.name} の初期値を {where} に保存しました")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_remove_defaults(bpy.types.Operator):
+    """アドオン設定に保存したキャラクターの初期値を消す"""
+
+    bl_idname = "tachie.remove_defaults"
+    bl_label = "初期値を消す"
+
+    key: bpy.props.StringProperty()
+
+    def execute(self, context):
+        try:
+            texts = _defaults_texts()
+            texts.pop(self.key, None)
+            save_character_defaults(texts)
+        except (ValueError, OSError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 
@@ -1011,6 +1149,8 @@ _classes = (
     TACHIE_OT_regenerate,
     TACHIE_OT_regenerate_all,
     TACHIE_OT_character_add,
+    TACHIE_OT_save_defaults,
+    TACHIE_OT_remove_defaults,
     TACHIE_OT_character_remove,
     TACHIE_OT_pick_speaker,
     TACHIE_OT_pick_part,

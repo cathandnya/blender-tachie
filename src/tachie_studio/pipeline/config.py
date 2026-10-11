@@ -28,6 +28,9 @@
     outline_color = [0.0, 0.4, 0.0, 1.0]
     outline_width = 0.15
     y = 0.12
+
+素材フォルダに `tachie.toml`（キャラ名のテーブルなしで同じ形式、`folder` は書かない。`name` で表示名）を置くと、
+キャラ設定に無い項目をそこから補う。Blender アドオンではキャラクターを追加するときの初期値になる。
 """
 
 from __future__ import annotations
@@ -41,6 +44,8 @@ from typing import Any
 from ..tachie import Expression
 
 MOUTH_MODES = ("auto", "vowel", "volume")
+MATERIAL_CONFIG = "tachie.toml"  # 素材フォルダに置く初期値
+_NESTED = ("parts", "layout", "subtitle")  # キー単位で重ねるテーブル
 
 # 設定のキー → audio_query のキー
 VOICE_KEYS = {
@@ -97,20 +102,53 @@ def _expression(parts: dict[str, Any], name: str, as_kwargs: bool = False) -> Ex
         if key not in PART_KEYS:
             raise ValueError(f"[{name}.parts] の {key!r} は不明です（{'・'.join(PART_KEYS)} のどれか）")
         attr = PART_KEYS[key]
+        # 空（"" / []）は「指定なし」。tachie.toml の値を空で打ち消すために書き出しでは明示する
         if attr in ("others", "backs"):
-            kwargs[attr] = [value] if isinstance(value, str) else list(value)
-        else:
+            kwargs[attr] = [v for v in ([value] if isinstance(value, str) else value) if v]
+        elif value:
             kwargs[attr] = value
     return kwargs if as_kwargs else Expression(**kwargs)
 
 
-def parse_characters(data: dict[str, Any], base: Path) -> dict[str, CharacterConfig]:
+def load_material_table(folder: str | Path) -> dict[str, Any]:
+    """素材フォルダの tachie.toml（無ければ空）。"""
+    path = Path(folder) / MATERIAL_CONFIG
+    if not path.is_file():
+        return {}
+    with path.open("rb") as f:
+        try:
+            return tomllib.load(f)
+        except tomllib.TOMLDecodeError as e:
+            raise ValueError(f"{path} を読めません: {e}") from None
+
+
+def merge_tables(*tables: dict[str, Any]) -> dict[str, Any]:
+    """キャラ設定のテーブルを重ねる（後ろが優先）。parts / layout / subtitle はキー単位、表情プリセットは名前単位。"""
+    out: dict[str, Any] = {}
+    for table in tables:
+        for key, value in table.items():
+            if key in _NESTED or key == "expressions":
+                if not isinstance(value, dict):
+                    raise ValueError(f"{key} はテーブル（[{key}]）で書いてください: {value!r}")
+                out[key] = {**out.get(key, {}), **value}
+            else:
+                out[key] = value
+    return out
+
+
+def parse_characters(data: dict[str, Any], base: Path, use_material: bool = True) -> dict[str, CharacterConfig]:
+    """`use_material` なら素材フォルダの tachie.toml で足りない項目を補う。"""
     characters = {}
     for name, table in data.items():
         if not isinstance(table, dict):
             raise ValueError(f"{name!r} はテーブル（[{name}]）で書いてください")
+        if "folder" not in table:
+            raise ValueError(f"[{name}] に folder がありません")
+        folder = (base / table["folder"]).resolve()
+        if use_material:
+            table = merge_tables(load_material_table(folder), table)
         try:
-            folder, speaker = table["folder"], int(table["speaker"])
+            speaker = int(table["speaker"])
         except KeyError as e:
             raise ValueError(f"[{name}] に {e.args[0]} がありません") from None
         mouth = table.get("mouth", "auto")
@@ -121,7 +159,7 @@ def parse_characters(data: dict[str, Any], base: Path) -> dict[str, CharacterCon
             _expression(parts, f"{name}.expressions.{preset}")  # キーの検査
         characters[name] = CharacterConfig(
             name=name,
-            folder=(base / folder).resolve(),
+            folder=folder,
             speaker=speaker,
             expression=_expression(table.get("parts", {}), name),
             mouth=mouth,
@@ -155,9 +193,37 @@ def _toml_key(key: str) -> str:
     return key if key.isascii() and key.replace("_", "").isalnum() else _toml_value(key)
 
 
+def _dump_table(c: CharacterConfig, key: str | None, folder: str | None, name: str | None = None) -> list[str]:
+    """1 キャラ分。`key` が None ならキャラ名のテーブルなし（tachie.toml）。"""
+    voice_names = {v: k for k, v in VOICE_KEYS.items()}
+    out: list[str] = []
+    if key is not None:
+        out.append(f"[{key}]")
+    if name is not None:
+        out.append(f"name = {_toml_value(name)}")
+    if folder is not None:
+        out.append(f"folder = {_toml_value(folder)}")
+    out.append(f"speaker = {c.speaker}")
+    out.append(f"mouth = {_toml_value(c.mouth)}")
+    for qkey, value in c.voice.items():
+        out.append(f"{voice_names[qkey]} = {_toml_value(value)}")
+    # 空のパーツも書く（素材の tachie.toml の値で補われないように）
+    parts = {k: getattr(c.expression, attr) or ([] if attr in ("others", "backs") else "")
+             for k, attr in PART_KEYS.items()}
+    sections = [("parts", parts)]
+    sections += [(f"expressions.{_toml_key(p)}", v) for p, v in c.expressions.items()]
+    sections += [("layout", c.layout), ("subtitle", c.subtitle)]
+    for section, values in sections:
+        if values or section.startswith("expressions."):
+            out.append("")
+            out.append(f"[{key}.{section}]" if key is not None else f"[{section}]")
+            out.extend(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in values.items())
+    out.append("")
+    return out
+
+
 def dump_characters(configs: dict[str, CharacterConfig], base: Path | None = None) -> str:
     """`load_characters` で読める TOML を返す。`base` を渡すと folder をそこからの相対パスで書く。"""
-    voice_names = {v: k for k, v in VOICE_KEYS.items()}
     out: list[str] = []
     for name, c in configs.items():
         folder = Path(c.folder)
@@ -166,22 +232,27 @@ def dump_characters(configs: dict[str, CharacterConfig], base: Path | None = Non
                 folder = Path(os.path.relpath(folder, base))
             except ValueError:  # Windows でドライブが違う
                 pass
-        key = _toml_key(name)
-        out.append(f"[{key}]")
-        out.append(f"folder = {_toml_value(folder.as_posix())}")
-        out.append(f"speaker = {c.speaker}")
-        out.append(f"mouth = {_toml_value(c.mouth)}")
-        for qkey, value in c.voice.items():
-            out.append(f"{voice_names[qkey]} = {_toml_value(value)}")
-        parts = {k: getattr(c.expression, attr) for k, attr in PART_KEYS.items()}
-        parts = {k: v for k, v in parts.items() if v}
-        sections = [("parts", parts)]
-        sections += [(f"expressions.{_toml_key(p)}", v) for p, v in c.expressions.items()]
-        sections += [("layout", c.layout), ("subtitle", c.subtitle)]
-        for section, values in sections:
-            if values or section.startswith("expressions."):
+        out += _dump_table(c, _toml_key(name), folder.as_posix())
+    return "\n".join(out)
+
+
+def dump_table(c: CharacterConfig, key: str | None = None, name: str | None = None) -> str:
+    """folder を書かない 1 キャラ分。`key` なしなら素材フォルダの tachie.toml、ありならアドオンの既定値用。"""
+    return "\n".join(_dump_table(c, None if key is None else _toml_key(key), None, name))
+
+
+def dump_raw_table(table: dict[str, Any], key: str) -> str:
+    """読んだままのテーブルを `[key]` として書き戻す（解釈しないので、無い項目を足したり検査で落ちたりしない）。"""
+    out: list[str] = []
+
+    def write(header: str, t: dict[str, Any]) -> None:
+        out.append(f"[{header}]")
+        out.extend(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in t.items() if not isinstance(v, dict))
+        for k, v in t.items():
+            if isinstance(v, dict):
                 out.append("")
-                out.append(f"[{key}.{section}]")
-                out.extend(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in values.items())
-        out.append("")
+                write(f"{header}.{_toml_key(k)}", v)
+
+    write(_toml_key(key), table)
+    out.append("")
     return "\n".join(out)

@@ -229,4 +229,33 @@ for i, (l, r) in enumerate(spans):
     scene.render.filepath = str(out / f"frame{i + 1}_{frame:04d}.png")
     bpy.ops.render.render(write_still=True)
 bpy.ops.wm.save_as_mainfile(filepath=str(out / "smoke.blend"))
+
+# キャラクター追加の初期値: アドオン設定 → 素材の tachie.toml → 固定値
+from bl_ext.user_default.blender_tachie import operators as ops  # noqa: E402
+
+material = out / "material" / "ずんだもん2"  # 素材を汚さないよう、パーツのフォルダだけリンクした素材
+material.mkdir(parents=True)
+for sub in Path(bpy.path.abspath(zunda.folder)).iterdir():
+    if sub.is_dir():
+        (material / sub.name).symlink_to(sub)
+(material / "tachie.toml").write_text(
+    f'name = "ずんだ（素材）"\nspeaker = 1\n\n[parts]\n"他" = ["右腕_基本"]\n\n'
+    f'[layout]\nposition = -0.1\nchannel = {zunda.channel}\n', encoding="utf-8")
+ops.character_defaults_path().write_text('["ずんだもん2"]\nspeaker = 7\n\n["ずんだもん2".layout]\nflip = true\n',
+                                         encoding="utf-8")
+run(bpy.ops.tachie.character_add, directory=str(material) + "/")
+new = s.characters[-1]
+assert new.name == "ずんだ（素材）" and new.speaker == 7 and new.part_other1 == "右腕_基本", (new.name, new.speaker)
+assert abs(new.position_x + 0.1) < 1e-6 and new.flip_x
+assert new.channel not in {c.channel for c in s.characters if c != new} | {s.audio_channel, s.subtitle_channel}
+new.height = 0.7
+run(bpy.ops.tachie.save_defaults, target="PREFS")
+saved = ops.load_character_defaults()["ずんだもん2"]
+assert saved["name"] == "ずんだ（素材）" and saved["speaker"] == 7 and abs(saved["layout"]["height"] - 0.7) < 1e-6
+run(bpy.ops.tachie.save_defaults, target="MATERIAL")
+from bl_ext.user_default.blender_tachie.tachie_studio.pipeline.config import load_material_table  # noqa: E402
+
+assert load_material_table(material)["speaker"] == 7
+run(bpy.ops.tachie.remove_defaults, key="ずんだもん2")
+assert ops.load_character_defaults() == {}
 print("OK")

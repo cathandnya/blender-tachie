@@ -8,7 +8,8 @@ import pytest
 from PIL import Image
 
 from tachie_studio.pipeline import load_characters, parse_script, render_script
-from tachie_studio.pipeline.config import dump_characters, parse_characters
+from tachie_studio.pipeline.config import (dump_characters, dump_raw_table, dump_table, load_material_table,
+                                           merge_tables, parse_characters)
 from tachie_studio.pipeline.render import resolve_mouth_mode
 from tachie_studio.tachie import load_character
 
@@ -192,3 +193,74 @@ def test_render_script_with_expression(tmp_path: Path, char_dir: Path):
     assert "expression" not in first["extra"] and second["extra"]["expression"] == "眠い"
     eye = lambda clip: Image.open(next((out / clip["frames_dir"]).glob("*.png"))).getpixel((0, 2))[0]
     assert eye(first) in (10, 11, 12) and eye(second) == 99
+
+
+def test_merge_tables():
+    material = {"speaker": 3, "mouth": "vowel", "parts": {"目": "a", "口": "b"}, "layout": {"position": 0.3},
+                "expressions": {"困り": {"眉": "x", "目": "y"}, "笑い": {"口": "z"}}}
+    prefs = {"speaker": 8, "parts": {"目": "c"}, "expressions": {"困り": {"眉": "w"}}}
+    m = merge_tables(material, prefs)
+    assert m["speaker"] == 8 and m["mouth"] == "vowel"
+    assert m["parts"] == {"目": "c", "口": "b"} and m["layout"] == {"position": 0.3}
+    # 表情プリセットは名前単位で置き換える（混ぜない）
+    assert m["expressions"] == {"困り": {"眉": "w"}, "笑い": {"口": "z"}}
+    assert material["parts"] == {"目": "a", "口": "b"}  # 元は変えない
+    with pytest.raises(ValueError, match="parts"):
+        merge_tables(material, {"parts": "目"})
+
+
+def test_dump_raw_table_keeps_partial_table():
+    import tomllib
+
+    # 手で書いた一部だけの既定値は、項目を足さず（speaker / mouth を書かず）そのまま書き戻す
+    table = {"name": "て", "layout": {"flip": True}, "expressions": {"困 り": {"他": ["a", "b"]}},
+             "parts": {"髪": "x"}}
+    text = dump_raw_table(table, "ずんだもん2")
+    assert tomllib.loads(text) == {"ずんだもん2": table}
+    assert "speaker" not in text and "mouth" not in text
+
+
+def test_material_table_fills_missing(tmp_path: Path, char_dir: Path):
+    (char_dir / "tachie.toml").write_text(
+        'name = "てすと"\nspeaker = 8\nspeed = 1.2\n\n[parts]\n"目" = "目"\n\n[layout]\nposition = -0.2\nchannel = 5\n',
+        encoding="utf-8")
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "layout": {"channel": 6}}}, tmp_path)["テスト"]
+    assert cfg.speaker == 8 and cfg.voice == {"speedScale": 1.2} and cfg.expression.eye == "目"
+    assert cfg.layout == {"position": -0.2, "channel": 6}  # キャラ設定の方が優先
+    plain = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path, use_material=False)
+    assert plain["テスト"].expression.eye is None
+
+
+def test_material_table_errors(tmp_path: Path, char_dir: Path):
+    assert load_material_table(char_dir) == {}
+    (char_dir / "tachie.toml").write_text("speaker = \n", encoding="utf-8")
+    with pytest.raises(ValueError, match="tachie.toml"):
+        load_material_table(char_dir)
+
+
+def test_dump_table_roundtrip(tmp_path: Path, char_dir: Path):
+    data = {"テスト": {"folder": str(char_dir), "speaker": 3, "pitch": 0.05, "parts": {"目": "目", "他": ["腕"]},
+                     "expressions": {"困り": {"眉": "困り"}}, "layout": {"position": -0.3, "flip": True},
+                     "subtitle": {"size": 60.0}}}
+    cfg = parse_characters(data, tmp_path)["テスト"]
+    text = dump_table(cfg, name="てすと")
+    assert "folder" not in text and text.startswith('name = "てすと"')
+    (char_dir / "tachie.toml").write_text(text, encoding="utf-8")
+    assert load_material_table(char_dir)["name"] == "てすと"
+    assert parse_characters({"テスト": {"folder": str(char_dir)}}, tmp_path)["テスト"] == cfg
+    # アドオンの既定値はキャラ名のテーブルつき
+    import tomllib
+    keyed = tomllib.loads(dump_table(cfg, key="テスト"))
+    assert keyed["テスト"]["layout"]["flip"] is True
+
+
+def test_empty_parts_override_material(tmp_path: Path, char_dir: Path):
+    (char_dir / "tachie.toml").write_text('speaker = 8\n\n[parts]\n"目" = "目"\n"他" = ["腕"]\n', encoding="utf-8")
+    # 空にしたキャラを書き出すと、空も明示されて tachie.toml の値で補われない
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path, use_material=False)["テスト"]
+    text = dump_table(cfg)
+    assert '"目" = ""' in text and '"他" = []' in text
+    import tomllib
+    merged = merge_tables(load_material_table(char_dir), tomllib.loads(text))
+    again = parse_characters({"テスト": {**merged, "folder": str(char_dir)}}, tmp_path, use_material=False)["テスト"]
+    assert again.expression.eye is None and again.expression.others == [] and again.speaker == 1

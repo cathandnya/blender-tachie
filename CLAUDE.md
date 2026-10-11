@@ -25,6 +25,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `elements` で直接並べる（同じファイル名を何度並べてもよい。1.8 万フレームで 1.4 秒）。
   「立ち絵だけを置く」はセリフなしの立ち絵（まばたきのみ、`tachie_still` = キャラ名、`tachie_expression`）を
   再生位置に置く。待機の作り直しでは消えず、待機の範囲の終わりにも数える。伸ばしたら「作り直す」で今の長さに合わせる。
+  キャラクター追加の初期値は アドオン設定（`extension_path_user` の `character_defaults.toml`、キーは素材フォルダ名、
+  表示名は `name`）→ 素材フォルダの `tachie.toml`（キャラ名のテーブルなし、`folder` なし）→ 固定値 の順で重ねる（`merge_tables`）。
+  立ち位置は指定が無いときだけ左右交互、チャンネルは他と重なるときだけ空き番号へずらす。
+  メニューの「初期値として保存」で両方に書ける（tachie.toml にある声のキーは残す）。CLI の `parse_characters` も tachie.toml で補う。
+  書き出し（キャラ設定・初期値）は空のパーツも `"目" = ""` / `"他" = []` と明示し、tachie.toml の値で補われないようにする。
+  消した表情プリセットは書けないので、tachie.toml にあるプリセットは戻る（仕様）。
 - `scripts/build_addon.py` — Pillow の wheel（cp313 / macOS arm64）を取ってきて `dist/blender_tachie-<ver>.zip` を作る。`--install` で Blender に入れる。
 - `scripts/smoke.sh` + `scripts/blender_smoke.py` — 一時ユーザーフォルダ（`BLENDER_USER_RESOURCES`）に入れて 2 キャラ分置き、フレームを `out/smoke/` に書き出す結合テスト。
   エンジンが別のマシンなら `VOICEVOX_URL=http://pino.local:50021 scripts/smoke.sh`。

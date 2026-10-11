@@ -78,8 +78,26 @@ class TachiePreferences(bpy.types.AddonPreferences):
     )
 
     def draw(self, context):
-        self.layout.prop(self, "voicevox_url")
-        self.layout.prop(self, "output_dir")
+        from .operators import character_defaults_path, load_character_defaults
+
+        layout = self.layout
+        layout.prop(self, "voicevox_url")
+        layout.prop(self, "output_dir")
+        box = layout.box()
+        box.label(text="キャラクターを追加するときの初期値（素材の tachie.toml より優先）")
+        try:
+            defaults = load_character_defaults()
+        except ValueError as e:
+            box.label(text=str(e), icon="ERROR")
+            defaults = {}
+        for key, table in defaults.items():
+            row = box.row()
+            name = table.get("name")
+            row.label(text=f"{key}（{name}）" if name else key, icon="USER")
+            row.operator("tachie.remove_defaults", text="", icon="X").key = key
+        if not defaults:
+            box.label(text="なし。シーケンサーの立ち絵タブのメニューから保存できます")
+        box.label(text=str(character_defaults_path()), icon="FILE")
 
 
 def _add_part_props(cls, empty_description: str, slot_description: str):
