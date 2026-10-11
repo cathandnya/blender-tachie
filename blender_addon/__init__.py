@@ -1,4 +1,4 @@
-"""YMM Studio: VOICEVOX の音声・口パクする動く立ち絵・字幕を Video Sequencer に並べる。"""
+"""Blender Tachie: VOICEVOX の音声・口パクする動く立ち絵・字幕を Video Sequencer に並べる。"""
 
 import bpy
 

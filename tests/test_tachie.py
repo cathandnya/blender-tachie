@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from ymm.tachie import Expression, build_layers, compose, load_character
-from ymm.tachie.compose import load_image
+from tachie_studio.tachie import Expression, build_layers, compose, load_character
+from tachie_studio.tachie.compose import load_image
 
 ROOT = Path(__file__).resolve().parent.parent
 SIZE = (8, 8)

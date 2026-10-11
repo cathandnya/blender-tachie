@@ -1,5 +1,5 @@
 # キャラクター設定の例。folder はこのファイルからの相対パス。
-# speaker は VOICEVOX のスタイル ID（uv run python -m ymm.lipsync --speakers で一覧）。
+# speaker は VOICEVOX のスタイル ID（uv run python -m tachie_studio.lipsync --speakers で一覧）。
 # mouth: auto（母音画像があればあいうえお式、なければ音量式）/ vowel / volume
 # 日本語のキーは TOML の決まりで "" で囲む。
 # 声の調整（省略可）: speed pitch intonation volume pre_phoneme post_phoneme

@@ -1,6 +1,6 @@
 """台本から、セリフごとの wav と口パク入り透明連番画像を書き出す。
 
-    uv run python -m ymm.pipeline examples/script.txt -c examples/characters.toml -o out/demo
+    uv run python -m tachie_studio.pipeline examples/script.txt -c examples/characters.toml -o out/demo
 
 出力: lineNNN.wav、lineNNN/000000.png…、（--idle 指定時）idle_*/、manifest.json
 """
@@ -18,7 +18,7 @@ from .script import parse_script
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="python -m ymm.pipeline", description=__doc__,
+    p = argparse.ArgumentParser(prog="python -m tachie_studio.pipeline", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("script", type=Path, help="台本（1 行に「キャラ名: セリフ」）")
     p.add_argument("-c", "--characters", type=Path, required=True, help="キャラクター設定（TOML）")

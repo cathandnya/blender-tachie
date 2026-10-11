@@ -1,4 +1,4 @@
-from ymm.subtitle import chars_per_line, wrap
+from tachie_studio.subtitle import chars_per_line, wrap
 
 
 def test_wrap_basic():

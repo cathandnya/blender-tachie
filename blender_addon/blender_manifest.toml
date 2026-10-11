@@ -1,8 +1,8 @@
 schema_version = "1.0.0"
 
-id = "ymm_studio"
+id = "blender_tachie"
 version = "0.1.0"
-name = "YMM Studio"
+name = "Blender Tachie"
 tagline = "VOICEVOX の音声と口パクする動く立ち絵、字幕をシーケンサーに並べる"
 maintainer = "cathandnya"
 type = "add-on"

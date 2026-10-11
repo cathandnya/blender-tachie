@@ -9,11 +9,11 @@ import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .properties import PART_PROPS, SLOT_CATEGORIES, apply_placement, apply_subtitle, system_fonts
-from .ymm.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
-from .ymm.pipeline.config import dump_characters, parse_characters
-from .ymm.tachie import Expression, load_character
-from .ymm.tachie.compose import load_image
-from .ymm.voicevox import VoicevoxClient, VoicevoxError
+from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
+from .tachie_studio.pipeline.config import dump_characters, parse_characters
+from .tachie_studio.tachie import Expression, load_character
+from .tachie_studio.tachie.compose import load_image
+from .tachie_studio.voicevox import VoicevoxClient, VoicevoxError
 
 # 読み込んだ素材と合成キャッシュ（Blender を閉じるまで使い回す）
 _characters = {}
@@ -54,8 +54,8 @@ def output_dir(context) -> Path:
     if custom:
         return Path(bpy.path.abspath(custom))
     if bpy.data.filepath:
-        return Path(bpy.path.abspath("//ymm"))
-    return Path(tempfile.gettempdir()) / "ymm_studio"
+        return Path(bpy.path.abspath("//tachie"))
+    return Path(tempfile.gettempdir()) / "blender_tachie"
 
 
 def scene_fps(scene) -> float:
@@ -160,7 +160,7 @@ def find_character(settings, name: str):
 def _overlaps(sed, channel: int, start: int, end: int, ignore=()) -> bool:
     # 待機ストリップは作り直すので邪魔にならない
     return any(s.channel == channel and s.left_handle < end and start < s.right_handle and s not in ignore
-               and not s.get("ymm_idle") for s in sed.strips)
+               and not s.get("tachie_idle") for s in sed.strips)
 
 
 def _path_for_blend(path: Path) -> str:
@@ -168,7 +168,7 @@ def _path_for_blend(path: Path) -> str:
 
 
 def line_strips(sed, clip_id: str) -> list:
-    return [s for s in sed.strips if s.get("ymm_id") == clip_id]
+    return [s for s in sed.strips if s.get("tachie_id") == clip_id]
 
 
 def character_cache(context, ch, preset: str | None = None) -> FrameCache:
@@ -193,7 +193,7 @@ def render_clip(context, ch, text: str, preset: str | None = None):
 
 
 def check_free(context, ch, start: int, frames: int, ignore=()) -> None:
-    settings = seq_scene(context).ymm
+    settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
     channels = (settings.audio_channel, ch.channel, settings.subtitle_channel)
     if len(set(channels)) < 3:
@@ -209,7 +209,7 @@ def check_free(context, ch, start: int, frames: int, ignore=()) -> None:
 def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int) -> list:
     """書き出したセリフを start に置く。置いたストリップ（音声・立ち絵・字幕）を返す。"""
     scene = seq_scene(context)
-    settings = scene.ymm
+    settings = scene.tachie
     sed = scene.sequence_editor or scene.sequence_editor_create()
     if scene.view_settings.view_transform != "Standard":
         # 3D 用の AgX / Filmic のままだと立ち絵の色が淡くなる
@@ -239,19 +239,19 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int) -> l
 
     strips = [sound, image, subtitle]
     for s in strips:
-        s["ymm_id"] = clip.frames_dir
-        s["ymm_text"] = text
-        s["ymm_character"] = ch.name
-        s["ymm_speaker"] = ch.speaker
-        s["ymm_folder"] = ch.folder
-        s["ymm_mouth"] = clip.extra.get("mouth_mode", "")
-        s["ymm_expression"] = clip.extra.get("expression", "")
+        s["tachie_id"] = clip.frames_dir
+        s["tachie_text"] = text
+        s["tachie_character"] = ch.name
+        s["tachie_speaker"] = ch.speaker
+        s["tachie_folder"] = ch.folder
+        s["tachie_mouth"] = clip.extra.get("mouth_mode", "")
+        s["tachie_expression"] = clip.extra.get("expression", "")
     return strips
 
 
 def shift_after(sed, frame: int, delta: int, ignore=()) -> None:
     """frame 以降に始まるストリップを delta フレームずらす。重ならない順に動かす。"""
-    targets = [s for s in sed.strips if s.left_handle >= frame and s not in ignore and not s.get("ymm_idle")]
+    targets = [s for s in sed.strips if s.left_handle >= frame and s not in ignore and not s.get("tachie_idle")]
     targets.sort(key=lambda s: s.left_handle, reverse=delta > 0)
     for s in targets:
         s.frame_start += delta
@@ -259,14 +259,14 @@ def shift_after(sed, frame: int, delta: int, ignore=()) -> None:
 
 def regenerate(context, clip_id: str, text: str | None = None, preset: str | None = None) -> list:
     """セリフを作り直して同じ位置に置き直す。新しいストリップを返す。"""
-    settings = seq_scene(context).ymm
+    settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
     old = line_strips(sed, clip_id)
     if not old:
         raise ValueError("セリフのストリップが見つかりません")
-    text = text if text is not None else old[0]["ymm_text"]
-    preset = preset if preset is not None else old[0].get("ymm_expression", "")
-    ch = find_character(settings, old[0]["ymm_character"])
+    text = text if text is not None else old[0]["tachie_text"]
+    preset = preset if preset is not None else old[0].get("tachie_expression", "")
+    ch = find_character(settings, old[0]["tachie_character"])
     start = min(s.left_handle for s in old)
     old_end = max(s.right_handle for s in old)
 
@@ -285,7 +285,7 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
 
 
 def remove_idle(sed) -> None:
-    for s in [s for s in sed.strips if s.get("ymm_idle")]:
+    for s in [s for s in sed.strips if s.get("tachie_idle")]:
         sed.strips.remove(s)
 
 
@@ -297,13 +297,13 @@ def refresh_idle(context) -> int:
     if sed is None:
         return 0
     remove_idle(sed)
-    line_ends = [s.right_handle for s in sed.strips if s.get("ymm_id")]
+    line_ends = [s.right_handle for s in sed.strips if s.get("tachie_id")]
     if not line_ends:
         return 0
     start, end = scene.frame_start, max(line_ends)
     fps = scene_fps(scene)
     count = 0
-    for ch in scene.ymm.characters:
+    for ch in scene.tachie.characters:
         if not ch.show_idle or not ch.folder:
             continue
         busy = sorted((s.left_handle, s.right_handle) for s in sed.strips if s.channel == ch.channel)
@@ -326,7 +326,7 @@ def refresh_idle(context) -> int:
                 strip.elements.append(p.name)
             strip.blend_type = "ALPHA_OVER"
             apply_placement(strip, ch)
-            strip["ymm_idle"] = ch.name
+            strip["tachie_idle"] = ch.name
             count += 1
     return count
 
@@ -346,20 +346,20 @@ def connect(context, strips) -> None:
 def active_line_id(context) -> str | None:
     sed = seq_scene(context).sequence_editor
     strip = sed.active_strip if sed else None
-    return strip.get("ymm_id") if strip else None
+    return strip.get("tachie_id") if strip else None
 
 
 # ---- オペレーター ----
 
-class YMM_OT_add_line(bpy.types.Operator):
+class TACHIE_OT_add_line(bpy.types.Operator):
     """選択中のキャラクターでセリフを合成し、音声・口パク立ち絵・字幕を再生位置に置く"""
 
-    bl_idname = "ymm.add_line"
+    bl_idname = "tachie.add_line"
     bl_label = "セリフを追加"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        settings = seq_scene(context).ymm
+        settings = seq_scene(context).tachie
         ch = settings.character()
         text = settings.text.strip()
         if ch is None:
@@ -388,10 +388,10 @@ class YMM_OT_add_line(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class YMM_OT_regenerate(bpy.types.Operator):
+class TACHIE_OT_regenerate(bpy.types.Operator):
     """選択中のセリフを、今のテキストとキャラクター設定で作り直す"""
 
-    bl_idname = "ymm.regenerate"
+    bl_idname = "tachie.regenerate"
     bl_label = "再生成"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -402,11 +402,11 @@ class YMM_OT_regenerate(bpy.types.Operator):
     def execute(self, context):
         sed = seq_scene(context).sequence_editor
         # 編集はパネルで選択中のストリップに入るので、テキストと表情はそこから取る
-        text = sed.active_strip["ymm_text"]
-        preset = sed.active_strip.get("ymm_expression", "")
+        text = sed.active_strip["tachie_text"]
+        preset = sed.active_strip.get("tachie_expression", "")
         try:
             strips = regenerate(context, active_line_id(context), text, preset)
-            if seq_scene(context).ymm.auto_idle:
+            if seq_scene(context).tachie.auto_idle:
                 refresh_idle(context)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
@@ -416,10 +416,10 @@ class YMM_OT_regenerate(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class YMM_OT_regenerate_all(bpy.types.Operator):
+class TACHIE_OT_regenerate_all(bpy.types.Operator):
     """すべてのセリフを、今のキャラクター設定で作り直す（表情や話者を変えたとき）"""
 
-    bl_idname = "ymm.regenerate_all"
+    bl_idname = "tachie.regenerate_all"
     bl_label = "全セリフを再生成"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -429,12 +429,12 @@ class YMM_OT_regenerate_all(bpy.types.Operator):
         sed = seq_scene(context).sequence_editor
         if sed is None:
             return {"CANCELLED"}
-        settings = seq_scene(context).ymm
+        settings = seq_scene(context).tachie
         only = settings.character().name if self.character_only and settings.character() else None
         firsts = {}
         for s in sed.strips:
-            cid = s.get("ymm_id")
-            if cid and (only is None or s.get("ymm_character") == only):
+            cid = s.get("tachie_id")
+            if cid and (only is None or s.get("tachie_character") == only):
                 firsts[cid] = min(firsts.get(cid, s.left_handle), s.left_handle)
         # 後ろから作り直すと、長さが変わってずらしても未処理のセリフの位置を追いかけなくてよい
         count = 0
@@ -456,10 +456,10 @@ class YMM_OT_regenerate_all(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class YMM_OT_character_add(bpy.types.Operator):
+class TACHIE_OT_character_add(bpy.types.Operator):
     """動く立ち絵の素材フォルダを選んでキャラクターを追加する"""
 
-    bl_idname = "ymm.character_add"
+    bl_idname = "tachie.character_add"
     bl_label = "キャラクターを追加"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -470,7 +470,7 @@ class YMM_OT_character_add(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        settings = seq_scene(context).ymm
+        settings = seq_scene(context).tachie
         try:
             character = load_material(self.directory)
         except ERRORS as e:
@@ -490,19 +490,19 @@ class YMM_OT_character_add(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class YMM_OT_character_remove(bpy.types.Operator):
+class TACHIE_OT_character_remove(bpy.types.Operator):
     """選択中のキャラクターを一覧から外す（置いたストリップは消えない）"""
 
-    bl_idname = "ymm.character_remove"
+    bl_idname = "tachie.character_remove"
     bl_label = "キャラクターを削除"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
-        return seq_scene(context).ymm.character() is not None
+        return seq_scene(context).tachie.character() is not None
 
     def execute(self, context):
-        settings = seq_scene(context).ymm
+        settings = seq_scene(context).tachie
         settings.characters.remove(settings.active_character)
         settings.active_character = max(0, min(settings.active_character, len(settings.characters) - 1))
         return {"FINISHED"}
@@ -512,10 +512,10 @@ def _styles(self, context):
     return _style_items
 
 
-class YMM_OT_pick_speaker(bpy.types.Operator):
+class TACHIE_OT_pick_speaker(bpy.types.Operator):
     """VOICEVOX の話者一覧から選ぶ"""
 
-    bl_idname = "ymm.pick_speaker"
+    bl_idname = "tachie.pick_speaker"
     bl_label = "話者を選ぶ"
     bl_property = "style"
     bl_options = {"UNDO"}
@@ -524,7 +524,7 @@ class YMM_OT_pick_speaker(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return seq_scene(context).ymm.character() is not None
+        return seq_scene(context).tachie.character() is not None
 
     def invoke(self, context, event):
         global _style_items
@@ -538,7 +538,7 @@ class YMM_OT_pick_speaker(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        ch = seq_scene(context).ymm.character()
+        ch = seq_scene(context).tachie.character()
         ch.speaker = int(self.style)
         ch.speaker_name = next((name for i, name, *_ in _style_items if i == self.style), "")
         return {"FINISHED"}
@@ -548,10 +548,10 @@ def _parts(self, context):
     return _part_items
 
 
-class YMM_OT_pick_part(bpy.types.Operator):
+class TACHIE_OT_pick_part(bpy.types.Operator):
     """素材のパーツ一覧から選ぶ"""
 
-    bl_idname = "ymm.pick_part"
+    bl_idname = "tachie.pick_part"
     bl_label = "パーツを選ぶ"
     bl_property = "part"
     bl_options = {"UNDO"}
@@ -562,13 +562,13 @@ class YMM_OT_pick_part(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return seq_scene(context).ymm.character() is not None
+        return seq_scene(context).tachie.character() is not None
 
     def invoke(self, context, event):
         global _part_items
         category = next(c for c, props in PART_PROPS.items() if self.prop in props)
         try:
-            character = load_material(seq_scene(context).ymm.character().folder)
+            character = load_material(seq_scene(context).tachie.character().folder)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -582,7 +582,7 @@ class YMM_OT_pick_part(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        ch = seq_scene(context).ymm.character()
+        ch = seq_scene(context).tachie.character()
         target = find_expression(ch, self.preset) if self.preset else ch
         setattr(target, self.prop, "" if self.part == NONE else self.part)
         return {"FINISHED"}
@@ -592,10 +592,10 @@ def _fonts(self, context):
     return _font_items
 
 
-class YMM_OT_pick_font(bpy.types.Operator):
+class TACHIE_OT_pick_font(bpy.types.Operator):
     """インストールされているフォントから字幕のフォントを選ぶ"""
 
-    bl_idname = "ymm.pick_font"
+    bl_idname = "tachie.pick_font"
     bl_label = "フォントを選ぶ"
     bl_property = "font"
     bl_options = {"UNDO"}
@@ -604,7 +604,7 @@ class YMM_OT_pick_font(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return seq_scene(context).ymm.character() is not None
+        return seq_scene(context).tachie.character() is not None
 
     def invoke(self, context, event):
         global _font_items
@@ -616,14 +616,14 @@ class YMM_OT_pick_font(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        seq_scene(context).ymm.character().font_path = _font_paths[self.font]
+        seq_scene(context).tachie.character().font_path = _font_paths[self.font]
         return {"FINISHED"}
 
 
-class YMM_OT_reload_character(bpy.types.Operator):
+class TACHIE_OT_reload_character(bpy.types.Operator):
     """素材フォルダを読み直し、合成済みの画像を作り直す（パーツを追加・変更したとき）"""
 
-    bl_idname = "ymm.reload_character"
+    bl_idname = "tachie.reload_character"
     bl_label = "素材を読み直す"
 
     def execute(self, context):
@@ -639,10 +639,10 @@ class YMM_OT_reload_character(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class YMM_OT_import_characters(bpy.types.Operator, ImportHelper):
+class TACHIE_OT_import_characters(bpy.types.Operator, ImportHelper):
     """キャラクター設定を TOML から読み込む（同じ名前のキャラクターは上書き）"""
 
-    bl_idname = "ymm.import_characters"
+    bl_idname = "tachie.import_characters"
     bl_label = "キャラクター設定を読み込む"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -650,7 +650,7 @@ class YMM_OT_import_characters(bpy.types.Operator, ImportHelper):
     filter_glob: bpy.props.StringProperty(default="*.toml", options={"HIDDEN"})
 
     def execute(self, context):
-        settings = seq_scene(context).ymm
+        settings = seq_scene(context).tachie
         try:
             configs = load_characters(self.filepath)
         except (OSError, ValueError) as e:
@@ -669,27 +669,27 @@ class YMM_OT_import_characters(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
-class YMM_OT_export_characters(bpy.types.Operator, ExportHelper):
-    """キャラクター設定を TOML に書き出す（他のプロジェクトや python -m ymm.pipeline で使える）"""
+class TACHIE_OT_export_characters(bpy.types.Operator, ExportHelper):
+    """キャラクター設定を TOML に書き出す（他のプロジェクトや python -m tachie_studio.pipeline で使える）"""
 
-    bl_idname = "ymm.export_characters"
+    bl_idname = "tachie.export_characters"
     bl_label = "キャラクター設定を書き出す"
 
     filename_ext = ".toml"
     filter_glob: bpy.props.StringProperty(default="*.toml", options={"HIDDEN"})
 
     def execute(self, context):
-        configs = {ch.name: config_of(ch) for ch in seq_scene(context).ymm.characters}
+        configs = {ch.name: config_of(ch) for ch in seq_scene(context).tachie.characters}
         path = Path(self.filepath)
         path.write_text(dump_characters(configs, base=path.parent), encoding="utf-8")
         self.report({"INFO"}, f"{path} に書き出しました")
         return {"FINISHED"}
 
 
-class YMM_OT_import_script(bpy.types.Operator, ImportHelper):
+class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
     """台本を読み、セリフを再生位置から順に並べる（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」）"""
 
-    bl_idname = "ymm.import_script"
+    bl_idname = "tachie.import_script"
     bl_label = "台本を流し込む"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -704,7 +704,7 @@ class YMM_OT_import_script(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         scene = seq_scene(context)
-        settings = scene.ymm
+        settings = scene.tachie
         if self.use_text:
             if settings.script is None:
                 self.report({"ERROR"}, "台本のテキストを選んでください")
@@ -760,10 +760,10 @@ def _expressions(self, context):
     return _expression_items
 
 
-class YMM_OT_pick_expression(bpy.types.Operator):
+class TACHIE_OT_pick_expression(bpy.types.Operator):
     """表情プリセットを選ぶ"""
 
-    bl_idname = "ymm.pick_expression"
+    bl_idname = "tachie.pick_expression"
     bl_label = "表情を選ぶ"
     bl_property = "expression"
     bl_options = {"REGISTER", "UNDO"}
@@ -772,10 +772,10 @@ class YMM_OT_pick_expression(bpy.types.Operator):
     expression: bpy.props.EnumProperty(items=_expressions)
 
     def _character(self, context):
-        settings = seq_scene(context).ymm
+        settings = seq_scene(context).tachie
         if self.target == "LINE":
             sed = seq_scene(context).sequence_editor
-            return find_character(settings, sed.active_strip["ymm_character"])
+            return find_character(settings, sed.active_strip["tachie_character"])
         return settings.character()
 
     def invoke(self, context, event):
@@ -794,12 +794,12 @@ class YMM_OT_pick_expression(bpy.types.Operator):
     def execute(self, context):
         value = "" if self.expression == NONE else self.expression
         if self.target == "ADD":
-            seq_scene(context).ymm.expression = value
+            seq_scene(context).tachie.expression = value
             return {"FINISHED"}
         # 選択中のセリフはその表情で作り直す
         try:
             strips = regenerate(context, active_line_id(context), preset=value)
-            if seq_scene(context).ymm.auto_idle:
+            if seq_scene(context).tachie.auto_idle:
                 refresh_idle(context)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
@@ -809,19 +809,19 @@ class YMM_OT_pick_expression(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class YMM_OT_expression_add(bpy.types.Operator):
+class TACHIE_OT_expression_add(bpy.types.Operator):
     """表情プリセットを追加する（変えたいパーツだけ指定する）"""
 
-    bl_idname = "ymm.expression_add"
+    bl_idname = "tachie.expression_add"
     bl_label = "表情を追加"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
-        return seq_scene(context).ymm.character() is not None
+        return seq_scene(context).tachie.character() is not None
 
     def execute(self, context):
-        ch = seq_scene(context).ymm.character()
+        ch = seq_scene(context).tachie.character()
         names = {e.name for e in ch.expressions}
         item = ch.expressions.add()
         item.name = next(f"表情{i}" for i in range(1, len(names) + 2) if f"表情{i}" not in names)
@@ -829,29 +829,29 @@ class YMM_OT_expression_add(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class YMM_OT_expression_remove(bpy.types.Operator):
+class TACHIE_OT_expression_remove(bpy.types.Operator):
     """表情プリセットを削除する（このプリセットを使ったセリフは再生成できなくなる）"""
 
-    bl_idname = "ymm.expression_remove"
+    bl_idname = "tachie.expression_remove"
     bl_label = "表情を削除"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
-        ch = seq_scene(context).ymm.character()
+        ch = seq_scene(context).tachie.character()
         return ch is not None and ch.expression() is not None
 
     def execute(self, context):
-        ch = seq_scene(context).ymm.character()
+        ch = seq_scene(context).tachie.character()
         ch.expressions.remove(ch.active_expression)
         ch.active_expression = max(0, min(ch.active_expression, len(ch.expressions) - 1))
         return {"FINISHED"}
 
 
-class YMM_OT_refresh_idle(bpy.types.Operator):
+class TACHIE_OT_refresh_idle(bpy.types.Operator):
     """喋っていない間の立ち絵（まばたきのみ）を作り直す。ストリップを手で動かしたあとに使う"""
 
-    bl_idname = "ymm.refresh_idle"
+    bl_idname = "tachie.refresh_idle"
     bl_label = "待機を更新"
     bl_options = {"REGISTER", "UNDO"}
 
@@ -866,22 +866,22 @@ class YMM_OT_refresh_idle(bpy.types.Operator):
 
 
 _classes = (
-    YMM_OT_add_line,
-    YMM_OT_import_script,
-    YMM_OT_pick_expression,
-    YMM_OT_expression_add,
-    YMM_OT_expression_remove,
-    YMM_OT_refresh_idle,
-    YMM_OT_regenerate,
-    YMM_OT_regenerate_all,
-    YMM_OT_character_add,
-    YMM_OT_character_remove,
-    YMM_OT_pick_speaker,
-    YMM_OT_pick_part,
-    YMM_OT_pick_font,
-    YMM_OT_reload_character,
-    YMM_OT_import_characters,
-    YMM_OT_export_characters,
+    TACHIE_OT_add_line,
+    TACHIE_OT_import_script,
+    TACHIE_OT_pick_expression,
+    TACHIE_OT_expression_add,
+    TACHIE_OT_expression_remove,
+    TACHIE_OT_refresh_idle,
+    TACHIE_OT_regenerate,
+    TACHIE_OT_regenerate_all,
+    TACHIE_OT_character_add,
+    TACHIE_OT_character_remove,
+    TACHIE_OT_pick_speaker,
+    TACHIE_OT_pick_part,
+    TACHIE_OT_pick_font,
+    TACHIE_OT_reload_character,
+    TACHIE_OT_import_characters,
+    TACHIE_OT_export_characters,
 )
 
 

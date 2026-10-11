@@ -1,41 +1,42 @@
-# blender-ymm-addon
+# blender-tachie
 
-Blender の Video Sequencer に YMM4 風の「動く立ち絵・字幕・VOICEVOX 連携」を足すアドオン。
+Blender の Video Sequencer に、VOICEVOX の音声・口パクする立ち絵・字幕を並べるアドオン。
+立ち絵は YMM4 の「動く立ち絵」素材フォルダをそのまま読む。名前やコードに YMM の名前は使わない（互換性の説明は可）。
 計画と段階は `PLAN.md` を参照。
 
 ## 構成
-- `src/ymm/tachie/` — 動く立ち絵素材の読み込み（`loader.py`）と合成（`compose.py`）。Blender 非依存、Pillow のみ。
-- `src/ymm/voicevox/` — VOICEVOX エンジンの HTTP クライアント。urllib のみ（Blender 同梱 Python で動かすため）。
-- `src/ymm/lipsync/` — audio_query からの音素時刻（`timing.py`）、口の状態（`mouth.py`、あいうえお式・音量式）、まばたき（`blink.py`）、wav 読み込み（`wav.py`）。numpy を使わない。
-- `src/ymm/pipeline/` — 台本（`script.py`）とキャラ設定 TOML（`config.py`）から、セリフごとの wav と透明連番画像、
+- `src/tachie_studio/tachie/` — 動く立ち絵素材の読み込み（`loader.py`）と合成（`compose.py`）。Blender 非依存、Pillow のみ。
+- `src/tachie_studio/voicevox/` — VOICEVOX エンジンの HTTP クライアント。urllib のみ（Blender 同梱 Python で動かすため）。
+- `src/tachie_studio/lipsync/` — audio_query からの音素時刻（`timing.py`）、口の状態（`mouth.py`、あいうえお式・音量式）、まばたき（`blink.py`）、wav 読み込み（`wav.py`）。numpy を使わない。
+- `src/tachie_studio/pipeline/` — 台本（`script.py`）とキャラ設定 TOML（`config.py`）から、セリフごとの wav と透明連番画像、
   `manifest.json` を書き出す（`render.py`）。「目 × 口」の組み合わせを `cache/` に 1 回ずつ合成し、連番はハードリンク。
 - `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
-- `src/ymm/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
-- `blender_addon/` — Blender 拡張機能 `ymm_studio`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
-  `blender_addon/ymm` は `../src/ymm` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .ymm... import`。
-  シーケンサーのサイドバー「YMM」タブ。キャラクター設定は `Scene.ymm.characters`（.blend に保存、TOML で読み書き）。
+- `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
+- `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
+  `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
+  シーケンサーのサイドバー「立ち絵」タブ。キャラクター設定は `Scene.tachie.characters`（.blend に保存、TOML で読み書き）。
   セリフを追加すると再生位置に音声・立ち絵（連番画像）・字幕を置き、カスタムプロパティ
-  `ymm_id` `ymm_text` `ymm_character` `ymm_speaker` `ymm_folder` `ymm_mouth` `ymm_expression` を付ける。
+  `tachie_id` `tachie_text` `tachie_character` `tachie_speaker` `tachie_folder` `tachie_mouth` `tachie_expression` を付ける。
   台本の流し込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。
   再生成のテキストと表情は、パネルで編集する選択中のストリップから取る（3 本のうち他の 2 本は古いまま）。
-  再生成は同じ `ymm_id` の 3 本を消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。
-  待機ストリップ（`ymm_idle` = キャラ名）は各キャラの立ち絵チャンネルの隙間を、シーン開始から最後のセリフの終わりまで埋める。
+  再生成は同じ `tachie_id` の 3 本を消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。
+  待機ストリップ（`tachie_idle` = キャラ名）は各キャラの立ち絵チャンネルの隙間を、シーン開始から最後のセリフの終わりまで埋める。
   セリフの追加・再生成のたびに全部消して作り直す（重なり判定・ずらしの対象外）。画像は `cache/` の合成画像を
   `elements` で直接並べる（同じファイル名を何度並べてもよい。1.8 万フレームで 1.4 秒）。
-- `scripts/build_addon.py` — Pillow の wheel（cp313 / macOS arm64）を取ってきて `dist/ymm_studio-<ver>.zip` を作る。`--install` で Blender に入れる。
+- `scripts/build_addon.py` — Pillow の wheel（cp313 / macOS arm64）を取ってきて `dist/blender_tachie-<ver>.zip` を作る。`--install` で Blender に入れる。
 - `scripts/smoke.sh` + `scripts/blender_smoke.py` — 一時ユーザーフォルダ（`BLENDER_USER_RESOURCES`）に入れて 2 キャラ分置き、フレームを `out/smoke/` に書き出す結合テスト。
-- `scripts/blender_screenshot.py` — smoke.sh のあとに、Blender を画面ありで起動して YMM パネルとシーケンサーを
+- `scripts/blender_screenshot.py` — smoke.sh のあとに、Blender を画面ありで起動して 立ち絵パネルとシーケンサーを
   `out/screenshots/sequencer.png` に撮る（`bpy.ops.screen.screenshot`。画面収録の許可は不要）。コマンドはファイル冒頭。
 - `char/` — 手元の立ち絵素材（ずんだもん、四国めたん）。利用規約があるので git 管理外。テストは無ければ skip する。
 
 ## コマンド
 - `uv sync` — 環境構築（Python 3.13。Blender 5.2 同梱 Python に合わせる）
 - `uv run pytest`
-- `uv run python -m ymm.tachie char/ずんだもん --list` — パーツ一覧
-- `uv run python -m ymm.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ --other 右腕_基本 --other 左腕_基本 -o out/z.png`
-- `uv run python -m ymm.lipsync "こんにちは、ずんだもんなのだ。" --speaker 3 -o out/line` — wav とフレームごとの口・目の状態（JSON）
-- `uv run python -m ymm.lipsync --speakers` — スタイル ID 一覧
-- `uv run python -m ymm.pipeline examples/script.txt -c examples/characters.toml -o out/demo --scale 0.5 --idle 5`
+- `uv run python -m tachie_studio.tachie char/ずんだもん --list` — パーツ一覧
+- `uv run python -m tachie_studio.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ --other 右腕_基本 --other 左腕_基本 -o out/z.png`
+- `uv run python -m tachie_studio.lipsync "こんにちは、ずんだもんなのだ。" --speaker 3 -o out/line` — wav とフレームごとの口・目の状態（JSON）
+- `uv run python -m tachie_studio.lipsync --speakers` — スタイル ID 一覧
+- `uv run python -m tachie_studio.pipeline examples/script.txt -c examples/characters.toml -o out/demo --scale 0.5 --idle 5`
 - `uv run python scripts/build_addon.py [--install]` — 拡張機能のビルド（とインストール）
 - `scripts/smoke.sh` — Blender での結合テスト（VOICEVOX と char/ が必要、20 秒ほど）
 
@@ -80,6 +81,6 @@ Blender の Video Sequencer に YMM4 風の「動く立ち絵・字幕・VOICEVO
   `[キャラ.subtitle]`（font / size / color …）。
 - 表情プリセットは基本の表情から変えるパーツだけを持つ。他・後はどれか 1 つでも指定すると丸ごと置き換え
   （`CharacterConfig.expression_for`）。台本では `キャラ名(表情): セリフ`（`（）` `[]` も可）。
-  ストリップには `ymm_expression` を付け、再生成はそれを使う。待機ストリップは基本の表情。
+  ストリップには `tachie_expression` を付け、再生成はそれを使う。待機ストリップは基本の表情。
 - 口の動かし方 `mouth = "auto"`: 母音画像があればあいうえお式、無ければ音量式。`vowel` で母音画像の無い素材は
   母音を開き具合に置き換える（a=最大、i/u=小さめ）。

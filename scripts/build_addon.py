@@ -1,9 +1,9 @@
 """Blender 拡張機能の zip を作る（必要なら Blender にインストールする）。
 
-    uv run python scripts/build_addon.py            # dist/ymm_studio-<version>.zip
+    uv run python scripts/build_addon.py            # dist/blender_tachie-<version>.zip
     uv run python scripts/build_addon.py --install  # 作ったうえで Blender の user_default リポジトリに入れる
 
-blender_addon/ と src/ymm/ を build/ymm_studio/ に集め、Blender 同梱 Python 用の Pillow の wheel を
+blender_addon/ と src/tachie_studio/ を build/blender_tachie/ に集め、Blender 同梱 Python 用の Pillow の wheel を
 取ってきて manifest の wheels に書き、`blender --command extension build` で固める。
 """
 
@@ -18,7 +18,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD = ROOT / "build" / "ymm_studio"
+BUILD = ROOT / "build" / "blender_tachie"
 DIST = ROOT / "dist"
 WHEEL_CACHE = ROOT / "build" / "wheels"
 
@@ -53,8 +53,8 @@ def assemble(wheels: list[Path]) -> None:
     if BUILD.exists():
         shutil.rmtree(BUILD)
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
-    shutil.copytree(ROOT / "blender_addon", BUILD, ignore=shutil.ignore_patterns("ymm", "__pycache__", ".DS_Store"))
-    shutil.copytree(ROOT / "src" / "ymm", BUILD / "ymm", ignore=ignore)
+    shutil.copytree(ROOT / "blender_addon", BUILD, ignore=shutil.ignore_patterns("tachie_studio", "__pycache__", ".DS_Store"))
+    shutil.copytree(ROOT / "src" / "tachie_studio", BUILD / "tachie_studio", ignore=ignore)
     (BUILD / "wheels").mkdir()
     for w in wheels:
         shutil.copy2(w, BUILD / "wheels" / w.name)
@@ -76,7 +76,7 @@ def main() -> None:
     DIST.mkdir(exist_ok=True)
     subprocess.run([blender, "--command", "extension", "build", "--source-dir", str(BUILD),
                     "--output-dir", str(DIST)], check=True)
-    zips = sorted(DIST.glob("ymm_studio-*.zip"), key=lambda p: p.stat().st_mtime)
+    zips = sorted(DIST.glob("blender_tachie-*.zip"), key=lambda p: p.stat().st_mtime)
     print(zips[-1])
     if args.install:
         subprocess.run([blender, "--command", "extension", "install-file", "-r", "user_default", "-e",

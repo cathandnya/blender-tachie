@@ -1,6 +1,6 @@
 """セリフから wav と、フレームごとの口・目の状態（JSON）を出す。
 
-    uv run python -m ymm.lipsync "こんにちは、ずんだもんなのだ。" --speaker 3 -o out/line
+    uv run python -m tachie_studio.lipsync "こんにちは、ずんだもんなのだ。" --speaker 3 -o out/line
     → out/line.wav と out/line.json
 """
 
@@ -18,7 +18,7 @@ from .wav import read_wav
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="python -m ymm.lipsync", description=__doc__,
+    p = argparse.ArgumentParser(prog="python -m tachie_studio.lipsync", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("text", nargs="?", help="セリフ")
     p.add_argument("--speaker", type=int, default=3, help="VOICEVOX のスタイル ID（既定 3 = ずんだもん ノーマル）")

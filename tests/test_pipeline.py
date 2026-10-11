@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from ymm.pipeline import load_characters, parse_script, render_script
-from ymm.pipeline.config import dump_characters, parse_characters
-from ymm.pipeline.render import resolve_mouth_mode
-from ymm.tachie import load_character
+from tachie_studio.pipeline import load_characters, parse_script, render_script
+from tachie_studio.pipeline.config import dump_characters, parse_characters
+from tachie_studio.pipeline.render import resolve_mouth_mode
+from tachie_studio.tachie import load_character
 
 
 def _png(path: Path, color, box=None):

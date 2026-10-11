@@ -1,7 +1,7 @@
 """動く立ち絵を 1 枚の PNG に合成する。
 
-    uv run python -m ymm.tachie char/ずんだもん --list
-    uv run python -m ymm.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ \
+    uv run python -m tachie_studio.tachie char/ずんだもん --list
+    uv run python -m tachie_studio.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ \
         --other 右腕_基本 --other 左腕_基本 -o out/zundamon.png
 """
 
@@ -35,7 +35,7 @@ def _print_parts(character) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="python -m ymm.tachie", description=__doc__,
+    p = argparse.ArgumentParser(prog="python -m tachie_studio.tachie", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("folder", type=Path, help="動く立ち絵の素材フォルダ")
     p.add_argument("--list", action="store_true", help="パーツ一覧を表示する")

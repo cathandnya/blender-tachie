@@ -5,7 +5,7 @@ import wave
 
 import pytest
 
-from ymm.lipsync import (
+from tachie_studio.lipsync import (
     CLOSED,
     Phoneme,
     blink_track,
@@ -17,7 +17,7 @@ from ymm.lipsync import (
     vowel_track,
     vowels_to_levels,
 )
-from ymm.voicevox import VoicevoxClient, VoicevoxError
+from tachie_studio.voicevox import VoicevoxClient, VoicevoxError
 
 
 def _mora(text, consonant, c_len, vowel, v_len):

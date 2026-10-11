@@ -13,8 +13,8 @@ from bpy.props import (
     StringProperty,
 )
 
-from .ymm.subtitle import chars_per_line, wrap
-from .ymm.voicevox import DEFAULT_URL
+from .tachie_studio.subtitle import chars_per_line, wrap
+from .tachie_studio.voicevox import DEFAULT_URL
 
 MOUTH_ITEMS = [
     ("auto", "自動", "母音の画像があればあいうえお式、なければ音量式"),
@@ -22,7 +22,7 @@ MOUTH_ITEMS = [
     ("volume", "音量", "音声の大きさに合わせて口を動かす"),
 ]
 
-# 素材のフォルダ名 → YMMCharacter のプロパティ名（他・後は 3 スロット）
+# 素材のフォルダ名 → TachieCharacter のプロパティ名（他・後は 3 スロット）
 PART_PROPS = {
     "眉": ["part_eyebrow"],
     "目": ["part_eye"],
@@ -68,13 +68,13 @@ def default_font() -> str:
     return ""
 
 
-class YMMPreferences(bpy.types.AddonPreferences):
+class TachiePreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     voicevox_url: StringProperty(name="VOICEVOX エンジン", default=DEFAULT_URL)
     output_dir: StringProperty(
         name="書き出し先", subtype="DIR_PATH", default="",
-        description="音声と連番画像の置き場所。空なら .blend の隣の ymm フォルダ（未保存なら一時フォルダ）",
+        description="音声と連番画像の置き場所。空なら .blend の隣の tachie フォルダ（未保存なら一時フォルダ）",
     )
 
     def draw(self, context):
@@ -92,13 +92,13 @@ def _add_part_props(cls, empty_description: str, slot_description: str):
     return cls
 
 
-class YMMExpression(bpy.types.PropertyGroup):
+class TachieExpression(bpy.types.PropertyGroup):
     """表情プリセット。空のパーツは基本の表情のまま。"""
     # name は PropertyGroup が持っている
     __annotations__ = {}
 
 
-_add_part_props(YMMExpression, "空なら基本の表情のまま",
+_add_part_props(TachieExpression, "空なら基本の表情のまま",
                 "他（後）をどれか 1 つでも指定すると、他（後）は丸ごとこのプリセットのものになる")
 
 
@@ -108,7 +108,7 @@ def character_image_strips(ch):
     if sed is None:
         return []
     return [s for s in sed.strips if s.type == "IMAGE"
-            and (s.get("ymm_character") == ch.name or s.get("ymm_idle") == ch.name)]
+            and (s.get("tachie_character") == ch.name or s.get("tachie_idle") == ch.name)]
 
 
 def apply_placement(strip, ch) -> None:
@@ -151,9 +151,9 @@ def _update_subtitle(self, context):
     if sed is None:
         return
     for strip in sed.strips:
-        if strip.type == "TEXT" and strip.get("ymm_character") == self.name:
+        if strip.type == "TEXT" and strip.get("tachie_character") == self.name:
             try:
-                apply_subtitle(strip, self, strip.get("ymm_text", strip.text))
+                apply_subtitle(strip, self, strip.get("tachie_text", strip.text))
             except RuntimeError:
                 pass  # フォントが読めないときは今の見た目のまま
 
@@ -164,7 +164,7 @@ def _update_placement(self, context):
         apply_placement(strip, self)
 
 
-class YMMCharacter(bpy.types.PropertyGroup):
+class TachieCharacter(bpy.types.PropertyGroup):
     # name は PropertyGroup が持っている
     folder: StringProperty(name="素材フォルダ", subtype="DIR_PATH",
                            description="動く立ち絵の素材フォルダ（眉・目・口などのフォルダがある所）")
@@ -172,7 +172,7 @@ class YMMCharacter(bpy.types.PropertyGroup):
     speaker_name: StringProperty(name="話者", default="")
     mouth: EnumProperty(name="口パク", items=MOUTH_ITEMS, default="auto")
 
-    expressions: CollectionProperty(type=YMMExpression)
+    expressions: CollectionProperty(type=TachieExpression)
     active_expression: IntProperty(default=0)
 
     position_x: FloatProperty(name="立ち位置", default=0.3, min=-1.0, max=1.0, update=_update_placement,
@@ -201,11 +201,11 @@ class YMMCharacter(bpy.types.PropertyGroup):
         return None
 
 
-_add_part_props(YMMCharacter, "空なら素材の既定のパーツ", "空なら使わない")
+_add_part_props(TachieCharacter, "空なら素材の既定のパーツ", "空なら使わない")
 
 
-class YMMSceneSettings(bpy.types.PropertyGroup):
-    characters: CollectionProperty(type=YMMCharacter)
+class TachieSceneSettings(bpy.types.PropertyGroup):
+    characters: CollectionProperty(type=TachieCharacter)
     active_character: IntProperty(name="キャラクター", default=0)
     text: StringProperty(name="セリフ", default="")
     expression: StringProperty(name="表情", default="", description="追加するセリフの表情プリセット。空なら基本の表情")
@@ -227,16 +227,16 @@ class YMMSceneSettings(bpy.types.PropertyGroup):
         return None
 
 
-_classes = (YMMPreferences, YMMExpression, YMMCharacter, YMMSceneSettings)
+_classes = (TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings)
 
 
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
-    bpy.types.Scene.ymm = PointerProperty(type=YMMSceneSettings)
+    bpy.types.Scene.tachie = PointerProperty(type=TachieSceneSettings)
 
 
 def unregister():
-    del bpy.types.Scene.ymm
+    del bpy.types.Scene.tachie
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
