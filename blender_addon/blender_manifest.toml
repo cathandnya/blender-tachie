@@ -1,0 +1,19 @@
+schema_version = "1.0.0"
+
+id = "ymm_studio"
+version = "0.1.0"
+name = "YMM Studio"
+tagline = "VOICEVOX の音声と口パクする動く立ち絵、字幕をシーケンサーに並べる"
+maintainer = "cathandnya"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+platforms = ["macos-arm64"]
+
+# scripts/build_addon.py がビルド時に書き換える
+wheels = []
+
+[permissions]
+network = "VOICEVOX エンジンで音声を合成するため"
+files = "立ち絵素材を読み込み、音声と連番画像を書き出すため"

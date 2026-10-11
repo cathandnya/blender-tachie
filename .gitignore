@@ -1,0 +1,9 @@
+# 立ち絵素材は各素材の利用規約があるためコミットしない
+char/
+out/
+.venv/
+__pycache__/
+*.egg-info/
+.DS_Store
+build/
+dist/

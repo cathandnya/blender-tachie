@@ -1,0 +1,85 @@
+# blender-ymm-addon
+
+Blender の Video Sequencer に YMM4 風の「動く立ち絵・字幕・VOICEVOX 連携」を足すアドオン。
+計画と段階は `PLAN.md` を参照。
+
+## 構成
+- `src/ymm/tachie/` — 動く立ち絵素材の読み込み（`loader.py`）と合成（`compose.py`）。Blender 非依存、Pillow のみ。
+- `src/ymm/voicevox/` — VOICEVOX エンジンの HTTP クライアント。urllib のみ（Blender 同梱 Python で動かすため）。
+- `src/ymm/lipsync/` — audio_query からの音素時刻（`timing.py`）、口の状態（`mouth.py`、あいうえお式・音量式）、まばたき（`blink.py`）、wav 読み込み（`wav.py`）。numpy を使わない。
+- `src/ymm/pipeline/` — 台本（`script.py`）とキャラ設定 TOML（`config.py`）から、セリフごとの wav と透明連番画像、
+  `manifest.json` を書き出す（`render.py`）。「目 × 口」の組み合わせを `cache/` に 1 回ずつ合成し、連番はハードリンク。
+- `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
+- `src/ymm/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
+- `blender_addon/` — Blender 拡張機能 `ymm_studio`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
+  `blender_addon/ymm` は `../src/ymm` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .ymm... import`。
+  シーケンサーのサイドバー「YMM」タブ。キャラクター設定は `Scene.ymm.characters`（.blend に保存、TOML で読み書き）。
+  セリフを追加すると再生位置に音声・立ち絵（連番画像）・字幕を置き、カスタムプロパティ
+  `ymm_id` `ymm_text` `ymm_character` `ymm_speaker` `ymm_folder` `ymm_mouth` `ymm_expression` を付ける。
+  台本の流し込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。
+  再生成のテキストと表情は、パネルで編集する選択中のストリップから取る（3 本のうち他の 2 本は古いまま）。
+  再生成は同じ `ymm_id` の 3 本を消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。
+  待機ストリップ（`ymm_idle` = キャラ名）は各キャラの立ち絵チャンネルの隙間を、シーン開始から最後のセリフの終わりまで埋める。
+  セリフの追加・再生成のたびに全部消して作り直す（重なり判定・ずらしの対象外）。画像は `cache/` の合成画像を
+  `elements` で直接並べる（同じファイル名を何度並べてもよい。1.8 万フレームで 1.4 秒）。
+- `scripts/build_addon.py` — Pillow の wheel（cp313 / macOS arm64）を取ってきて `dist/ymm_studio-<ver>.zip` を作る。`--install` で Blender に入れる。
+- `scripts/smoke.sh` + `scripts/blender_smoke.py` — 一時ユーザーフォルダ（`BLENDER_USER_RESOURCES`）に入れて 2 キャラ分置き、フレームを `out/smoke/` に書き出す結合テスト。
+- `scripts/blender_screenshot.py` — smoke.sh のあとに、Blender を画面ありで起動して YMM パネルとシーケンサーを
+  `out/screenshots/sequencer.png` に撮る（`bpy.ops.screen.screenshot`。画面収録の許可は不要）。コマンドはファイル冒頭。
+- `char/` — 手元の立ち絵素材（ずんだもん、四国めたん）。利用規約があるので git 管理外。テストは無ければ skip する。
+
+## コマンド
+- `uv sync` — 環境構築（Python 3.13。Blender 5.2 同梱 Python に合わせる）
+- `uv run pytest`
+- `uv run python -m ymm.tachie char/ずんだもん --list` — パーツ一覧
+- `uv run python -m ymm.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ --other 右腕_基本 --other 左腕_基本 -o out/z.png`
+- `uv run python -m ymm.lipsync "こんにちは、ずんだもんなのだ。" --speaker 3 -o out/line` — wav とフレームごとの口・目の状態（JSON）
+- `uv run python -m ymm.lipsync --speakers` — スタイル ID 一覧
+- `uv run python -m ymm.pipeline examples/script.txt -c examples/characters.toml -o out/demo --scale 0.5 --idle 5`
+- `uv run python scripts/build_addon.py [--install]` — 拡張機能のビルド（とインストール）
+- `scripts/smoke.sh` — Blender での結合テスト（VOICEVOX と char/ が必要、20 秒ほど）
+
+## 環境
+- Blender 5.2.2 LTS（`brew install --cask blender`、`/opt/homebrew/bin/blender`）。同梱 Python 3.13.13、numpy 2.3 あり、Pillow なし。
+  - VSE の API は `scene.sequence_editor.strips`（`sequences` は無い）。`strips.new_image / new_sound / new_effect(type="TEXT") / new_meta`。
+  - テキストストリップ: `text`, `font`, `font_size`, `wrap_width`, `location`, `use_outline`, `use_box` など。
+  - コマンドラインで試す: `blender -b --factory-startup --python script.py`
+  - `frame_final_*` は非推奨（6.0 で削除予定）。`left_handle` / `right_handle` / `duration` を使う。
+  - **シーケンサーはワークスペースの `sequencer_scene` を表示する**（5.0 から）。未設定だと何も映らず、
+    `sequencer.view_all` などの poll も通らない。アドオンは `seq_scene(context)`（`context.sequencer_scene` か
+    `context.scene`）を使い、ストリップを置くときに未設定ならウィンドウのシーンを設定する。
+  - サイドバーのタブ（`Region.active_panel_category`）は読み取り専用。
+  - 画像ストリップの `use_flip_x` は `transform.offset_x` ごと画面中央で反転する。左右反転したキャラは
+    offset の符号を逆にする（`properties.apply_placement`）。立ち位置と反転は置いてあるストリップに即反映する。
+  - 字幕のスタイル（フォント・サイズ・色・縁取り・高さ）もキャラクターごとで、変えると置いてある字幕に即反映する
+    （`properties.apply_subtitle`、改行も入れ直す）。フォントは `system_fonts()` の一覧から選べる。
+    `bpy.data.fonts` の名前は英語表記（例: ヒラギノ丸ゴ → "Hiragino Maru Gothic Pro W4"）。
+  - `bpy.ops.sequencer.connect` はシーケンサーの画面のコンテキストが必要（バックグラウンドでは使えない）。
+  - API で `frame_start` を動かして他と重なると、Blender が勝手に別チャンネルへ逃がす。ずらすときは順序に注意。
+  - 既定のビュー変換 AgX だと立ち絵の色が淡くなるので、セリフ追加時に Standard へ切り替える。
+  - 日本語フォントは `/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc`（ファイル名が NFD なので glob で探す）。
+- VOICEVOX エンジンは `http://127.0.0.1:50021`（0.25.2）。
+
+## 動く立ち絵の解釈（実装で決めたこと）
+- 連番は公式 FAQ どおり `.0` = 閉じ → `.1`, `.2` … → 数字なし = 開き。`Part.frames` はこの順。
+  手元のずんだもん・四国めたんの**目**は変換 .bat の都合で逆（`.0` = 開き、`.1` = 閉じ）。
+  まばたきは `.0 → .1 → … → .N` をファイル順に再生して数字なしに戻す。この順ならどちらの素材でもまばたきに見える。
+- 口も手元の素材は数字なし = `.0` と同じ（閉じ）で、最後の番号が開き。`Part.levels`（音量口パクの段階）は
+  数字なしが `.0` と同じ内容なら除く。
+- 音素時刻は VOICEVOX エンジンの計算に合わせた: 音素ごとに `/speedScale` してから 93.75fps のフレームに丸める、
+  疑問文（`is_interrogative`）は最後の母音を 0.15 秒足す。これで wav の長さと一致する（テストあり、エンジン起動時のみ）。
+  念のため `scale_to` で wav の長さに合わせる。
+- あいうえお式の口: 母音はその形、N・cl・pau は閉じ、m/b/p の子音は閉じ、他の子音は続く母音を先取りする。
+- 他1〜3・後1〜3は「他・後フォルダから最大 3 つ選ぶスロット」と解釈した。
+- 髪は 2 回描く: 奥（顔色より手前、口より奥）は不透明、眉より手前は ini の opacity（既定 1.0）。
+- 合成モードが通常以外のパーツは全レイヤーの手前に描く。対応は通常と乗算のみ。
+- ファイル名は NFC に正規化して比較する（macOS の NFD 対策）。
+- 既定のパーツは、連番のあるものを優先して名前順の最初。
+- キャラ設定の TOML は日本語キーを `"ずんだもん"` のように引用符で囲む（TOML 1.0 の決まり）。
+  `[キャラ.parts]`（表情）、`[キャラ.expressions.名前]`（表情プリセット）、`[キャラ.layout]`（position / flip / height / channel）、
+  `[キャラ.subtitle]`（font / size / color …）。
+- 表情プリセットは基本の表情から変えるパーツだけを持つ。他・後はどれか 1 つでも指定すると丸ごと置き換え
+  （`CharacterConfig.expression_for`）。台本では `キャラ名(表情): セリフ`（`（）` `[]` も可）。
+  ストリップには `ymm_expression` を付け、再生成はそれを使う。待機ストリップは基本の表情。
+- 口の動かし方 `mouth = "auto"`: 母音画像があればあいうえお式、無ければ音量式。`vowel` で母音画像の無い素材は
+  母音を開き具合に置き換える（a=最大、i/u=小さめ）。

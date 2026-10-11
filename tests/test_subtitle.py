@@ -1,0 +1,25 @@
+from ymm.subtitle import chars_per_line, wrap
+
+
+def test_wrap_basic():
+    assert wrap("あいうえおかきくけこ", 5) == "あいうえお\nかきくけこ"
+    assert wrap("abcdefghij", 2.5) == "abcde\nfghij"  # 半角は 0.5
+    assert wrap("短い", 10) == "短い"
+
+
+def test_wrap_hangs_punctuation():
+    assert wrap("あいうえお。かきく", 5) == "あいうえお。\nかきく"
+    assert wrap("あいうえお、」かき", 5) == "あいうえお、」\nかき"
+
+
+def test_wrap_moves_opening_bracket():
+    assert wrap("あいう「えおかき」", 4) == "あいう\n「えおか\nき」"
+
+
+def test_wrap_keeps_newlines_and_max_lines():
+    assert wrap("あいう\nえお", 10) == "あいう\nえお"
+    assert wrap("あいうえおかきくけこさしす", 4, max_lines=2) == "あいうえ\nおかきくけこさしす"
+
+
+def test_chars_per_line():
+    assert chars_per_line(1920, 64) == 1920 * 0.8 / 64
