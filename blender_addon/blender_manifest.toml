@@ -3,7 +3,7 @@ schema_version = "1.0.0"
 id = "blender_tachie"
 version = "0.1.0"
 name = "Blender Tachie"
-tagline = "VOICEVOX の音声と口パクする動く立ち絵、字幕をシーケンサーに並べる"
+tagline = "口パクする立ち絵と字幕を並べる。YMM4 の動く立ち絵素材も読める"
 maintainer = "cathandnya"
 type = "add-on"
 

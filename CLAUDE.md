@@ -1,7 +1,7 @@
 # blender-tachie
 
-Blender の Video Sequencer に、VOICEVOX の音声・口パクする立ち絵・字幕を並べるアドオン。
-立ち絵は YMM4 の「動く立ち絵」素材フォルダをそのまま読む。名前やコードに YMM の名前は使わない（互換性の説明は可）。
+Blender 用の立ち絵アドオン。VOICEVOX の音声に合わせて口パク・まばたきする立ち絵と字幕を
+Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込める。名前やコードに YMM の名前は使わない（互換性の説明は可）。
 計画と段階は `PLAN.md` を参照。
 
 ## 構成

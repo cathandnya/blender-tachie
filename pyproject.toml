@@ -1,7 +1,7 @@
 [project]
 name = "blender-tachie"
 version = "0.1.0"
-description = "VOICEVOX voices, lip-synced talking characters and subtitles for Blender's Video Sequencer"
+description = "Talking character (tachie) add-on for Blender's Video Sequencer, with VOICEVOX lip sync. Also reads YMM4 moving tachie materials."
 requires-python = ">=3.13"
 dependencies = ["pillow"]
 
