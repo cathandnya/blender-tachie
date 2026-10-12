@@ -258,7 +258,12 @@ def _overlaps(sed, channel: int, start: int, end: int, ignore=()) -> bool:
 
 
 def _path_for_blend(path: Path) -> str:
-    return bpy.path.relpath(str(path)) if bpy.data.filepath else str(path)
+    if not bpy.data.filepath:
+        return str(path)
+    try:
+        return bpy.path.relpath(str(path))
+    except ValueError:  # Windows で .blend と別のドライブ（相対パスにできない）
+        return str(path)
 
 
 def line_strips(sed, clip_id: str) -> list:

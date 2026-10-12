@@ -35,7 +35,9 @@ YMM4 の表情プリセット（素材フォルダの `preset.ini`）も表情�
 
 ## 必要なもの
 
-- Blender 5.2（macOS / Apple Silicon で確認）
+- Blender 5.2 以降
+  - 動作を確認しているのは macOS（Apple Silicon）。Windows（x64 / ARM）・Linux（x64）・Intel Mac 用の zip もビルドするが、実機では未確認
+  - Linux のコンテナでユニットテストが通ることは確認済み
 - VOICEVOX エンジン（`http://127.0.0.1:50021`）
 - 開発: [uv](https://docs.astral.sh/uv/)
 
@@ -45,7 +47,9 @@ YMM4 の表情プリセット（素材フォルダの `preset.ini`）も表情�
 uv run python scripts/build_addon.py --install
 ```
 
-`dist/blender_tachie-<version>.zip` を作り、Blender に入れます（Pillow を同梱）。
+OS ごとの zip（`dist/blender_tachie-<version>-<OS>.zip`、その OS 用の Pillow を同梱）を作り、`--install` ではこの OS 用を Blender に入れます。
+他の OS では、その OS 用の zip を Blender の「Install from Disk」で入れてください。
+Blender は環境変数 `BLENDER`、PATH の `blender`、標準のインストール先の順で探します。
 Video Sequencer のサイドバー（N キー）の「立ち絵」タブから使います。
 
 ## コマンドライン
@@ -63,5 +67,5 @@ uv run python -m tachie_studio.pipeline examples/script.txt -c examples/characte
 ```
 uv sync
 uv run pytest
-scripts/smoke.sh   # Blender での結合テスト（VOICEVOX エンジンと char/ の素材が必要）
+scripts/smoke.sh   # Blender での結合テスト（VOICEVOX エンジンと char/ の素材が必要。Windows では Git Bash で）
 ```

@@ -67,7 +67,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   メニューの「初期値として保存」で両方に書ける（tachie.toml にある声のキーは残す）。CLI の `parse_characters` も tachie.toml で補う。
   書き出し（キャラ設定・初期値）は空のパーツも `"目" = ""` / `"他" = []` と明示し、tachie.toml の値で補われないようにする。
   消した表情プリセットは書けないので、tachie.toml にあるプリセットは戻る（仕様）。
-- `scripts/build_addon.py` — Pillow の wheel（cp313 / macOS arm64）を取ってきて `dist/blender_tachie-<ver>.zip` を作る。`--install` で Blender に入れる。
+- `scripts/build_addon.py` — Pillow の wheel（cp313、macOS arm64 / x64・Windows x64 / arm64・Linux x64）を取ってきて
+  `blender --command extension build --split-platforms` で OS ごとの `dist/blender_tachie-<ver>-<OS>.zip` を作る
+  （zip の manifest には Blender が `[build.generated]` でその OS の platforms / wheels を書き足す）。`--install` でこの OS 用を
+  Blender に入れる（普段の Blender に入るので、試すだけなら smoke.sh の一時ユーザーフォルダを使う）。
+  Blender は `BLENDER` → PATH → 標準の場所の順で探す。動作確認は macOS arm64 だけ、Linux はコンテナで pytest のみ。
+  Windows ではドライブをまたぐと `bpy.path.relpath` が ValueError を出すので、`_path_for_blend` は絶対パスに戻す。
 - `scripts/smoke.sh` + `scripts/blender_smoke.py` — 一時ユーザーフォルダ（`BLENDER_USER_RESOURCES`）に入れて 2 キャラ分置き、フレームを `out/smoke/` に書き出す結合テスト。
   エンジンが別のマシンなら `VOICEVOX_URL=http://pino.local:50021 scripts/smoke.sh`。
 - `scripts/blender_screenshot.py` — smoke.sh のあとに、Blender を画面ありで起動して 立ち絵パネルとシーケンサーを

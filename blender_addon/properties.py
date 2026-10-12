@@ -59,7 +59,8 @@ BAKED_AUDIO = ("fade_in", "fade_out", "after")
 
 
 FONT_DIRS = ("/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts", "~/Library/Fonts",
-             "C:/Windows/Fonts", "/usr/share/fonts", "~/.local/share/fonts")
+             "C:/Windows/Fonts", "%LOCALAPPDATA%/Microsoft/Windows/Fonts",  # Windows のユーザーごとのフォント
+             "/usr/share/fonts", "/usr/local/share/fonts", "~/.local/share/fonts", "~/.fonts")
 FONT_SUFFIXES = (".ttf", ".ttc", ".otf", ".otc")
 
 
@@ -69,7 +70,7 @@ def system_fonts() -> list[tuple[str, str]]:
 
     found = {}
     for d in FONT_DIRS:
-        d = os.path.expanduser(d)
+        d = os.path.expanduser(os.path.expandvars(d))
         if not os.path.isdir(d):
             continue
         for root, _, files in os.walk(d):
@@ -82,10 +83,11 @@ def system_fonts() -> list[tuple[str, str]]:
 
 def default_font() -> str:
     for pattern in ("/System/Library/Fonts/*W6.ttc", "/System/Library/Fonts/*W3.ttc",
-                    "C:/Windows/Fonts/meiryo*.ttc", "/usr/share/fonts/**/NotoSansCJK*.tt[cf]"):
+                    "C:/Windows/Fonts/meiryo*.ttc", "C:/Windows/Fonts/YuGoth*.ttc",
+                    "/usr/share/fonts/**/NotoSansCJK*.tt[cf]", "/usr/share/fonts/**/NotoSansJP*.[ot]tf"):
         for path in sorted(glob.glob(pattern, recursive=True)):
             name = unicodedata.normalize("NFC", path)
-            if "ヒラギノ角ゴシック" in name or "meiryo" in name.lower() or "NotoSansCJK" in name:
+            if any(key in name.lower() for key in ("ヒラギノ角ゴシック", "meiryo", "yugoth", "notosanscjk", "notosansjp")):
                 return path
     return ""
 

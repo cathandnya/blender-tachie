@@ -1,15 +1,19 @@
 """Blender 拡張機能の zip を作る（必要なら Blender にインストールする）。
 
-    uv run python scripts/build_addon.py            # dist/blender_tachie-<version>.zip
-    uv run python scripts/build_addon.py --install  # 作ったうえで Blender の user_default リポジトリに入れる
+    uv run python scripts/build_addon.py            # dist/blender_tachie-<version>-<OS>.zip（OS ごと）
+    uv run python scripts/build_addon.py --install  # 作ったうえで、この OS 用を Blender の user_default リポジトリに入れる
 
 blender_addon/ と src/tachie_studio/ を build/blender_tachie/ に集め、Blender 同梱 Python 用の Pillow の wheel を
-取ってきて manifest の wheels に書き、`blender --command extension build` で固める。
+OS ごとに取ってきて manifest の platforms / wheels に書き、`blender --command extension build --split-platforms` で
+OS ごとの zip に固める。Blender は環境変数 BLENDER、PATH の blender、OS ごとの標準の場所の順で探す。
 """
 
 from __future__ import annotations
 
 import argparse
+import glob
+import os
+import platform
 import re
 import shutil
 import subprocess
@@ -24,14 +28,36 @@ WHEEL_CACHE = ROOT / "build" / "wheels"
 
 # Blender 5.2 同梱 Python は 3.13
 PYTHON_VERSION = "3.13"
-PLATFORMS = {"macos-arm64": "macosx_11_0_arm64"}
+# Blender の platforms → Pillow の wheel の platform タグ（Blender の Linux 版は x64 のみ）
+PLATFORMS = {
+    "macos-arm64": "macosx_11_0_arm64",
+    "macos-x64": "macosx_10_13_x86_64",
+    "windows-x64": "win_amd64",
+    "windows-arm64": "win_arm64",
+    "linux-x64": "manylinux_2_28_x86_64",
+}
 
 
 def find_blender() -> str:
-    for candidate in (shutil.which("blender"), "/Applications/Blender.app/Contents/MacOS/Blender"):
+    candidates = [os.environ.get("BLENDER"), shutil.which("blender"),
+                  "/Applications/Blender.app/Contents/MacOS/Blender"]
+    # Windows の標準のインストール先（新しい版を先に）
+    candidates += sorted(glob.glob("C:/Program Files/Blender Foundation/Blender */blender.exe"), reverse=True,
+                         key=lambda p: [int(n) for n in re.findall(r"\d+", Path(p).parent.name)])
+    for candidate in candidates:
         if candidate and Path(candidate).exists():
             return candidate
-    sys.exit("blender が見つかりません")
+    sys.exit("blender が見つかりません（環境変数 BLENDER に実行ファイルのパスを指定してください）")
+
+
+def this_platform() -> str:
+    """この OS の Blender の platforms 名（macos-arm64 など）。"""
+    system = {"darwin": "macos", "windows": "windows", "linux": "linux"}.get(platform.system().lower())
+    if system is None:
+        return platform.system().lower() or "unknown"  # Blender の拡張が対応していない OS（どの zip にも当たらない）
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
+    return f"{system}-{arch}"
 
 
 def download_wheels() -> list[Path]:
@@ -61,8 +87,10 @@ def assemble(wheels: list[Path]) -> None:
 
     manifest = BUILD / "blender_manifest.toml"
     entries = ", ".join(f'"./wheels/{w.name}"' for w in wheels)
+    platforms = ", ".join(f'"{p}"' for p in PLATFORMS)
     text = re.sub(r"^wheels = \[.*?\]", f"wheels = [{entries}]", manifest.read_text(encoding="utf-8"),
                   flags=re.M | re.S)
+    text = re.sub(r"^platforms = \[.*?\]", f"platforms = [{platforms}]", text, flags=re.M | re.S)
     manifest.write_text(text, encoding="utf-8")
 
 
@@ -74,13 +102,21 @@ def main() -> None:
     blender = find_blender()
     assemble(download_wheels())
     DIST.mkdir(exist_ok=True)
-    subprocess.run([blender, "--command", "extension", "build", "--source-dir", str(BUILD),
+    for old in DIST.glob("blender_tachie-*.zip"):
+        old.unlink()
+    subprocess.run([blender, "--command", "extension", "build", "--split-platforms", "--source-dir", str(BUILD),
                     "--output-dir", str(DIST)], check=True)
-    zips = sorted(DIST.glob("blender_tachie-*.zip"), key=lambda p: p.stat().st_mtime)
-    print(zips[-1])
+    zips = sorted(DIST.glob("blender_tachie-*.zip"))
+    for z in zips:
+        print(z)
+    mine = [z for z in zips if this_platform().replace("-", "_") in z.name]
     if args.install:
+        if not mine:
+            sys.exit(f"この OS（{this_platform()}）用の zip がありません")
         subprocess.run([blender, "--command", "extension", "install-file", "-r", "user_default", "-e",
-                        str(zips[-1])], check=True)
+                        str(mine[0])], check=True)
+    elif mine:
+        print(mine[0])  # 最後の行はこの OS 用（scripts/smoke.sh が使う）
 
 
 if __name__ == "__main__":

@@ -7,9 +7,11 @@ tagline = "口パクする立ち絵と字幕を並べる。YMM4 の動く立ち�
 maintainer = "cathandnya"
 type = "add-on"
 
-blender_version_min = "4.2.0"
+# 動作を確認した 5.2 から（同梱の Pillow は cp313 用で、5.0 以前の Python 3.11 では入らない）
+blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
-platforms = ["macos-arm64"]
+# scripts/build_addon.py がビルド時に対応 OS を書き、OS ごとの zip に分ける
+platforms = ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64", "linux-x64"]
 
 # scripts/build_addon.py がビルド時に書き換える
 wheels = []

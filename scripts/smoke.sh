@@ -5,7 +5,9 @@
 set -eu
 cd "$(dirname "$0")/.."
 OUT=$(cd "$(dirname "${1:-out/smoke}")" 2>/dev/null && pwd)/$(basename "${1:-out/smoke}") || OUT="$PWD/out/smoke"
-BLENDER=${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}
+# Blender は build_addon.py と同じく、環境変数 BLENDER、PATH の blender、OS ごとの標準の場所の順で探す
+# （Windows では Git Bash で動かす）
+BLENDER=$(uv run python -c 'import sys; sys.path.insert(0, "scripts"); from build_addon import find_blender; print(find_blender())')
 ZIP=$(uv run python scripts/build_addon.py | tail -1)
 export BLENDER_USER_RESOURCES="$OUT/blender_user"
 rm -rf "$OUT"; mkdir -p "$OUT"
