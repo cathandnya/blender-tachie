@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 _LINE_RE = re.compile(r"^(?P<name>[^:：(（\[]+?)\s*(?:[(（\[](?P<expr>[^)）\]]*)[)）\]])?\s*[:：]\s*(?P<text>.+)$")
 
@@ -18,6 +18,8 @@ class Line:
     character: str
     text: str
     expression: str | None = None  # 表情プリセット名
+    speaker: int | None = None  # スタイル ID の上書き（None ならキャラクターの話者）
+    voice: dict[str, float] = field(default_factory=dict, hash=False)  # audio_query の値の上書き
 
 
 def parse_script(text: str, characters=None) -> list[Line]:

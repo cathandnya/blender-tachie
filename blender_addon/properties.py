@@ -14,6 +14,7 @@ from bpy.props import (
 )
 
 from .tachie_studio.subtitle import chars_per_line, wrap
+from .tachie_studio.pipeline.config import VOICE_DEFAULTS
 from .tachie_studio.voicevox import DEFAULT_URL
 
 MOUTH_ITEMS = [
@@ -34,6 +35,17 @@ PART_PROPS = {
     "後": ["part_back1", "part_back2", "part_back3"],
 }
 SLOT_CATEGORIES = ("他", "後")
+
+# 声の調整: TachieCharacter のプロパティ名 → (audio_query のキー, 表示名, 最小, 最大, 説明)。範囲は VOICEVOX アプリに合わせる
+VOICE_PROPS = {
+    "speed_scale": ("speedScale", "読み上げ速度", 0.5, 2.0, "話す速さ（1 が標準）"),
+    "pitch_scale": ("pitchScale", "声の高さ", -0.15, 0.15, "音高（0 が標準）"),
+    "intonation_scale": ("intonationScale", "抑揚", 0.0, 2.0, "抑揚の大きさ（1 が標準）"),
+    "volume_scale": ("volumeScale", "音量", 0.0, 2.0, "音量（1 が標準）"),
+    "pre_phoneme": ("prePhonemeLength", "開始無音", 0.0, 1.5, "音声の前の無音（秒）"),
+    "post_phoneme": ("postPhonemeLength", "終了無音", 0.0, 1.5, "音声の後ろの無音（秒）"),
+    "pause_scale": ("pauseLengthScale", "間の長さ", 0.0, 2.0, "句読点の間の長さ（1 が標準）"),
+}
 
 
 FONT_DIRS = ("/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts", "~/Library/Fonts",
@@ -220,6 +232,10 @@ class TachieCharacter(bpy.types.PropertyGroup):
 
 
 _add_part_props(TachieCharacter, "空なら素材の既定のパーツ", "空なら使わない")
+for _prop, (_key, _label, _min, _max, _desc) in VOICE_PROPS.items():
+    TachieCharacter.__annotations__[_prop] = FloatProperty(
+        name=_label, default=VOICE_DEFAULTS[_key], min=_min, max=_max, step=1, precision=2,
+        description=_desc + "。新しく置くセリフの既定値（置いたセリフは選択中のセリフで変える）")
 
 
 class TachieSceneSettings(bpy.types.PropertyGroup):

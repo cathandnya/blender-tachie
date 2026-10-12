@@ -2,7 +2,7 @@
 # speaker は VOICEVOX のスタイル ID（uv run python -m tachie_studio.lipsync --speakers で一覧）。
 # mouth: auto（母音画像があればあいうえお式、なければ音量式）/ vowel / volume
 # 日本語のキーは TOML の決まりで "" で囲む。
-# 声の調整（省略可）: speed pitch intonation volume pre_phoneme post_phoneme
+# 声の調整（省略可）: speed pitch intonation volume pre_phoneme post_phoneme pause
 
 ["ずんだもん"]
 folder = "../char/ずんだもん"

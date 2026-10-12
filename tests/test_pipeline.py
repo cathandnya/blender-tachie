@@ -264,3 +264,28 @@ def test_empty_parts_override_material(tmp_path: Path, char_dir: Path):
     merged = merge_tables(load_material_table(char_dir), tomllib.loads(text))
     again = parse_characters({"テスト": {**merged, "folder": str(char_dir)}}, tmp_path, use_material=False)["テスト"]
     assert again.expression.eye is None and again.expression.others == [] and again.speaker == 1
+
+
+def test_render_line_voice_override(tmp_path: Path, char_dir: Path):
+    from tachie_studio.pipeline.render import FrameCache, render_line
+    from tachie_studio.pipeline.script import Line
+
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1, "speed": 1.2, "pause": 0.5}},
+                           tmp_path)["テスト"]
+    assert cfg.voice == {"speedScale": 1.2, "pauseLengthScale": 0.5}
+    character = load_character(char_dir)
+    client = FakeClient()
+    queries = []
+    synth = client.synthesis
+    client.synthesis = lambda q, s: (queries.append((dict(q), s)), synth(q, s))[1]
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    # キャラの既定値のまま
+    clip = render_line(client, cfg, character, Line(1, "テスト", "あ"), tmp_path / "o", fps=10, cache=cache)
+    assert queries[-1][1] == 1 and queries[-1][0]["speedScale"] == 1.2 and clip.speaker == 1
+    # セリフで上書き
+    clip2 = render_line(client, cfg, character, Line(2, "テスト", "い", speaker=7, voice={"speedScale": 2.0}),
+                        tmp_path / "o", fps=10, cache=cache)
+    assert client.calls[-1] == ("い", 7) and queries[-1][1] == 7 and clip2.speaker == 7
+    assert queries[-1][0]["speedScale"] == 2.0 and queries[-1][0]["pauseLengthScale"] == 0.5
+    assert clip2.frames < clip.frames
+    assert "pause = 0.5" in dump_table(cfg)

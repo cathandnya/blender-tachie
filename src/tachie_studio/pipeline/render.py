@@ -120,8 +120,10 @@ def _seed(*parts: object) -> int:
 def render_line(client: VoicevoxClient, config: CharacterConfig, character: Character, line: Line,
                 out_dir: Path, *, fps: float, cache: FrameCache, stem: str | None = None) -> RenderedClip:
     """`out_dir` に `<stem>.wav` と `<stem>/000000.png…` を書く。stem の既定は lineNNN。"""
-    query = config.apply_voice(client.audio_query(line.text, config.speaker))
-    wav_bytes = client.synthesis(query, config.speaker)
+    speaker = line.speaker if line.speaker is not None else config.speaker
+    query = config.apply_voice(client.audio_query(line.text, speaker))
+    query.update(line.voice)
+    wav_bytes = client.synthesis(query, speaker)
     wav = read_wav(wav_bytes)
     n = frame_count(wav.duration, fps)
 
@@ -153,7 +155,7 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     if line.expression:
         extra["expression"] = line.expression
     return RenderedClip(kind="line", index=line.index, character=line.character, text=line.text,
-                        speaker=config.speaker, wav=wav_path.name, frames_dir=stem, frames=n, fps=fps,
+                        speaker=speaker, wav=wav_path.name, frames_dir=stem, frames=n, fps=fps,
                         duration=wav.duration, extra=extra)
 
 

@@ -4,7 +4,7 @@
     folder = "../char/ずんだもん"   # 設定ファイルからの相対パスでもよい
     speaker = 3                     # VOICEVOX のスタイル ID
     mouth = "auto"                  # auto / vowel（あいうえお）/ volume（音量）
-    speed = 1.1                     # 省略可: speed pitch intonation volume pre_phoneme post_phoneme
+    speed = 1.1                     # 省略可: speed pitch intonation volume pre_phoneme post_phoneme pause
 
     ["ずんだもん".parts]               # 既定の表情。キーは素材のフォルダ名
     "目" = "普通白目_カメラ目線"
@@ -55,6 +55,17 @@ VOICE_KEYS = {
     "volume": "volumeScale",
     "pre_phoneme": "prePhonemeLength",
     "post_phoneme": "postPhonemeLength",
+    "pause": "pauseLengthScale",
+}
+# audio_query の既定値（エンジン 0.25）
+VOICE_DEFAULTS = {
+    "speedScale": 1.0,
+    "pitchScale": 0.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.1,
+    "pauseLengthScale": 1.0,
 }
 
 # 素材のフォルダ名 → Expression のフィールド

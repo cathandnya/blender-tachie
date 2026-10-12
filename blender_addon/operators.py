@@ -8,9 +8,9 @@ from pathlib import Path
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .properties import PART_PROPS, SLOT_CATEGORIES, apply_placement, apply_subtitle, system_fonts
+from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
-from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
+from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_table, merge_tables, parse_characters)
 from .tachie_studio.tachie import Expression, load_character
 from .tachie_studio.tachie.compose import load_image
@@ -25,6 +25,7 @@ _part_items = []
 _font_items = []
 _font_paths = {}
 _expression_items = []
+_character_items = []
 
 NONE = "__none__"
 ERRORS = (VoicevoxError, ValueError, FileNotFoundError, KeyError)
@@ -104,12 +105,29 @@ def config_of(ch) -> CharacterConfig:
     return CharacterConfig(
         name=ch.name, folder=Path(bpy.path.abspath(ch.folder)), speaker=ch.speaker,
         expression=base[ch.name].expression, mouth=ch.mouth,
+        voice=_config_voice(ch),
         expressions={e.name: _parts_dict(e) for e in ch.expressions},
         layout={"position": ch.position_x, "flip": ch.flip_x, "height": ch.height, "channel": ch.channel},
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
                   "y": ch.subtitle_y},
     )
+
+
+def _config_voice(ch) -> dict:
+    """設定ファイルに書く声。既定値と違うものと、素材の tachie.toml にある項目（既定値に戻したことが
+    tachie.toml の値で上書きされないように）。"""
+    try:
+        material = load_material_table(bpy.path.abspath(ch.folder)) if ch.folder else {}
+    except (ValueError, OSError):
+        material = {}
+    keys = {VOICE_KEYS[k] for k in material if k in VOICE_KEYS}
+    return {k: v for k, v in character_voice(ch).items() if k in keys or abs(v - VOICE_DEFAULTS[k]) > 1e-6}
+
+
+def character_voice(ch) -> dict:
+    """キャラクターの声の既定値（audio_query のキー → 値、全項目）。"""
+    return {key: round(getattr(ch, prop), 6) for prop, (key, *_) in VOICE_PROPS.items()}
 
 
 def expression_of(ch, preset: str | None = None) -> Expression:
@@ -124,6 +142,8 @@ def apply_config(ch, config: CharacterConfig) -> None:
     ch.folder = str(config.folder)
     ch.speaker = config.speaker
     ch.mouth = config.mouth
+    for prop, (key, *_) in VOICE_PROPS.items():
+        setattr(ch, prop, config.voice.get(key, VOICE_DEFAULTS[key]))
     e = config.expression
     for prop, value in (("part_eyebrow", e.eyebrow), ("part_eye", e.eye), ("part_mouth", e.mouth),
                         ("part_hair", e.hair), ("part_complexion", e.complexion), ("part_body", e.body)):
@@ -233,14 +253,20 @@ def character_cache(context, ch, preset: str | None = None) -> FrameCache:
     return _cache(character, expression_of(ch, preset), output_dir(context) / "cache", scale)
 
 
-def render_clip(context, ch, text: str, preset: str | None = None):
-    """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。"""
+def render_clip(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
+                voice: dict | None = None):
+    """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。
+
+    `speaker`（スタイル）と `voice`（audio_query の値）はセリフごとの値。None ならキャラクターの既定値。
+    """
     cache = character_cache(context, ch, preset)
     config = CharacterConfig(name=ch.name, folder=cache.character.path, speaker=ch.speaker,
                              expression=cache.expression, mouth=ch.mouth)
     clip_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     lines_dir = output_dir(context) / "lines"
-    clip = render_line(client(context), config, cache.character, Line(0, ch.name, text, preset or None), lines_dir,
+    clip = render_line(client(context), config, cache.character, Line(0, ch.name, text, preset or None, speaker,
+                                                                    voice if voice is not None else character_voice(ch)),
+                       lines_dir,
                        fps=scene_fps(seq_scene(context)), cache=cache, stem=clip_id)
     return clip, lines_dir
 
@@ -259,8 +285,11 @@ def check_free(context, ch, start: int, frames: int, ignore=()) -> None:
                          "他のストリップがあります")
 
 
-def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int) -> list:
-    """書き出したセリフを start に置く。置いたストリップ（音声・立ち絵・字幕）を返す。"""
+def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voice: dict | None = None) -> list:
+    """書き出したセリフを start に置く。置いたストリップ（音声・立ち絵・字幕）を返す。
+
+    セリフごとの声（`voice`、None ならキャラクターの既定値）は音声ストリップの `tachie_voice_*` に持つ。
+    """
     scene = seq_scene(context)
     settings = scene.tachie
     sed = scene.sequence_editor or scene.sequence_editor_create()
@@ -296,11 +325,36 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int) -> l
         s["tachie_text"] = text
         s["tachie_placed_text"] = text  # 置いたときのテキスト（パネルで編集されたストリップを見分ける）
         s["tachie_character"] = ch.name
-        s["tachie_speaker"] = ch.speaker
+        s["tachie_speaker"] = clip.speaker
         s["tachie_folder"] = ch.folder
         s["tachie_mouth"] = clip.extra.get("mouth_mode", "")
         s["tachie_expression"] = clip.extra.get("expression", "")
+    set_line_voice(sound, voice if voice is not None else character_voice(ch))
     return strips
+
+
+def set_line_voice(sound, voice: dict) -> None:
+    for prop, (key, label, lo, hi, desc) in VOICE_PROPS.items():
+        name = f"tachie_voice_{prop}"
+        sound[name] = float(voice.get(key, VOICE_DEFAULTS[key]))
+        sound.id_properties_ui(name).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=1, precision=2,
+                                            description=desc)
+
+
+def line_sound(strips):
+    return next((s for s in strips if s.type == "SOUND"), None)
+
+
+def line_voice(strips, ch) -> dict:
+    """セリフの声（音声ストリップの値。無い項目はキャラクターの既定値）。範囲外は丸める。"""
+    voice = character_voice(ch)
+    sound = line_sound(strips)
+    if sound is not None:
+        for prop, (key, _, lo, hi, _) in VOICE_PROPS.items():
+            value = sound.get(f"tachie_voice_{prop}")
+            if value is not None:
+                voice[key] = min(hi, max(lo, float(value)))
+    return voice
 
 
 def shift_after(sed, frame: int, delta: int, ignore=()) -> None:
@@ -319,8 +373,13 @@ def line_text(strips) -> str:
     return strips[0]["tachie_text"]
 
 
-def regenerate(context, clip_id: str, text: str | None = None, preset: str | None = None) -> list:
-    """セリフを作り直して同じ位置に置き直す。新しいストリップを返す。"""
+def regenerate(context, clip_id: str, text: str | None = None, preset: str | None = None,
+               speaker: int | None = None, voice: dict | None = None, character: str | None = None) -> list:
+    """セリフを作り直して同じ位置に置き直す。新しいストリップを返す。
+
+    指定しなかった値は置いてあるセリフから取る（声とスタイルは音声ストリップ）。`character` で別のキャラにすると、
+    スタイルと声はそのキャラの既定値になり、そのキャラに無い表情プリセットは基本の表情に戻る。
+    """
     settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
     old = line_strips(sed, clip_id)
@@ -328,11 +387,21 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
         raise ValueError("セリフのストリップが見つかりません")
     text = text if text is not None else line_text(old)
     preset = preset if preset is not None else old[0].get("tachie_expression", "")
-    ch = find_character(settings, old[0]["tachie_character"])
+    sound = line_sound(old) or old[0]
+    if character is not None and character != old[0]["tachie_character"]:
+        ch = find_character(settings, character)
+        if preset and preset not in {e.name for e in ch.expressions}:
+            preset = ""
+        speaker = ch.speaker if speaker is None else speaker
+        voice = character_voice(ch) if voice is None else voice
+    else:
+        ch = find_character(settings, old[0]["tachie_character"])
+        speaker = int(sound.get("tachie_speaker", ch.speaker)) if speaker is None else speaker
+        voice = line_voice(old, ch) if voice is None else voice
     start = min(s.left_handle for s in old)
     old_end = max(s.right_handle for s in old)
 
-    clip, lines_dir = render_clip(context, ch, text, preset)
+    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice)
     delta = start + clip.frames - old_end
     # 消す前に置けるか確かめる（ずらすストリップは邪魔にならない）
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
@@ -343,7 +412,7 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     remove_idle(sed)
     if settings.ripple and delta:
         shift_after(sed, old_end, delta)
-    return place_strips(context, ch, clip, lines_dir, text, start)
+    return place_strips(context, ch, clip, lines_dir, text, start, voice)
 
 
 def remove_idle(sed) -> None:
@@ -583,14 +652,84 @@ class TACHIE_OT_regenerate(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _regenerate_active(op, context, **kwargs):
+    """選択中のセリフを作り直す（テキストと表情は選択中のストリップから）。"""
+    sed = seq_scene(context).sequence_editor
+    active = sed.active_strip
+    try:
+        strips = regenerate(context, active_line_id(context), active["tachie_text"],
+                            active.get("tachie_expression", ""), **kwargs)
+        if seq_scene(context).tachie.auto_idle:
+            refresh_idle(context)
+    except ERRORS as e:
+        op.report({"ERROR"}, str(e))
+        return {"CANCELLED"}
+    sed.active_strip = strips[2]
+    connect(context, strips)
+    return {"FINISHED"}
+
+
+def _character_names(self, context):
+    global _character_items
+    _character_items = [(c.name, c.name, "") for c in seq_scene(context).tachie.characters]
+    return _character_items
+
+
+class TACHIE_OT_pick_line_character(bpy.types.Operator):
+    """選択中のセリフを別のキャラクターで作り直す（スタイルと声はそのキャラクターの既定値になる）"""
+
+    bl_idname = "tachie.pick_line_character"
+    bl_label = "セリフのキャラクターを変える"
+    bl_property = "character"
+    bl_options = {"REGISTER", "UNDO"}
+
+    character: bpy.props.EnumProperty(items=_character_names)
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_search_popup(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        return _regenerate_active(self, context, character=self.character)
+
+
+class TACHIE_OT_reset_line_voice(bpy.types.Operator):
+    """選択中のセリフの声とスタイルを、キャラクターの今の既定値に戻して作り直す"""
+
+    bl_idname = "tachie.reset_line_voice"
+    bl_label = "キャラクターの声に戻す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def execute(self, context):
+        sed = seq_scene(context).sequence_editor
+        try:
+            ch = find_character(seq_scene(context).tachie, sed.active_strip["tachie_character"])
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        return _regenerate_active(self, context, speaker=ch.speaker, voice=character_voice(ch))
+
+
 class TACHIE_OT_regenerate_all(bpy.types.Operator):
-    """すべてのセリフを、今のキャラクター設定で作り直す（表情や話者を変えたとき）"""
+    """すべてのセリフを、今のキャラクター設定で作り直す（表情を変えたとき。声とスタイルはセリフごとの値のまま）"""
 
     bl_idname = "tachie.regenerate_all"
     bl_label = "全セリフを再生成"
     bl_options = {"REGISTER", "UNDO"}
 
     character_only: bpy.props.BoolProperty(name="選択中のキャラクターだけ", default=False)
+    use_character_voice: bpy.props.BoolProperty(
+        name="キャラクターの声を当て直す", default=False,
+        description="セリフごとの声とスタイルを、キャラクターの今の既定値に置き換える",
+        options={"SKIP_SAVE"})  # 前回の値が残ると、ふつうの「全セリフを再生成」でセリフごとの声が消える
 
     def execute(self, context):
         sed = seq_scene(context).sequence_editor
@@ -610,7 +749,11 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
         wm.progress_begin(0, len(firsts))
         try:
             for cid in sorted(firsts, key=firsts.get, reverse=True):
-                connect(context, regenerate(context, cid))
+                kwargs = {}
+                if self.use_character_voice:
+                    ch = find_character(settings, line_strips(sed, cid)[0]["tachie_character"])
+                    kwargs = {"speaker": ch.speaker, "voice": character_voice(ch)}
+                connect(context, regenerate(context, cid, **kwargs))
                 count += 1
                 wm.progress_update(count)
             # 手動の立ち絵はずらし終わった位置で作り直す
@@ -711,9 +854,6 @@ class TACHIE_OT_save_defaults(bpy.types.Operator):
                 where = "アドオン設定"
             else:
                 folder = Path(bpy.path.abspath(ch.folder))
-                # アドオンにはまだ声の調整が無いので、tachie.toml にあるものは残す
-                old = load_material_table(folder)
-                config.voice = {VOICE_KEYS[k]: float(v) for k, v in old.items() if k in VOICE_KEYS}
                 path = folder / MATERIAL_CONFIG
                 try:
                     path.write_text(dump_table(config, name=name), encoding="utf-8")
@@ -778,10 +918,14 @@ class TACHIE_OT_pick_speaker(bpy.types.Operator):
     bl_options = {"UNDO"}
 
     style: bpy.props.EnumProperty(items=_styles)
+    target: bpy.props.EnumProperty(items=[
+        ("CHARACTER", "キャラクター", "選択中のキャラクターの話者"),
+        ("LINE", "選択中のセリフ", "選択中のセリフのスタイルを変えて作り直す"),
+    ], options={"SKIP_SAVE"})
 
     @classmethod
     def poll(cls, context):
-        return seq_scene(context).tachie.character() is not None
+        return seq_scene(context).tachie.character() is not None or active_line_id(context) is not None
 
     def invoke(self, context, event):
         global _style_items
@@ -795,7 +939,13 @@ class TACHIE_OT_pick_speaker(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
+        if self.target == "LINE":
+            if active_line_id(context) is None:
+                return {"CANCELLED"}
+            return _regenerate_active(self, context, speaker=int(self.style))
         ch = seq_scene(context).tachie.character()
+        if ch is None:
+            return {"CANCELLED"}
         ch.speaker = int(self.style)
         ch.speaker_name = next((name for i, name, *_ in _style_items if i == self.style), "")
         return {"FINISHED"}
@@ -1149,6 +1299,8 @@ _classes = (
     TACHIE_OT_regenerate,
     TACHIE_OT_regenerate_all,
     TACHIE_OT_character_add,
+    TACHIE_OT_pick_line_character,
+    TACHIE_OT_reset_line_voice,
     TACHIE_OT_save_defaults,
     TACHIE_OT_remove_defaults,
     TACHIE_OT_character_remove,

@@ -119,6 +119,47 @@ run(bpy.ops.tachie.refresh_idle)
 check_idle()
 assert [(l, r) for l, r, _ in lines().values()] == spans
 
+# セリフごとの声: 置いたときのキャラの既定値が音声ストリップにコピーされ、あとで既定値を変えても変わらない
+from bl_ext.user_default.blender_tachie import operators as ops  # noqa: E402
+
+zunda.speed_scale = 1.1
+first_id = next(iter(lines()))
+sound = lambda cid: next(x for x in ops.line_strips(sed, cid) if x.type == "SOUND")
+assert abs(sound(first_id)["tachie_voice_speed_scale"] - 1.0) < 1e-6
+l0, r0, _ = lines()[first_id]
+second_start = list(lines().values())[1][0]
+# 1 本だけ速くして再生成 → 短くなり、後ろが詰まる
+sound(first_id)["tachie_voice_speed_scale"] = 1.5
+sed.active_strip = sound(first_id)
+run(bpy.ops.tachie.regenerate)
+first_id = sed.active_strip["tachie_id"]
+l1, r1, _ = lines()[first_id]
+assert l1 == l0 and r1 < r0, (l0, r0, l1, r1)
+assert list(lines().values())[1][0] == second_start - (r0 - r1)
+assert abs(sound(first_id)["tachie_voice_speed_scale"] - 1.5) < 1e-6
+# スタイルを変える
+ops._style_items = [("1", "ずんだもん（あまあま）", "", 1)]
+run(bpy.ops.tachie.pick_speaker, style="1", target="LINE")
+first_id = sed.active_strip["tachie_id"]
+assert all(x["tachie_speaker"] == 1 for x in ops.line_strips(sed, first_id))
+assert abs(sound(first_id)["tachie_voice_speed_scale"] - 1.5) < 1e-6
+# キャラクターを変える → そのキャラのチャンネル・話者・声になる
+run(bpy.ops.tachie.pick_line_character, character="四国めたん")
+first_id = sed.active_strip["tachie_id"]
+image = next(x for x in ops.line_strips(sed, first_id) if x.type == "IMAGE")
+assert image.channel == metan.channel and image["tachie_character"] == "四国めたん"
+assert sound(first_id)["tachie_speaker"] == metan.speaker
+assert abs(sound(first_id)["tachie_voice_speed_scale"] - 1.0) < 1e-6
+run(bpy.ops.tachie.pick_line_character, character="ずんだもん")
+assert abs(sound(sed.active_strip["tachie_id"])["tachie_voice_speed_scale"] - 1.1) < 1e-6
+# キャラクターの声に戻す
+first_id = sed.active_strip["tachie_id"]
+sound(first_id)["tachie_voice_pitch_scale"] = 0.1
+sed.active_strip = sound(first_id)
+run(bpy.ops.tachie.reset_line_voice)
+assert abs(sound(sed.active_strip["tachie_id"])["tachie_voice_pitch_scale"]) < 1e-6
+check_idle()
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 run(bpy.ops.tachie.export_characters, filepath=str(exported))
@@ -126,6 +167,7 @@ from bl_ext.user_default.blender_tachie.tachie_studio.pipeline import load_chara
 
 again = load_characters(exported)
 assert again["ずんだもん"].expression.eye == "ジト目" and again["四国めたん"].layout["channel"] == 4
+assert again["ずんだもん"].voice == {"speedScale": 1.1} and again["四国めたん"].voice == {}, again["ずんだもん"].voice
 print(exported.read_text(encoding="utf-8"))
 
 # 台本の流し込み（テキストエディタの台本、表情つき）

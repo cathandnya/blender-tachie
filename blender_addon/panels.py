@@ -1,7 +1,7 @@
 import bpy
 
-from .operators import output_dir, seq_scene
-from .properties import PART_PROPS
+from .operators import line_sound, line_strips, output_dir, seq_scene
+from .properties import PART_PROPS, VOICE_PROPS
 
 
 class _Panel:
@@ -90,12 +90,28 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
         elif strip is None or not strip.get("tachie_id"):
             layout.label(text="セリフのストリップを選ぶと編集できます")
         else:
-            layout.label(text=f"{strip.get('tachie_character', '?')}（話者 {strip.get('tachie_speaker', '?')}）",
-                         icon="USER")
+            sound = line_sound(line_strips(sed, strip["tachie_id"]))
+            row = layout.row(align=True)
+            row.label(text="キャラクター")
+            row.operator("tachie.pick_line_character", text=strip.get("tachie_character", "?"), icon="USER")
+            row = layout.row(align=True)
+            row.label(text="スタイル")
+            speaker = (sound or strip).get("tachie_speaker", "?")
+            owner = next((c for c in seq_scene(context).tachie.characters
+                          if c.name == strip.get("tachie_character")), None)
+            name = owner.speaker_name if owner and owner.speaker == speaker and owner.speaker_name else f"ID {speaker}"
+            row.operator("tachie.pick_speaker", text=name, icon="VIEWZOOM").target = "LINE"
             layout.prop(strip, '["tachie_text"]', text="")
             row = layout.row(align=True)
             row.label(text="表情")
             row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "LINE"
+            col = layout.column(align=True)
+            if sound is not None and "tachie_voice_speed_scale" in sound:
+                for prop, (_, label, *_) in VOICE_PROPS.items():
+                    col.prop(sound, f'["tachie_voice_{prop}"]', text=label)
+                col.operator("tachie.reset_line_voice", icon="LOOP_BACK")
+            else:
+                col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
             row = layout.row()
             row.scale_y = 1.2
             row.operator("tachie.regenerate", icon="FILE_REFRESH")
@@ -122,6 +138,22 @@ class TACHIE_PT_character(_Panel, bpy.types.Panel):
         row.operator("tachie.pick_speaker", text=ch.speaker_name or "選ぶ", icon="VIEWZOOM")
         layout.prop(ch, "mouth")
         layout.prop(ch, "show_idle")
+
+
+class TACHIE_PT_voice(_Panel, bpy.types.Panel):
+    bl_label = "声"
+    bl_parent_id = "TACHIE_PT_character"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        ch = seq_scene(context).tachie.character()
+        col = layout.column(align=True)
+        for prop in VOICE_PROPS:
+            col.prop(ch, prop)
+        layout.label(text="新しく置くセリフの既定値", icon="INFO")
+        op = layout.operator("tachie.regenerate_all", text="置いたセリフにも当て直す", icon="FILE_REFRESH")
+        op.character_only, op.use_character_voice = True, True
 
 
 class TACHIE_PT_expression(_Panel, bpy.types.Panel):
@@ -251,6 +283,7 @@ _classes = (
     TACHIE_PT_line,
     TACHIE_PT_script,
     TACHIE_PT_character,
+    TACHIE_PT_voice,
     TACHIE_PT_expression,
     TACHIE_PT_presets,
     TACHIE_PT_placement,
