@@ -145,13 +145,28 @@ def config_of(ch) -> CharacterConfig:
         expression=base[ch.name].expression, mouth=ch.mouth,
         voice=_config_voice(ch),
         expressions={e.name: _parts_dict(e) for e in ch.expressions},
-        layout={"position": ch.position_x, "flip": ch.flip_x, "height": ch.height, "channel": ch.channel},
+        layout={"position": ch.position_x, "flip": ch.flip_x, "height": ch.height, "channel": ch.channel,
+                **_config_motion(ch)},
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
                   "y": ch.subtitle_y},
         audio=character_audio(ch),
         engine="" if ch.engine == "DEFAULT" else engine_url(bpy.context, ch),
     )
+
+
+# 立ち絵の動きの設定（キャラ設定の layout に書く。既定値のものは書かない）
+MOTION_KEYS = {"talk_bounce": "bounce", "talk_sway": "sway", "talk_period": "period",
+               "enter_effect": "enter", "exit_effect": "exit", "effect_seconds": "effect_seconds"}
+
+
+def _config_motion(ch) -> dict:
+    out = {}
+    for prop, key in MOTION_KEYS.items():
+        value, default = getattr(ch, prop), ch.bl_rna.properties[prop].default
+        if isinstance(value, str) and value != default or not isinstance(value, str) and abs(value - default) > 1e-6:
+            out[key] = round(value, 6) if isinstance(value, float) else value
+    return out
 
 
 def character_audio(ch) -> dict:
@@ -218,6 +233,8 @@ def apply_config(ch, config: CharacterConfig) -> None:
     for prop, key in (("position_x", "position"), ("flip_x", "flip"), ("height", "height"), ("channel", "channel")):
         if key in layout:
             setattr(ch, prop, layout[key])
+    for prop, key in MOTION_KEYS.items():  # 書いていないものは既定値（書き出しで既定値を省くため）
+        setattr(ch, prop, layout.get(key, ch.bl_rna.properties[prop].default))
     for prop, key in (("font_path", "font"), ("font_size", "size"), ("text_color", "color"),
                       ("outline_color", "outline_color"), ("outline_width", "outline_width"),
                       ("subtitle_y", "y")):
@@ -391,7 +408,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     for name in frame_files[1:]:
         image.elements.append(name)
     image.blend_type = "ALPHA_OVER"
-    apply_placement(image, ch)
+    set_pose(image, None, ch)
 
     subtitle = sed.strips.new_effect(name=f"字幕 {label}", type="TEXT", channel=settings.subtitle_channel,
                                      frame_start=start, length=clip.frames)
@@ -575,12 +592,37 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
     check_free(context, ch, start, clip.frames, ignore=old + movers)
 
+    old_image = next((s for s in old if s.type == "IMAGE"), None)
+    pose = get_pose(old_image) if old_image is not None else None
     for s in old:
         sed.strips.remove(s)
     remove_idle(sed)
     if settings.ripple and delta:
         shift_after(sed, old_end, delta)
-    return place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio)
+    strips = place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio)
+    if pose is not None:  # セリフごとの位置・大きさは作り直しても引き継ぐ
+        set_pose(strips[1], pose, ch)
+    return strips
+
+
+POSE_PROPS = {
+    "tachie_pos_x": ("横の位置", -1.0, 1.0, 0.0, "キャラクターの立ち位置からずらす量（画面の幅に対する割合）"),
+    "tachie_pos_y": ("縦の位置", -1.0, 1.0, 0.0, "上下にずらす量（画面の高さに対する割合）"),
+    "tachie_scale": ("大きさ", 0.1, 5.0, 1.0, "拡大率（足元を中心に拡大する）"),
+}
+
+
+def get_pose(strip) -> dict:
+    return {k: float(strip.get(k, default)) for k, (_, _, _, default, _) in POSE_PROPS.items()}
+
+
+def set_pose(strip, pose: dict | None, ch) -> None:
+    """立ち絵ストリップにセリフごとの位置・大きさ（パネルで編集する）を持たせて当てる。"""
+    for key, (label, lo, hi, default, desc) in POSE_PROPS.items():
+        strip[key] = float((pose or {}).get(key, default))
+        strip.id_properties_ui(key).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=1, precision=3,
+                                           description=desc)
+    apply_placement(strip, ch)
 
 
 # ---- 表情ストリップ（セリフの途中で表情を変える） ----
@@ -708,6 +750,20 @@ def refresh_faces(context, problems: list | None = None) -> int:
     return count
 
 
+def auto_signature(scene) -> tuple[str, str]:
+    """自動で描き直すきっかけ: （表情ストリップに関わる値, 立ち絵の動きに関わる値）。"""
+    from .motion import motion_signature
+
+    return faces_signature(scene), motion_signature(scene)
+
+
+def refresh_motion_now(scene) -> int:
+    """立ち絵の動き（跳ねる・揺れる・登場・退場、セリフごとの位置・大きさ）のキーフレームを作り直す。"""
+    from .motion import refresh_motion
+
+    return refresh_motion(scene, output_dir(bpy.context) / "lines")
+
+
 def faces_signature(scene) -> str:
     """表情ストリップと、それが効く立ち絵の位置・表情。変わったら描き直す（待機は作り直すので含めない）。"""
     sed = scene.sequence_editor
@@ -727,7 +783,7 @@ def faces_signature(scene) -> str:
     return json.dumps(sorted(items), ensure_ascii=False)
 
 
-_applied_signatures: dict[str, str] = {}
+_applied_signatures: dict[str, tuple[str, str]] = {}
 _face_timer_running = False
 _applying_faces = False
 
@@ -739,7 +795,7 @@ def _on_depsgraph_update(scene, depsgraph):
         return
     # 引数はウィンドウのシーン。シーケンサーが別のシーンを映していればそちらも見る
     scenes = {scene, getattr(bpy.context, "sequencer_scene", None) or scene}
-    if any(faces_signature(sc) != _applied_signatures.get(sc.name, "") for sc in scenes):
+    if any(auto_signature(sc) != _applied_signatures.get(sc.name, ("", "")) for sc in scenes):
         _face_timer_running = True
         bpy.app.timers.register(_apply_faces_later, first_interval=0.3)
 
@@ -756,12 +812,18 @@ def _apply_faces_later():
         # refresh_faces は seq_scene(context) を描き直すので、そのシーンだけを見る（他のシーンは
         # シーケンサーに映ったときに反映する）
         scene = seq_scene(bpy.context)
-        if faces_signature(scene) == _applied_signatures.get(scene.name, ""):
+        signature = auto_signature(scene)
+        applied = _applied_signatures.get(scene.name, ("", ""))
+        if signature == applied:
             return None
         _applying_faces = True
         try:
             problems = []
-            refresh_faces(bpy.context, problems)
+            # 動きだけが変わったとき（セリフごとの位置を変えた・動きのあるセリフを動かしたなど）は、
+            # 立ち絵の描き直しと待機の作り直しをせずにキーフレームだけ作り直す
+            if signature[0] != applied[0]:
+                refresh_faces(bpy.context, problems)  # 待機を作り直すときに動きも作り直す
+            refresh_motion_now(scene)
             for p in dict.fromkeys(problems):
                 print("表情を反映できません:", p)
             # undo_push はしない: 直前の操作（ドラッグなど）の段は反映前の状態なので、元に戻すと署名が
@@ -771,7 +833,7 @@ def _apply_faces_later():
             print("表情の反映に失敗しました:", e)
         finally:
             _applying_faces = False
-            _applied_signatures[scene.name] = faces_signature(scene)
+            _applied_signatures[scene.name] = auto_signature(scene)
     return None
 
 
@@ -825,6 +887,7 @@ def refresh_idle(context) -> int:
                 strip = _blink_strip(sed, ch, caches[preset], f"待機 {ch.name}", a, b - a, fps)
                 strip["tachie_idle"] = ch.name
                 count += 1
+    refresh_motion_now(scene)
     return count
 
 
@@ -840,7 +903,7 @@ def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int,
     return strip
 
 
-def place_still(context, ch, preset: str, start: int, frames: int):
+def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None):
     """セリフなしの立ち絵（まばたきのみ）を置く。待機ストリップと違い、作り直しでは消えない。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
@@ -864,6 +927,7 @@ def place_still(context, ch, preset: str, start: int, frames: int):
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
     strip["tachie_expression"] = preset or ""
+    set_pose(strip, pose, ch)
     if strip.right_handle - 1 > scene.frame_end:
         scene.frame_end = strip.right_handle - 1
     return strip
@@ -879,8 +943,9 @@ def remake_still(context, strip, preset: str | None = None):
         find_expression(ch, preset)
     start, frames = strip.left_handle, strip.right_handle - strip.left_handle
     character_cache(context, ch, preset)  # 素材が読めないときは消す前に失敗させる
+    pose = get_pose(strip)
     sed.strips.remove(strip)
-    return place_still(context, ch, preset, start, frames)
+    return place_still(context, ch, preset, start, frames, pose)
 
 
 def connect(context, strips) -> None:
@@ -1464,7 +1529,7 @@ class TACHIE_OT_add_face(bpy.types.Operator):
             refresh_faces(context, problems)
         finally:
             _applying_faces = False
-            _applied_signatures[scene.name] = faces_signature(scene)
+            _applied_signatures[scene.name] = auto_signature(scene)
         for s in sed.strips_all:
             s.select = False
         face.select = True
@@ -1489,7 +1554,7 @@ class TACHIE_OT_apply_faces(bpy.types.Operator):
             count = refresh_faces(context, problems)
         finally:
             _applying_faces = False
-            _applied_signatures[seq_scene(context).name] = faces_signature(seq_scene(context))
+            _applied_signatures[seq_scene(context).name] = auto_signature(seq_scene(context))
         if problems:
             self.report({"WARNING"}, f"{len(problems)} 本は描き直せませんでした: {problems[0]}")
         else:
@@ -1749,7 +1814,7 @@ class TACHIE_OT_batch_edit(bpy.types.Operator):
         finally:
             wm.progress_end()
             refresh_faces(context)
-            _applied_signatures[scene.name] = faces_signature(scene)
+            _applied_signatures[scene.name] = auto_signature(scene)
         if problems:
             self.report({"WARNING"}, f"{count} 個を変えました。{len(problems)} 個は変えられませんでした: {problems[0]}")
         else:

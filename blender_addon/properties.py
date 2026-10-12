@@ -17,6 +17,12 @@ from .tachie_studio.subtitle import chars_per_line, wrap
 from .tachie_studio.pipeline.config import VOICE_DEFAULTS
 from .tachie_studio.voicevox import DEFAULT_URL
 
+EFFECT_ITEMS = [
+    ("NONE", "なし", ""),
+    ("FADE", "フェード", "透明からだんだん見える（見えなくなる）"),
+    ("SLIDE", "スライド", "近い方の画面の端から入る（出る）"),
+]
+
 MOUTH_ITEMS = [
     ("auto", "自動", "母音の画像があればあいうえお式、なければ音量式"),
     ("vowel", "あいうえお", "音素の母音に合わせて口を動かす"),
@@ -166,13 +172,19 @@ def character_image_strips(ch):
 
 
 def apply_placement(strip, ch) -> None:
-    """立ち位置と左右反転をストリップに設定する。
+    """立ち位置・左右反転と、セリフごとの位置・大きさ（tachie_pos_x / tachie_pos_y / tachie_scale）を設定する。
 
     use_flip_x はずらした位置ごと画面中央で反転するので、反転するときは位置の符号を逆にしておく。
+    拡大・回転の中心は足元（下の中央）にする（大きさを変えても足の位置が動かず、揺れは足元が軸になる）。
     """
+    render = ch.id_data.render
     strip.use_flip_x = ch.flip_x
-    offset = ch.position_x * ch.id_data.render.resolution_x
+    offset = (ch.position_x + strip.get("tachie_pos_x", 0.0)) * render.resolution_x
     strip.transform.offset_x = -offset if ch.flip_x else offset
+    strip.transform.offset_y = strip.get("tachie_pos_y", 0.0) * render.resolution_y
+    scale = strip.get("tachie_scale", 1.0)
+    strip.transform.scale_x = strip.transform.scale_y = scale
+    strip.transform.origin = (0.5, 0.0)
 
 
 def load_font(path: str):
@@ -212,10 +224,17 @@ def _update_subtitle(self, context):
                 pass  # フォントが読めないときは今の見た目のまま
 
 
+def _update_motion(self, context):
+    from .operators import refresh_motion_now
+
+    refresh_motion_now(self.id_data)
+
+
 def _update_placement(self, context):
-    # 置いてあるストリップにもすぐ反映する（作り直さなくてよい）
+    # 置いてあるストリップにもすぐ反映する（作り直さなくてよい）。登場・退場のスライドも位置に合わせて作り直す
     for strip in character_image_strips(self):
         apply_placement(strip, self)
+    _update_motion(self, context)
 
 
 class TachieCharacter(bpy.types.PropertyGroup):
@@ -242,6 +261,20 @@ class TachieCharacter(bpy.types.PropertyGroup):
     height: FloatProperty(name="高さ", default=0.9, min=0.1, max=3.0,
                           description="画面の高さに対する立ち絵の高さ")
     channel: IntProperty(name="立ち絵チャンネル", default=3, min=1, max=128)
+    talk_bounce: FloatProperty(name="跳ねる高さ", default=0.0, min=0.0, max=0.2, step=0.1, precision=3,
+                               subtype="FACTOR", update=_update_motion,
+                               description="喋っている間に上下に跳ねる高さ（画面の高さに対する割合）。0 なら跳ねない")
+    talk_sway: FloatProperty(name="揺れる角度", default=0.0, min=0.0, max=20.0, step=10, precision=1,
+                             update=_update_motion, description="喋っている間に左右に揺れる角度（度）。0 なら揺れない")
+    talk_period: FloatProperty(name="動きの速さ", default=0.3, min=0.1, max=2.0, step=1, precision=2,
+                               unit="TIME_ABSOLUTE", update=_update_motion,
+                               description="跳ねる・揺れる 1 往復の長さ（秒）")
+    enter_effect: EnumProperty(name="登場", items=EFFECT_ITEMS, default="NONE", update=_update_motion,
+                               description="立ち絵が現れるところ（最初と、途切れたあと）の効果")
+    exit_effect: EnumProperty(name="退場", items=EFFECT_ITEMS, default="NONE", update=_update_motion,
+                              description="立ち絵が消えるところ（最後と、途切れる前）の効果")
+    effect_seconds: FloatProperty(name="登場・退場の長さ", default=0.3, min=0.05, max=3.0, step=1, precision=2,
+                                  unit="TIME_ABSOLUTE", update=_update_motion)
     show_idle: BoolProperty(name="待機中も表示", default=True,
                             description="喋っていない間も、まばたきだけする立ち絵を表示する")
 

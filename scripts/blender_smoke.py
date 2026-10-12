@@ -426,8 +426,51 @@ sed.strips.remove(bface)
 run(bpy.ops.tachie.apply_faces)
 check_idle()
 
+# 立ち絵の動き: 喋っている間に跳ねる・揺れる、登場（フェード）・退場（スライド）、セリフごとの大きさ
+from bl_ext.user_default.blender_tachie import motion as motion_mod  # noqa: E402
+
+
+def keyed(strip, attr):
+    bag = motion_mod._channelbag(scene)
+    path = f'sequence_editor.strips_all["{strip.name}"].{attr}'
+    fc = next((f for f in bag.fcurves if f.data_path == path), None) if bag else None
+    return [tuple(k.co) for k in fc.keyframe_points] if fc else []
+
+
+zunda.talk_bounce, zunda.talk_sway = 0.02, 3.0  # 変えるとすぐ作り直す
+zid = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
+zimg = image_of(zid)
+ys = keyed(zimg, "transform.offset_y")
+assert len(ys) > 4 and max(v for _, v in ys) > 0, ys
+assert keyed(zimg, "transform.rotation")
+peak = next(f for f, v in ys if v > 0)
+scene.frame_set(int(peak))
+assert zimg.transform.offset_y > 0
+zunda.enter_effect, zunda.exit_effect = "FADE", "SLIDE"
+zstrips = sorted([x for x in sed.strips if motion_mod.owner(x) == "ずんだもん" and x.channel == zunda.channel],
+                 key=lambda x: x.left_handle)
+assert [v for _, v in keyed(zstrips[0], "blend_alpha")][:2] == [0.0, 1.0]
+assert len(keyed(zstrips[-1], "transform.offset_x")) == 2
+# セリフごとの大きさ（足元が中心）。再生成しても残る
+zimg["tachie_scale"] = 1.5
+ops.refresh_motion_now(scene)
+assert abs(zimg.transform.scale_x - 1.5) < 1e-6 and tuple(zimg.transform.origin) == (0.5, 0.0)
+sed.active_strip = sound(zid)
+run(bpy.ops.tachie.regenerate)
+zid = sed.active_strip["tachie_id"]
+assert abs(image_of(zid)["tachie_scale"] - 1.5) < 1e-6 and keyed(image_of(zid), "transform.offset_y")
+# 動きを切るとキーフレームは消える
+zunda.talk_bounce = zunda.talk_sway = 0.0
+zunda.enter_effect = zunda.exit_effect = "NONE"
+image_of(zid)["tachie_scale"] = 1.0
+ops.refresh_motion_now(scene)
+assert not keyed(image_of(zid), "transform.offset_y") and not keyed(zstrips[0], "blend_alpha") \
+    if zstrips[0].name in {x.name for x in sed.strips} else True
+assert abs(image_of(zid).transform.scale_x - 1.0) < 1e-6
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
+zunda.talk_period = 0.5  # 動きの設定も書き出す（既定値のものは書かない）
 run(bpy.ops.tachie.export_characters, filepath=str(exported))
 from bl_ext.user_default.blender_tachie.tachie_studio.pipeline import load_characters  # noqa: E402
 
@@ -435,6 +478,7 @@ again = load_characters(exported)
 assert again["ずんだもん"].expression.eye == "ジト目" and again["四国めたん"].layout["channel"] == 4
 assert again["ずんだもん"].voice == {"speedScale": 1.1} and again["四国めたん"].voice == {}, again["ずんだもん"].voice
 assert abs(again["ずんだもん"].audio["after"] - 0.3) < 1e-6 and again["四国めたん"].audio["volume"] == 1.0
+assert again["ずんだもん"].layout["period"] == 0.5 and "enter" not in again["ずんだもん"].layout
 print(exported.read_text(encoding="utf-8"))
 
 # 台本の流し込み（テキストエディタの台本、表情つき）

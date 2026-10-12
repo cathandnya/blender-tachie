@@ -105,6 +105,7 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row = layout.row(align=True)
             row.label(text="表情")
             row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "STILL"
+            draw_pose(layout, strip)
             layout.operator("tachie.remake_still", icon="FILE_REFRESH")
         elif strip is None or not strip.get("tachie_id"):
             layout.label(text="セリフのストリップを選ぶと編集できます")
@@ -151,6 +152,7 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                 col.operator("tachie.reset_line_voice", icon="LOOP_BACK")
             else:
                 col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
+            draw_pose(layout, next((s for s in line_strips(sed, strip["tachie_id"]) if s.type == "IMAGE"), None))
             row = layout.row()
             row.scale_y = 1.2
             row.operator("tachie.regenerate", icon="FILE_REFRESH")
@@ -209,6 +211,36 @@ class TACHIE_PT_character(_Panel, bpy.types.Panel):
         row.operator("tachie.pick_speaker", text=ch.speaker_name or "選ぶ", icon="VIEWZOOM")
         layout.prop(ch, "mouth")
         layout.prop(ch, "show_idle")
+
+
+class TACHIE_PT_motion(_Panel, bpy.types.Panel):
+    bl_label = "動き"
+    bl_parent_id = "TACHIE_PT_character"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        ch = seq_scene(context).tachie.character()
+        col = layout.column(align=True)
+        col.prop(ch, "talk_bounce")
+        col.prop(ch, "talk_sway")
+        col.prop(ch, "talk_period")
+        col = layout.column(align=True)
+        col.prop(ch, "enter_effect")
+        col.prop(ch, "exit_effect")
+        col.prop(ch, "effect_seconds")
+        layout.label(text="置いてある立ち絵にすぐ反映します", icon="INFO")
+
+
+def draw_pose(layout, strip) -> None:
+    """セリフごと（立ち絵ごと）の位置・大きさ。"""
+    from .operators import POSE_PROPS
+
+    if strip is None or "tachie_scale" not in strip:
+        return
+    col = layout.column(align=True)
+    for key, (label, *_) in POSE_PROPS.items():
+        col.prop(strip, f'["{key}"]', text=label)
 
 
 class TACHIE_PT_voice(_Panel, bpy.types.Panel):
@@ -463,6 +495,7 @@ _classes = (
     TACHIE_PT_dictionary,
     TACHIE_PT_character,
     TACHIE_PT_voice,
+    TACHIE_PT_motion,
     TACHIE_PT_expression,
     TACHIE_PT_presets,
     TACHIE_PT_placement,

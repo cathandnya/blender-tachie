@@ -36,6 +36,14 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   終わりを待ってから `refresh_faces` する（`_applying_faces` で再入防止）。反映では undo の段を積まない（直前の操作の段は反映前の
   状態で、元に戻すと署名（`tachie_faced` を含む）が変わって描き直されるため）。キャラに無い表情の表情ストリップは無視する。
   ストリップの位置は `content_start` / `duration` を使う（`frame_start` / `frame_final_duration` は 6.0 で削除予定）。
+  立ち絵の動き（#11、`blender_addon/motion.py`）: 立ち絵ストリップの transform.offset_x / offset_y / rotation と
+  blend_alpha にキーフレームを打つ（シーンの Action、Blender 5 はスロットの channelbag。`anim_utils.action_get_channelbag_for_slot`）。
+  `refresh_motion` は管理しているパス（と、もう無いストリップのパス）の F カーブを全部消してから作り直す。喋っている区間は
+  lines/<id>.json の音量、登場・退場はキャラのチャンネルで続いて並ぶ立ち絵（待機を含む）のまとまりの最初と最後。
+  セリフごとの位置・大きさは立ち絵ストリップの `tachie_pos_x` / `tachie_pos_y` / `tachie_scale`（再生成で引き継ぐ）。
+  拡大・回転の中心 `transform.origin` は足元 (0.5, 0)。`refresh_idle` の最後と、自動反映（`auto_signature` に
+  `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
+  キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。
   まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・セリフなし・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
   音声ストリップに直接書き、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。
