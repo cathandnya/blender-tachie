@@ -1,0 +1,141 @@
+import glob
+import json
+import os
+
+import pytest
+
+from tachie_studio.ymmp import (
+    color, difference, load_project, other_items_summary, overlay, part_name, parts_of, preset_name, seconds,
+)
+
+CHAR = "C:\\ymm4\\sozai\\char\\ずんだもん"
+
+
+def anim(v, kind="なし", more=()):
+    return {"Values": [{"Value": v}, *({"Value": x} for x in more)], "Span": 0.0, "AnimationType": kind}
+
+
+def project_json(old: bool = False) -> dict:
+    voice = {
+        "$type": "YukkuriMovieMaker.Project.Items.VoiceItem, YukkuriMovieMaker",
+        "CharacterName": "ずんだもん", "Serif": "こんにちはなのだ", "Hatsuon": "コンニチワナ'/ノダ'",
+        "Pronounce": {"AudioQuery": {"accent_phrases": [{"moras": [], "accent": 1}], "speedScale": 1.25,
+                                     "pitchScale": 0.0, "intonationScale": 1.0, "volumeScale": 1.0,
+                                     "prePhonemeLength": 0.1, "postPhonemeLength": 0.1, "pauseLengthScale": 1.0}},
+        "VoiceLength": "00:00:01.2480000", "Volume": anim(50.0), "Pan": anim(0.0),
+        "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
+                           "StyleID": 3, "Speed": 120, "Pitch": 95.0, "Intonation": 100.0, "PrePhonemeLength": 0.1,
+                           "PostPhonemeLength": 0.1},
+        "JimakuVisibility": "Hidden",
+        "TachieFaceParameter": {"Eye": f"{CHAR}\\目\\普通白目_カメラ目線.png", "Etc2": f"{CHAR}\\他\\右腕_指差し.png"},
+        "Frame": 120, "Layer": 3, "Length": 93, "KeyFrames": {"Count": 0},
+    }
+    return {
+        "FilePath": "C:\\x\\test.ymmp",
+        **({"Timeline": None} if old else {"SelectedTimelineIndex": 0}),
+        "Characters": [{
+            "Name": "ずんだもん", "Color": "#FF33A65E", "Voice": {"API": "voicevox", "Arg": ""},
+            "Volume": anim(50.0), "Pan": anim(0.0), "AdditionalTime": 0.3,
+            "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
+                               "StyleID": 3, "Speed": 110, "Pitch": 100.0, "Intonation": 80.0,
+                               "PrePhonemeLength": 0.1, "PostPhonemeLength": 0.1, "PauseLengthScale": 100.0},
+            "Font": "メイリオ", "FontSize": anim(80.0), "FontColor": "#FFFFFFFF", "Style": "Border",
+            "StyleColor": "#FF33A65E", "Y": anim(540.0), "IsJimakuVisible": True,
+            "TachieType": "YukkuriMovieMaker.Plugin.Tachie.AnimationTachie.AnimationTachiePlugin, X",
+            "TachieCharacterParameter": {"Directory": CHAR},
+            "TachieDefaultItemParameter": {"Eyebrow": f"{CHAR}\\眉\\普通眉.png", "Eye": f"{CHAR}\\目\\普通白目_普通目.png",
+                                           "Mouth": f"{CHAR}\\口\\むふ.png", "Complexion": None,
+                                           "Etc1": f"{CHAR}\\他\\左腕_基本.png", "Etc2": f"{CHAR}\\他\\右腕_基本.png"},
+        }, {"Name": "ゆっくり霊夢", "Voice": {"API": "aquestalk", "Arg": ""}, "TachieType": None}],
+    } | {"Timeline" if old else "Timelines": (lambda tl: tl if old else [tl])({
+        "VideoInfo": {"FPS": 60, "Hz": 48000, "Width": 1920, "Height": 1080}, "Length": 600,
+        "Items": [
+            {**voice, "Frame": 300, "Serif": "あとのセリフ"},
+            voice,
+            {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん",
+             "TachieItemParameter": {"Eye": f"{CHAR}\\目\\普通白目_目逸らし.png"}, "X": anim(769.0),
+             "Y": anim(530.0, "直線移動", (600.0,)), "Zoom": anim(80.0), "Frame": 0, "Layer": 1, "Length": 600,
+             "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
+                               "IsEnabled": True}]},
+            {"$type": "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker",
+             "CharacterName": "ずんだもん", "TachieFaceParameter": {"Eyebrow": f"{CHAR}\\眉\\困り眉1.png"},
+             "Frame": 400, "Layer": 4, "Length": 60},
+            {"$type": "YukkuriMovieMaker.Project.Items.ImageItem, YukkuriMovieMaker", "FilePath": "C:\\a.png",
+             "Frame": 0, "Layer": 0, "Length": 600},
+            {"$type": "YukkuriMovieMaker.Project.Items.TransitionItem, YukkuriMovieMaker", "Frame": 0, "Layer": 2,
+             "Length": 30},
+        ]})}
+
+
+def write(tmp_path, data) -> str:
+    path = tmp_path / "test.ymmp"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8-sig")
+    return str(path)
+
+
+@pytest.mark.parametrize("old", [False, True])
+def test_load_project(tmp_path, old):
+    p = load_project(write(tmp_path, project_json(old)))
+    assert (p.fps, p.width, p.height, p.length) == (60.0, 1920, 1080, 600)
+    c = p.characters["ずんだもん"]
+    assert c.folder_name == "ずんだもん" and c.style_id == 3 and c.has_tachie and c.after == 0.3
+    assert c.voice["speedScale"] == 1.1 and c.voice["intonationScale"] == 0.8 and c.voice["pitchScale"] == 0.0
+    assert c.font == "メイリオ" and c.font_size == 80.0 and c.subtitle_y == 540.0 and c.outline
+    assert c.outline_color == pytest.approx((0x33 / 255, 0xA6 / 255, 0x5E / 255, 1.0))
+    assert c.parts == {"眉": "普通眉", "目": "普通白目_普通目", "口": "むふ", "髪": "", "顔色": "", "体": "",
+                       "他": ["左腕_基本", "右腕_基本"], "後": []}
+    assert [v.frame for v in p.voices] == [120, 300]  # 始まり順
+    v = p.voices[0]
+    assert v.text == "こんにちはなのだ" and v.kana == "コンニチワナ'/ノダ'" and v.style_id == 3
+    assert v.voice["speedScale"] == 1.25  # audio_query の値が VoiceParameter（1.2）より優先
+    assert v.voice["pitchScale"] == 0.0 and v.accent == [{"moras": [], "accent": 1}]
+    assert v.voice_seconds == pytest.approx(1.248) and v.subtitle == "Hidden"
+    assert v.face == {"目": "普通白目_カメラ目線", "他": ["", "右腕_指差し"]}
+    assert p.tachies[0].parts["目"] == "普通白目_目逸らし" and p.tachies[0].x == 769.0 and p.tachies[0].zoom == 80.0
+    assert p.faces[0].parts == {"眉": "困り眉1"} and p.faces[0].frame == 400
+    assert other_items_summary(p) == {"画像": 1, "トランジション": 1}
+    assert p.unsupported["立ち絵のエフェクト InOutJumpEffect"] == 1
+    assert p.unsupported["TachieItem の Y のアニメーション"] == 1
+    assert p.unsupported["VOICEVOX 以外の声（ゆっくり霊夢: aquestalk）"] == 1
+
+
+def test_not_a_project(tmp_path):
+    path = tmp_path / "x.ymmp"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_project(path)
+    path.write_text("not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_project(path)
+
+
+def test_helpers():
+    assert seconds("00:00:05.8833333") == pytest.approx(5.8833333)
+    assert seconds("1.00:00:01") == 86401 and seconds(None) == 0.0
+    assert color("#80FF0000") == pytest.approx((1.0, 0.0, 0.0, 128 / 255))
+    assert part_name("C:\\a\\目\\ジト目.png") == "ジト目" and part_name(None) == ""
+    assert parts_of({"Eye": "C:\\目\\x.png", "Back3": "C:\\後\\y.png"}, full=False) == {"目": "x", "後": ["", "", "y"]}
+
+
+def test_overlay_and_difference():
+    base = {"眉": "普通", "目": "普通", "他": ["左腕", "右腕"], "後": []}
+    full = overlay(base, {"目": "ジト目", "他": ["", "右腕_指差し"]})
+    assert full == {"眉": "普通", "目": "ジト目", "他": ["左腕", "右腕_指差し"], "後": []}
+    assert difference(base, full) == {"目": "ジト目", "他": ["", "右腕_指差し"]}
+    assert difference(base, base) == {}
+
+
+def test_preset_name():
+    assert preset_name({"目": "ジト目", "他": ["", "右腕"]}, set()) == "ジト目・右腕"
+    assert preset_name({"目": "ジト目"}, {"ジト目"}) == "ジト目 2"
+
+
+# 手元の YMM4 のプロジェクトのフォルダ（YMMP_DIR、下の階層も）を全部読めること
+REAL = sorted(glob.glob(os.path.join(os.environ["YMMP_DIR"], "**", "*.ymmp"), recursive=True)) if os.environ.get("YMMP_DIR") else []
+
+
+@pytest.mark.skipif(not REAL, reason="YMMP_DIR が無い")
+def test_real_projects_load():
+    for path in REAL:
+        p = load_project(path)
+        assert all(v.character for v in p.voices), path

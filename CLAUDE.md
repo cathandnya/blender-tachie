@@ -14,6 +14,16 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - 書き出し設定のプリセット（`operators.RENDER_PRESETS`、`apply_render_preset`）: Blender 5 は `image_settings.media_type = "VIDEO"`
   にしてから `file_format = "FFMPEG"`。解像度・fps はセリフの連番・立ち位置・大きさに効くので、置いたあとに変えたら全再生成を案内する。
 - `src/tachie_studio/srt.py` — 字幕ファイル（SRT / WebVTT）。アドオンの「書き出し」パネルは置いた字幕ストリップの位置（シーン開始 = 0 秒、ミュートは除く）、CLI の `--srt` はセリフを順に `--gap` 秒あけて並べた時刻。
+- `src/tachie_studio/ymmp.py` — YMM4 のプロジェクト（.ymmp、UTF-8 BOM の JSON）を読む（#15）。`Timelines`（古い版は `Timeline`）、
+  アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は
+  Speed/Intonation/PauseLengthScale が %、Pitch は 100 が 0（(Pitch-100)/100）。`Pronounce.AudioQuery` があればその値と
+  accent_phrases を優先。ボイスの `Length` = 声 + AdditionalTime。`VoiceCache`（圧縮された音声）は使わない。
+  アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 素材フォルダは `ymmp_material_root` の下（2 階層）から
+  YMM4 と同じ名前で探す（`add_character` を使う）。既にあるキャラは設定を変えない。表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
+  キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
+  立ち絵アイテムの基本がキャラの基本と違う区間は、セリフの区間を除いて表情ストリップにする。余韻は次のセリフに 1 フレーム
+  あけて重ならないように縮める。YMM4 の音量 50 = 等倍（未確認）、立ち絵の X/Y は画像の中心（`position_x`/`position_y`）、
+  Zoom は素材の高さに対する %（`height`）。画像・動画などのアイテムはまだ読まない（数だけ報告）。実ファイルのテストは `YMMP_DIR`。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。

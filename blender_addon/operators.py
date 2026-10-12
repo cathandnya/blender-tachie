@@ -146,6 +146,7 @@ def config_of(ch) -> CharacterConfig:
         voice=_config_voice(ch),
         expressions={e.name: _parts_dict(e) for e in ch.expressions},
         layout={"position": ch.position_x, "flip": ch.flip_x, "height": ch.height, "channel": ch.channel,
+                **({"position_y": round(ch.position_y, 6)} if ch.position_y else {}),
                 **_config_motion(ch)},
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
@@ -235,6 +236,7 @@ def apply_config(ch, config: CharacterConfig) -> None:
     for prop, key in (("position_x", "position"), ("flip_x", "flip"), ("height", "height"), ("channel", "channel")):
         if key in layout:
             setattr(ch, prop, layout[key])
+    ch.position_y = layout.get("position_y", 0.0)
     for prop, key in MOTION_KEYS.items():  # 書いていないものは既定値（書き出しで既定値を省くため）
         setattr(ch, prop, layout.get(key, ch.bl_rna.properties[prop].default))
     for prop, key in (("font_path", "font"), ("font_size", "size"), ("text_color", "color"),
@@ -1930,51 +1932,59 @@ class TACHIE_OT_character_add(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
-        settings = seq_scene(context).tachie
         # PSD を選んだらそのファイル、フォルダを選んだら（ファイル名が空）フォルダ
         source = self.filepath if self.filepath.lower().endswith(".psd") else self.directory
         try:
-            character = load_material(source)
-            key = material_key(source)
-            material = load_material_defaults(character.path)
-            saved = load_character_defaults().get(key, {})
-            # 優先: アドオン設定 → 素材の tachie.toml → 素材の preset.ini → 固定値
-            table = merge_tables({"speaker": 3}, material, saved)
-            name = str(table.pop("name", "") or key)
-            config = parse_characters({name: {**table, "folder": source}}, Path("."), use_material=False)[name]
-        except (*ERRORS, OSError) as e:
+            ch, sources = add_character(context, source)
+        except ValueError as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        ch = settings.characters.add()
-        try:
-            apply_config(ch, config)
-        except (TypeError, ValueError, KeyError) as e:  # tachie.toml の値の型や範囲が合わない
-            settings.characters.remove(len(settings.characters) - 1)
-            self.report({"ERROR"}, f"初期値を当てはめられません: {e}")
-            return {"CANCELLED"}
-        ch.folder = source
-        if character.is_psd and not item_layers(ch):
-            psd_default_mouth(ch, character)
-        n = len(settings.characters)
-        # 立ち位置が決まっていなければ、2 人目以降は左右を入れ替える
-        if "position" not in config.layout and n > 1:
-            ch.position_x = -0.3 if n % 2 == 0 else 0.3
-        # チャンネルは他のキャラと重なるなら空いている番号へ
-        if n > 1 or "channel" in config.layout:
-            ch.channel = _free_channel(settings, ch, config.layout.get("channel"))
-        try:  # エンジンが止まっていても追加は待たせない
-            names = client(context, ch, timeout=3.0).styles()
-            ch.speaker_name = dict(names).get(ch.speaker, "")
-        except (VoicevoxError, OSError):
-            pass
-        settings.active_character = n - 1
-        has_toml = (Path(character.path) / MATERIAL_CONFIG).is_file()
-        has_ini = (Path(character.path) / PRESET_FILE).is_file()
-        sources = [label for label, used in (("アドオン設定", bool(saved)), (MATERIAL_CONFIG, has_toml),
-                                             (PRESET_FILE, has_ini)) if used]
         if sources:
             self.report({"INFO"}, f"{ch.name} を {'と'.join(sources)} の初期値で追加しました")
         return {"FINISHED"}
+
+
+def add_character(context, source: str):
+    """素材フォルダか PSD からキャラクターを追加する。(キャラクター, 使った初期値の出どころ) を返す。"""
+    settings = seq_scene(context).tachie
+    try:
+        character = load_material(source)
+        key = material_key(source)
+        material = load_material_defaults(character.path)
+        saved = load_character_defaults().get(key, {})
+        # 優先: アドオン設定 → 素材の tachie.toml → 素材の preset.ini → 固定値
+        table = merge_tables({"speaker": 3}, material, saved)
+        name = str(table.pop("name", "") or key)
+        config = parse_characters({name: {**table, "folder": source}}, Path("."), use_material=False)[name]
+    except (*ERRORS, OSError) as e:
+        raise ValueError(str(e)) from None
+    ch = settings.characters.add()
+    try:
+        apply_config(ch, config)
+    except (TypeError, ValueError, KeyError) as e:  # tachie.toml の値の型や範囲が合わない
+        settings.characters.remove(len(settings.characters) - 1)
+        raise ValueError(f"初期値を当てはめられません: {e}") from None
+    ch.folder = source
+    if character.is_psd and not item_layers(ch):
+        psd_default_mouth(ch, character)
+    n = len(settings.characters)
+    # 立ち位置が決まっていなければ、2 人目以降は左右を入れ替える
+    if "position" not in config.layout and n > 1:
+        ch.position_x = -0.3 if n % 2 == 0 else 0.3
+    # チャンネルは他のキャラと重なるなら空いている番号へ
+    if n > 1 or "channel" in config.layout:
+        ch.channel = _free_channel(settings, ch, config.layout.get("channel"))
+    try:  # エンジンが止まっていても追加は待たせない
+        names = client(context, ch, timeout=3.0).styles()
+        ch.speaker_name = dict(names).get(ch.speaker, "")
+    except (VoicevoxError, OSError):
+        pass
+    settings.active_character = n - 1
+    has_toml = (Path(character.path) / MATERIAL_CONFIG).is_file()
+    has_ini = (Path(character.path) / PRESET_FILE).is_file()
+    sources = [label for label, used in (("アドオン設定", bool(saved)), (MATERIAL_CONFIG, has_toml),
+                                         (PRESET_FILE, has_ini)) if used]
+    return ch, sources
 
 
 class TACHIE_OT_save_defaults(bpy.types.Operator):

@@ -205,7 +205,7 @@ def apply_placement(strip, ch) -> None:
     strip.use_flip_x = ch.flip_x
     offset = (ch.position_x + strip.get("tachie_pos_x", 0.0)) * render.resolution_x
     strip.transform.offset_x = -offset if ch.flip_x else offset
-    strip.transform.offset_y = strip.get("tachie_pos_y", 0.0) * render.resolution_y
+    strip.transform.offset_y = (ch.position_y + strip.get("tachie_pos_y", 0.0)) * render.resolution_y
     scale = strip.get("tachie_scale", 1.0)
     strip.transform.scale_x = strip.transform.scale_y = scale
     strip.transform.origin = (0.5, 0.0)
@@ -320,6 +320,8 @@ class TachieCharacter(bpy.types.PropertyGroup):
 
     position_x: FloatProperty(name="立ち位置", default=0.3, min=-1.0, max=1.0, update=_update_placement,
                               description="画面中央を 0、右端を 0.5 とした横位置")
+    position_y: FloatProperty(name="上下の位置", default=0.0, min=-1.0, max=1.0, update=_update_placement,
+                              description="立ち絵を上下にずらす量（画面の高さに対する割合、上が正）")
     flip_x: BoolProperty(name="左右反転", default=False, update=_update_placement,
                          description="立ち絵を左右反転する")
     height: FloatProperty(name="高さ", default=0.9, min=0.1, max=3.0,
@@ -440,6 +442,9 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
                                             default=(0.15, 0.3, 0.7, 0.85), update=_update_headlines)
     headline_y: FloatProperty(name="高さ", default=0.85, min=0.0, max=1.0, subtype="FACTOR", update=_update_headlines)
     subtitle_channel: IntProperty(name="字幕", default=10, min=1, max=128)
+    ymmp_material_root: StringProperty(name="素材フォルダを探す場所", subtype="DIR_PATH", default="",
+                                       description="YMM4 のプロジェクトを読み込むとき、無いキャラクターの素材フォルダ"
+                                                   "（YMM4 と同じ名前）をこの中から探す")
     se_channel: IntProperty(name="効果音", default=1, min=1, max=128,
                             description="効果音を置くチャンネル。他のストリップがあれば、上の空いているチャンネル"
                                         "（音声・字幕・キャラ名・見出し・立ち絵のチャンネルは除く）")

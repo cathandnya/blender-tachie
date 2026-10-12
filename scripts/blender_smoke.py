@@ -580,6 +580,85 @@ run(bpy.ops.tachie.remove_sound_effect, index=se_index)
 assert len(effects) == se_index
 s.se_at_lines = False
 
+# YMM4 のプロジェクトの読み込み: 今あるキャラ（ずんだもん）はそのまま、無いキャラは素材フォルダから追加する
+import json  # noqa: E402
+
+YMM_CHAR = "C:\\ymm4\\sozai\\char\\"
+frame_end_before = scene.frame_end
+ymm_base = (scene.frame_end + 60 - scene.frame_start) * 2  # YMM4 は 60fps、このシーンは 30fps
+
+
+def ymm_voice(name, text, frame, face=None):
+    return {"$type": "YukkuriMovieMaker.Project.Items.VoiceItem, YukkuriMovieMaker", "CharacterName": name,
+            "Serif": text, "Hatsuon": "", "VoiceLength": "00:00:01", "Volume": 50.0, "Pan": 0.0,
+            "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
+                               "StyleID": 3 if name == "ずんだもん" else 2, "Speed": 100, "Pitch": 100.0,
+                               "Intonation": 100.0, "PrePhonemeLength": 0.1, "PostPhonemeLength": 0.1},
+            "JimakuVisibility": "UseCharacterSetting", "TachieFaceParameter": face or {},
+            "Frame": ymm_base + frame, "Layer": 3, "Length": 90}
+
+
+metan_dir = YMM_CHAR + "四国めたん"
+ymmp = out / "test.ymmp"
+ymmp.write_text(json.dumps({
+    "FilePath": "C:\\x\\test.ymmp", "SelectedTimelineIndex": 0,
+    "Characters": [{
+        "Name": "めたん（YMM4）", "Voice": {"API": "voicevox"}, "Volume": 50.0, "AdditionalTime": 0.2,
+        "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
+                           "StyleID": 2, "Speed": 110, "Pitch": 100.0, "Intonation": 100.0,
+                           "PrePhonemeLength": 0.1, "PostPhonemeLength": 0.1},
+        "Font": "存在しないフォント", "FontSize": 70.0, "FontColor": "#FFFFFFFF", "Style": "Border",
+        "StyleColor": "#FFDF4C94", "Y": 540.0, "IsJimakuVisible": True,
+        "TachieType": "YukkuriMovieMaker.Plugin.Tachie.AnimationTachie.AnimationTachiePlugin, X",
+        "TachieCharacterParameter": {"Directory": metan_dir},
+        "TachieDefaultItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png",
+                                       "Mouth": metan_dir + "\\口\\ほほえみ.png"}}],
+    "Timelines": [{"VideoInfo": {"FPS": 60, "Width": 1920, "Height": 1080}, "Length": ymm_base + 700, "Items": [
+        ymm_voice("ずんだもん", "読み込んだセリフなのだ", 0, {"Eye": YMM_CHAR + "ずんだもん\\目\\なごみ目.png"}),
+        ymm_voice("めたん（YMM4）", "読み込んだセリフですわ", 300),
+        {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "めたん（YMM4）",
+         "TachieItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png",
+                                 "Mouth": metan_dir + "\\口\\ほほえみ.png"}, "X": -770.0, "Y": 600.0,
+         "Zoom": 80.0, "Frame": ymm_base, "Layer": 1, "Length": 700},
+        {"$type": "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker", "CharacterName": "ずんだもん",
+         "TachieFaceParameter": {"Eyebrow": YMM_CHAR + "ずんだもん\\眉\\怒り眉.png"}, "Frame": ymm_base + 600,
+         "Layer": 4, "Length": 60},
+        {"$type": "YukkuriMovieMaker.Project.Items.ImageItem, YukkuriMovieMaker", "FilePath": "C:\\a.png",
+         "Frame": 0, "Layer": 0, "Length": 60},
+    ]}]}, ensure_ascii=False), encoding="utf-8-sig")
+s.ymmp_material_root = str(Path(zunda.folder).parent if Path(zunda.folder).is_absolute()
+                           else Path(bpy.path.abspath(zunda.folder)).parent)
+zunda_presets = {e.name for e in zunda.expressions}
+n_chars = len(s.characters)
+run(bpy.ops.tachie.import_ymmp, filepath=str(ymmp), match_video=False)
+report = bpy.data.texts["YMM4 の読み込み結果"].as_string()
+print(report)
+assert "セリフ 2 / 2 個" in report and "画像: 1" in report and "存在しないフォント" in report, report
+ymetan = s.characters[n_chars]
+assert ymetan.name == "めたん（YMM4）" and ymetan.speaker == 2 and abs(ymetan.speed_scale - 1.1) < 1e-6
+assert abs(ymetan.audio_after - 0.2) < 1e-6 and ymetan.font_size == 70 and ymetan.subtitle_y == 0.0
+assert ymetan.position_x < 0 and ymetan.position_y < 0 and ymetan.part_eye == "普通白目_普通目"
+ylines = {sts[0]["tachie_text"]: (l, sts) for _, (l, _, sts) in lines().items()
+          if sts[0]["tachie_text"].startswith("読み込んだ")}
+zl, zsts = ylines["読み込んだセリフなのだ"]
+ml, _ = ylines["読み込んだセリフですわ"]
+assert zl == scene.frame_start + ymm_base // 2 and ml == zl + 150  # 60fps → 30fps
+zpreset = zsts[0]["tachie_expression"]
+assert zpreset not in zunda_presets and next(e for e in zunda.expressions if e.name == zpreset).part_eye == "なごみ目"
+yfaces = [x for x in sed.strips if x.get("tachie_face") == "ずんだもん" and x.left_handle == zl + 300]
+assert yfaces and next(e for e in zunda.expressions
+                       if e.name == yfaces[0]["tachie_expression"]).part_eyebrow == "怒り眉"
+# 片付け（あとのテストに影響しないように）
+for x in [x for x in sed.strips if (x.get("tachie_text", "").startswith("読み込んだ") or x in yfaces
+                                    or x.get("tachie_character") == ymetan.name)]:
+    sed.strips.remove(x)
+s.characters.remove(n_chars)
+for i in reversed(range(len(zunda.expressions))):
+    if zunda.expressions[i].name not in zunda_presets:
+        zunda.expressions.remove(i)
+ops.refresh_idle(bpy.context)
+scene.frame_end = frame_end_before
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 zunda.talk_period = 0.5  # 動きの設定も書き出す（既定値のものは書かない）

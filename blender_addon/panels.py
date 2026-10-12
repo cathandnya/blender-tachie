@@ -406,6 +406,7 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
         sub.enabled = s.script is not None
         sub.operator("tachie.import_script", text="流し込む", icon="PLAY").use_text = True
         layout.operator("tachie.import_script", text="ファイルから流し込む", icon="FILE_TEXT").use_text = False
+        layout.operator("tachie.import_ymmp", icon="IMPORT")
 
 
 class TACHIE_PT_placement(_Panel, bpy.types.Panel):
@@ -420,6 +421,7 @@ class TACHIE_PT_placement(_Panel, bpy.types.Panel):
         row = col.row(align=True)
         row.prop(ch, "position_x")
         row.prop(ch, "flip_x", text="", icon="MOD_MIRROR")
+        col.prop(ch, "position_y")
         col.prop(ch, "height")
         col.prop(ch, "channel")
 
