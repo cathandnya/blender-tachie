@@ -474,6 +474,9 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     ymmp_material_root: StringProperty(name="素材フォルダを探す場所", subtype="DIR_PATH", default="",
                                        description="YMM4 のプロジェクトを読み込むとき、無いキャラクターの素材フォルダ"
                                                    "（YMM4 と同じ名前）をこの中から探す")
+    ymmp_media_root: StringProperty(name="画像・動画などを探す場所", subtype="DIR_PATH", default="",
+                                    description="YMM4 のプロジェクトの画像・動画・音声が元の場所と .ymmp のフォルダに"
+                                                "無いとき、この中（下の階層も）から同じ名前のファイルを探す")
     se_channel: IntProperty(name="効果音", default=1, min=1, max=128,
                             description="効果音を置くチャンネル。他のストリップがあれば、上の空いているチャンネル"
                                         "（音声・字幕・キャラ名・見出し・立ち絵のチャンネルは除く）")

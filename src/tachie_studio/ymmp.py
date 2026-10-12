@@ -193,6 +193,46 @@ class Span:
     hidden: bool = False
 
 
+# 画像・動画・音声・テキストのアイテム → Media.kind
+MEDIA_KINDS = {"ImageItem": "image", "VideoItem": "video", "AudioItem": "audio", "TextItem": "text"}
+# アニメーション（始め → 終わり）を写す値。Media の属性名
+MEDIA_ANIMATED = {"X": "x", "Y": "y", "Zoom": "zoom", "Opacity": "opacity", "Rotation": "rotation", "Volume": "volume"}
+LINEAR = "直線移動"
+
+
+@dataclass
+class Media:
+    """画像・動画・音声・テキストのアイテム。X / Y は画面中央からのピクセル（下が正）で、画像・動画は中心、
+    テキストは BasePoint の点。Zoom は %（100 で素材の 1 ピクセルが出力の 1 ピクセル）、Rotation は度（時計回り）。"""
+
+    kind: str  # image / video / audio / text
+    frame: int
+    length: int
+    layer: int
+    file: str = ""  # YMM4 のパス（Windows）
+    x: float = 0.0
+    y: float = 0.0
+    zoom: float = 100.0
+    rotation: float = 0.0
+    opacity: float = 100.0  # %
+    volume: float = 50.0  # YMM4 の音量（50 が等倍）
+    rate: float = 100.0  # 再生速度（%）
+    offset: float = 0.0  # 素材の頭からの再生開始（秒）
+    fade_in: float = 0.0
+    fade_out: float = 0.0
+    text: str = ""
+    font: str = ""
+    font_size: float = 34.0
+    font_color: tuple = (1.0, 1.0, 1.0, 1.0)
+    outline: bool = False
+    outline_color: tuple = (0.0, 0.0, 0.0, 1.0)
+    bold: bool = False
+    base_point: str = "LeftTop"
+    anim: dict[str, tuple[float, float, str]] = field(default_factory=dict)  # 属性 → (始め, 終わり, 種類)
+    effects: list[str] = field(default_factory=list)
+    hidden: bool = False
+
+
 @dataclass
 class Project:
     path: Path
@@ -204,7 +244,8 @@ class Project:
     voices: list[Voice] = field(default_factory=list)
     tachies: list[Span] = field(default_factory=list)
     faces: list[Span] = field(default_factory=list)
-    others: list[dict] = field(default_factory=list)  # 画像・動画・音声・テキストなど（そのままの dict）
+    media: list[Media] = field(default_factory=list)  # 画像・動画・音声・テキスト
+    others: list[dict] = field(default_factory=list)  # トランジション・エフェクト・図形など（そのままの dict）
     unsupported: Counter = field(default_factory=Counter)  # 読み込まないもの → 数
 
 
@@ -231,7 +272,7 @@ def voice_params(param: dict | None) -> tuple[int | None, dict[str, float]]:
 
 def _subtitle_style(c: Character, d: dict) -> None:
     c.font = d.get("Font") or ""
-    c.font_size = value(d.get("FontSize"), 0.0)
+    c.font_size = value(d.get("FontSize"), 0.0) * value(d.get("Zoom"), 100.0) / 100  # Zoom は字幕の拡大率
     c.font_color = color(d.get("FontColor"))
     c.outline = d.get("Style") == "Border"
     c.outline_color = color(d.get("StyleColor"), (0.0, 0.0, 0.0, 1.0))
@@ -288,9 +329,50 @@ def _span(item: dict, parts: dict) -> Span:
                 effects=_effects(item, "VideoEffects", "TachieFaceEffects"), hidden=bool(item.get("IsHidden")))
 
 
+def _media(item: dict, kind: str, hidden_layers: set[int]) -> Media:
+    m = Media(kind=kind, frame=int(item.get("Frame", 0)), length=int(item.get("Length", 0)),
+              layer=int(item.get("Layer", 0)), file=item.get("FilePath") or "",
+              x=value(item.get("X")), y=value(item.get("Y")), zoom=value(item.get("Zoom"), 100.0),
+              rotation=value(item.get("Rotation")), opacity=value(item.get("Opacity"), 100.0),
+              volume=value(item.get("Volume"), 50.0), rate=value(item.get("PlaybackRate"), 100.0) or 100.0,
+              offset=seconds(item.get("ContentOffset")), fade_in=float(item.get("FadeIn") or 0.0),
+              fade_out=float(item.get("FadeOut") or 0.0), effects=_effects(item, "VideoEffects", "AudioEffects"),
+              hidden=bool(item.get("IsHidden")) or int(item.get("Layer", 0)) in hidden_layers)
+    if kind == "text":
+        m.text = (item.get("Text") or "").replace("\r\n", "\n").replace("\r", "\n")
+        m.font = item.get("Font") or ""
+        m.font_size = value(item.get("FontSize"), 34.0)
+        m.font_color = color(item.get("FontColor"))
+        m.outline = item.get("Style") == "Border"
+        m.outline_color = color(item.get("StyleColor"), (0.0, 0.0, 0.0, 1.0))
+        m.bold = bool(item.get("Bold"))
+        m.base_point = item.get("BasePoint") or "LeftTop"
+    for key, attr in MEDIA_ANIMATED.items():
+        v = item.get(key)
+        if animated(v):
+            values = v["Values"]
+            m.anim[attr] = (float(values[0].get("Value", 0.0)), float(values[-1].get("Value", 0.0)),
+                            v.get("AnimationType", ""))
+    return m
+
+
+def front_layer(project: Project) -> int:
+    """立ち絵アイテム（無ければボイス）の一番下のレイヤー。これより下のアイテムは立ち絵より奥に描く。"""
+    layers = [s.layer for s in project.tachies if not s.hidden] or [v.layer for v in project.voices]
+    return min(layers) if layers else 0
+
+
+# 始め → 終わりの直線のアニメーションを写せる値（テキストの Zoom・Rotation はキーフレームを打たない）
+MEDIA_KEYED = {"ImageItem": ("X", "Y", "Zoom", "Opacity", "Rotation"), "VideoItem": tuple(MEDIA_ANIMATED),
+               "AudioItem": ("Volume",), "TextItem": ("X", "Y", "Opacity")}
+
+
 def _note_unsupported(project: Project, kind: str, item: dict) -> None:
     for name, v in item.items():
         if animated(v):
+            if name in MEDIA_KEYED.get(kind, ()) and len(v["Values"]) == 2 and (
+                    v.get("AnimationType") == LINEAR):
+                continue  # 始め → 終わりの直線はキーフレームで写す
             project.unsupported[f"{kind} の {name} のアニメーション"] += 1
     if (item.get("KeyFrames") or {}).get("Count"):
         project.unsupported[f"{kind} の中間点（キーフレーム）"] += 1
@@ -319,9 +401,23 @@ def load_project(path: str | Path) -> Project:
             project.unsupported[f"VOICEVOX 以外の声（{c.name}: {c.voice_api}）"] += 1
         if d.get("TachieType") and not c.has_tachie:
             project.unsupported[f"動く立ち絵以外の立ち絵（{c.name}: {c.tachie_kind}）"] += 1
+    hidden_layers = {int(d.get("Layer", -1)) for d in (timeline.get("LayerSettings") or {}).get("Items") or []
+                     if d.get("IsHidden")}
     for item in timeline.get("Items") or []:
         kind = _type(item)
-        if kind == "VoiceItem":
+        if kind in MEDIA_KINDS:
+            m = _media(item, MEDIA_KINDS[kind], hidden_layers)
+            project.media.append(m)
+            label = ITEM_LABELS[kind]
+            for e in m.effects:
+                project.unsupported[f"{label}のエフェクト {e}"] += 1
+            if item.get("IsLooped"):
+                project.unsupported[f"{label}のループ再生"] += 1
+            if (item.get("Blend") or "Normal") != "Normal":
+                project.unsupported[f"{label}の合成モード {item['Blend']}"] += 1
+            if kind == "TextItem" and item.get("Decorations"):
+                project.unsupported["テキストの装飾（Decorations）"] += 1
+        elif kind == "VoiceItem":
             v = _voice(item)
             project.voices.append(v)
             if v.subtitle == "Custom":
@@ -347,6 +443,7 @@ def load_project(path: str | Path) -> Project:
     project.voices.sort(key=lambda v: (v.frame, v.layer))
     project.tachies.sort(key=lambda s: (s.frame, s.layer))
     project.faces.sort(key=lambda s: (s.frame, s.layer))
+    project.media.sort(key=lambda m: (m.frame, m.layer))
     return project
 
 

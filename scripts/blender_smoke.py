@@ -730,6 +730,40 @@ def ymm_voice(name, text, frame, face=None):
 
 metan_dir = YMM_CHAR + "四国めたん"
 ymmp = out / "test.ymmp"
+# 画像・動画・音声・テキスト（素材は .ymmp と同じフォルダに置き、YMM4 のパスのファイル名で探させる）
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+bg_img = bpy.data.images.new("ymm_bg", 64, 36)
+bg_img.pixels = [0.2, 0.6, 0.3, 1.0] * (64 * 36)
+bg_img.filepath_raw, bg_img.file_format = str(out / "背景.png"), "PNG"
+bg_img.save()
+has_ffmpeg = shutil.which("ffmpeg") is not None
+if has_ffmpeg:
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=4:size=320x180:rate=30",
+                    "-pix_fmt", "yuv420p", str(out / "clip.mp4")], check=True)
+YMM_ITEM = "YukkuriMovieMaker.Project.Items."
+ymm_media = [
+    {"$type": YMM_ITEM + "ImageItem, YukkuriMovieMaker", "FilePath": "C:\\Users\\x\\背景.png", "X": 100.0,
+     "Y": -50.0, "Zoom": 50.0, "Opacity": {"Values": [{"Value": 100.0}, {"Value": 0.0}], "AnimationType": "直線移動"},
+     "Frame": ymm_base, "Layer": 0, "Length": 100},
+    {"$type": YMM_ITEM + "ImageItem, YukkuriMovieMaker", "FilePath": "C:\\missing.png", "Frame": ymm_base,
+     "Layer": 2, "Length": 60},
+    {"$type": YMM_ITEM + "AudioItem, YukkuriMovieMaker", "FilePath": "D:\\bgm\\bgm.wav", "Frame": ymm_base,
+     "Layer": 8, "Length": 300, "ContentOffset": "00:00:01",
+     "Volume": {"Values": [{"Value": 5.0}, {"Value": 0.0}], "AnimationType": "直線移動"}},
+    {"$type": YMM_ITEM + "TextItem, YukkuriMovieMaker", "Text": "タイトル\r\n2 行目", "FontSize": 80.0,
+     "FontColor": "#FFFF0000", "Style": "Border", "StyleColor": "#FFFFFFFF", "Bold": True, "BasePoint": "CenterTop",
+     "X": -100.0, "Y": -500.0, "Frame": ymm_base, "Layer": 9, "Length": 120},
+]
+if has_ffmpeg:  # 30fps の素材を 2 倍速、0.5 秒目から（スピードコントロールで合わせる）
+    ymm_media.append({"$type": YMM_ITEM + "VideoItem, YukkuriMovieMaker", "FilePath": "C:\\clip.mp4",
+                      "PlaybackRate": 200.0, "ContentOffset": "00:00:00.5000000", "Volume": 0.0,
+                      "Frame": ymm_base + 200, "Layer": 0, "Length": 120})
+addon_before = (s.se_channel, s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel,
+                zunda.channel, metan.channel)
+first_sound = next(x for x in sed.strips if x.type == "SOUND" and x.get("tachie_id"))
+first_sound_channel = first_sound.channel
 ymmp.write_text(json.dumps({
     "FilePath": "C:\\x\\test.ymmp", "SelectedTimelineIndex": 0,
     "Characters": [{
@@ -759,8 +793,7 @@ ymmp.write_text(json.dumps({
         {"$type": "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker", "CharacterName": "ずんだもん",
          "TachieFaceParameter": {"Eyebrow": YMM_CHAR + "ずんだもん\\眉\\怒り眉.png"}, "Frame": ymm_base + 600,
          "Layer": 4, "Length": 60},
-        {"$type": "YukkuriMovieMaker.Project.Items.ImageItem, YukkuriMovieMaker", "FilePath": "C:\\a.png",
-         "Frame": 0, "Layer": 0, "Length": 60},
+        *ymm_media,
     ]}]}, ensure_ascii=False), encoding="utf-8-sig")
 s.ymmp_material_root = str(Path(zunda.folder).parent if Path(zunda.folder).is_absolute()
                            else Path(bpy.path.abspath(zunda.folder)).parent)
@@ -769,7 +802,29 @@ n_chars = len(s.characters)
 run(bpy.ops.tachie.import_ymmp, filepath=str(ymmp), match_video=False)
 report = bpy.data.texts["YMM4 の読み込み結果"].as_string()
 print(report)
-assert "セリフ 4 / 4 個" in report and "画像: 1" in report and "存在しないフォント" in report, report
+assert "セリフ 4 / 4 個" in report and "missing.png" in report and "存在しないフォント" in report, report
+assert "画像 1" in report and "音声 1" in report and "テキスト 1" in report, report
+# 立ち絵より奥（レイヤー 0）は、アドオンのチャンネルを上へずらした下に置く（置いてあったセリフも一緒にずれる）
+shift = 2 if has_ffmpeg else 1  # レイヤー 0 に動画（スピードコントロールで 2 本）
+assert (s.se_channel, s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel, zunda.channel,
+        metan.channel) == tuple(c + shift for c in addon_before)
+assert first_sound.channel == first_sound_channel + shift
+ymm = {x.get("tachie_ymmp"): x for x in sed.strips if x.get("tachie_ymmp") and x.type != "MOVIE"}
+bg = ymm["image"]
+assert bg.channel < min(addon_before) + shift and bg.left_handle == scene.frame_start + ymm_base // 2
+assert bg.right_handle == bg.left_handle + 50 and abs(bg.transform.scale_x - 0.5) < 1e-6
+assert (bg.transform.offset_x, bg.transform.offset_y) == (100.0, 50.0)
+assert [v for _, v in keyed(bg, "blend_alpha")] == [1.0, 0.0]
+bgm_strip = ymm["audio"]
+assert [round(v, 4) for _, v in keyed(bgm_strip, "volume")] == [0.1, 0.0] and bgm_strip.right_handle - bgm_strip.left_handle == 150
+title = ymm["text"]
+assert title.text == "タイトル\n2 行目" and title.use_bold and title.anchor_x == "CENTER" and title.anchor_y == "TOP"
+assert abs(title.location[0] - (0.5 - 100 / 1920)) < 1e-6 and abs(title.location[1] - (0.5 + 500 / 1080)) < 1e-6
+assert title.channel > s.headline_channel
+if has_ffmpeg:
+    speed = ymm["video"]
+    assert speed.type == "SPEED" and speed.input_1.type == "MOVIE" and speed.channel == speed.input_1.channel + 1
+    assert [round(v, 3) for _, v in keyed(speed, "speed_frame_number")] == [15.0, 135.0]
 ymetan = s.characters[n_chars]
 assert ymetan.name == "めたん（YMM4）" and ymetan.speaker == 2 and abs(ymetan.speed_scale - 1.1) < 1e-6
 assert abs(ymetan.audio_after - 0.2) < 1e-6 and ymetan.font_size == 70 and ymetan.subtitle_y == 0.0
@@ -793,6 +848,16 @@ assert sorted(x.type for x in nsts) == ["SOUND", "TEXT"] and nsts[0]["tachie_lay
 for x in [x for x in sed.strips if (x.get("tachie_text", "").startswith("読み込んだ") or x in yfaces
                                     or x.get("tachie_character") in (ymetan.name, ynar.name))]:
     sed.strips.remove(x)
+for x in [x for x in sed.strips if x.get("tachie_ymmp") and x.type == "SPEED"]:
+    sed.strips.remove(x)
+for x in [x for x in sed.strips if x.get("tachie_ymmp")]:
+    sed.strips.remove(x)
+for x in sorted(sed.strips, key=lambda x: x.channel):  # ずらしたチャンネルを戻す（下から）
+    x.channel -= shift
+for prop in ("se_channel", "audio_channel", "subtitle_channel", "name_channel", "headline_channel"):
+    setattr(s, prop, getattr(s, prop) - shift)
+for c in s.characters:
+    c.channel -= shift
 s.characters.remove(n_chars + 1)
 s.characters.remove(n_chars)
 for i in reversed(range(len(zunda.expressions))):
