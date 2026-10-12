@@ -17,8 +17,8 @@ from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, auto_signature,
-    character_voice, check_free, client, connect, ensure_sequencer_scene, load_material, place_strips,
-    refresh_faces, remove_idle, render_clip, scene_fps, seq_scene,
+    character_voice, client, connect, ensure_sequencer_scene, line_channels, load_material, place_strips,
+    refresh_faces, remove_idle, render_clip, scene_fps, seq_scene, subtitle_clashes,
 )
 from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
@@ -29,6 +29,8 @@ from .tachie_studio.ymmp import Project, difference, load_project, other_items_s
 REPORT_TEXT = "YMM4 の読み込み結果"
 # YMM4 の音量（セリフ・キャラの既定は 50）→ Blender の音量。50 を等倍とみなす（YMM4 での意味は未確認）
 VOLUME_BASE = 50.0
+# 声の終わりよりこれ以上前から始まる別のキャラのセリフは、同時に喋るものとみなす（シーンのフレーム）
+SIMULTANEOUS_FRAMES = 2
 
 
 def find_material(root: str, folder_name: str) -> str | None:
@@ -316,14 +318,16 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 ch = characters[v.character]
                 c = project.characters.get(v.character)
                 start = frame(v.frame)
-                # 余韻は YMM4 のアイテムの長さから（次のセリフに重ならないように）
+                # 余韻は YMM4 のアイテムの長さから。次のセリフに重ならないように縮める（シーンのフレームで数える。
+                # fps が違うと YMM4 の 1 フレームでは足りない。合成し直した声はフレームの丸めで 1 フレーム長くなる
+                # ことがあるので、その分あける）。声の途中から始まる別のキャラのセリフ（同時に喋る）は相手にしない
                 after = max(0.0, v.length / project.fps - v.voice_seconds)
-                following = [w.frame for w in voices[i + 1:] if w.frame > v.frame]
-                if following:
-                    # シーンのフレームで数える（fps が違うと YMM4 の 1 フレームでは足りない）。合成し直した声は
-                    # フレームの丸めで 1 フレーム長くなることがあるので、その分あける
-                    room = frame(following[0]) - start - frame_count(v.voice_seconds, fps) - 1
-                    after = max(0.0, min(after, room / fps))
+                voiced = frame_count(v.voice_seconds, fps)
+                for w in voices[i + 1:]:
+                    room = frame(w.frame) - start - voiced - 1
+                    if w.frame > v.frame and (w.character == v.character or room >= -SIMULTANEOUS_FRAMES):
+                        after = max(0.0, min(after, room / fps))
+                        break
                 audio = {"volume": v.volume / VOLUME_BASE, "pan": v.pan / 100, "fade_in": v.fade_in,
                          # 切り上げると余韻のフレームが 1 つ増えるので切り捨て
                          "fade_out": v.fade_out, "after": math.floor(after * 10000) / 10000}
@@ -333,18 +337,23 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                     clip, lines_dir = render_clip(context, ch, v.text, preset or None, speaker=v.style_id, voice=voice,
                                                   kana=v.kana or None, accent=v.accent, accent_kana=v.kana or None,
                                                   audio=audio)
-                    check_free(context, ch, start, clip.frames)
+                    channels = line_channels(context, ch, start, clip.frames)
                 except ERRORS as e:
                     problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: {e}")
                     skipped["置けなかったセリフ"] += 1
                     continue
                 strips = place_strips(context, ch, clip, lines_dir, v.text, start, voice=voice, accent=v.accent,
-                                      audio=audio)
+                                      audio=audio, channels=channels)
                 sound = strips[0]
                 sound.volume, sound.pan = audio["volume"], max(-1.0, min(1.0, audio["pan"]))
                 if v.subtitle == "Hidden" or (v.subtitle == "UseCharacterSetting" and c and not c.subtitle_visible):
                     for s in strips[2:]:
                         s.mute = True
+                else:
+                    clashes = subtitle_clashes(sed, strips)
+                    if clashes:
+                        problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: 字幕が"
+                                        f"{'・'.join(clashes)}の字幕と重なっています")
                 connect(context, strips)
                 line_spans.setdefault(v.character, []).append((start, strips[1].right_handle))
                 placed += 1

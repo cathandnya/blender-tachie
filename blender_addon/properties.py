@@ -221,6 +221,28 @@ def load_font(path: str):
     return bpy.data.fonts.load(path, check_existing=True)
 
 
+def text_offset(strip) -> tuple[float, float]:
+    """セリフごとに字幕（とキャラ名）をずらす量（tachie_sub_x / tachie_sub_y、画面に対する割合）。"""
+    return float(strip.get("tachie_sub_x", 0.0)), float(strip.get("tachie_sub_y", 0.0))
+
+
+def name_height(ch, text: str) -> float:
+    """キャラ名を置く高さ（字幕の上。字幕の行数から見積もる）。"""
+    render = ch.id_data.render
+    lines = wrap(text, chars_per_line(render.resolution_x, ch.font_size)).count("\n") + 1
+    margin = ch.box_margin if ch.subtitle_box else 0.0
+    return ch.subtitle_y + (lines * ch.font_size * 1.25 + ch.font_size * 0.6 * 0.3) / render.resolution_y + margin * 2
+
+
+def place_text(strip, ch, text: str) -> None:
+    """字幕・キャラ名のストリップを、キャラの字幕の高さ + セリフごとにずらした位置に置く。"""
+    dx, dy = text_offset(strip)
+    if strip.get("tachie_role") == "name":
+        strip.location = (0.5 + dx, min(0.98, name_height(ch, text) + dy))
+    else:
+        strip.location = (0.5 + dx, ch.subtitle_y + dy)
+
+
 def apply_subtitle(strip, ch, text: str) -> None:
     """字幕ストリップにキャラクターの字幕スタイルを設定する（改行も入れ直す）。"""
     strip.text = wrap(text, chars_per_line(ch.id_data.render.resolution_x, ch.font_size))
@@ -228,7 +250,7 @@ def apply_subtitle(strip, ch, text: str) -> None:
     font = load_font(ch.font_path)
     if font is not None:
         strip.font = font
-    strip.location = (0.5, ch.subtitle_y)
+    place_text(strip, ch, text)
     strip.anchor_y = "BOTTOM"
     strip.color = ch.text_color
     strip.use_outline = ch.outline_width > 0
@@ -242,17 +264,13 @@ def apply_subtitle(strip, ch, text: str) -> None:
 
 def apply_name(strip, ch, text: str) -> None:
     """キャラ名のストリップ: 字幕の上（行数から高さを見積もる）に、キャラの縁取りの色の帯で名前を出す。"""
-    render = ch.id_data.render
-    lines = wrap(text, chars_per_line(render.resolution_x, ch.font_size)).count("\n") + 1
-    size = ch.font_size * 0.6
+    strip["tachie_role"] = "name"
     strip.text = ch.name
-    strip.font_size = size
+    strip.font_size = ch.font_size * 0.6
     font = load_font(ch.font_path)
     if font is not None:
         strip.font = font
-    margin = ch.box_margin if ch.subtitle_box else 0.0
-    y = ch.subtitle_y + (lines * ch.font_size * 1.25 + size * 0.3) / render.resolution_y + margin * 2
-    strip.location = (0.5, min(0.98, y))
+    place_text(strip, ch, text)
     strip.anchor_y = "BOTTOM"
     strip.color = ch.text_color
     strip.use_outline = False

@@ -11,7 +11,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, place_text, system_fonts, text_offset
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
 from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
 from .tachie_studio.pipeline.script import split_kana
@@ -375,30 +375,55 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
     return clip, lines_dir
 
 
-def check_free(context, ch, start: int, frames: int, ignore=()) -> None:
+def line_channels(context, ch, start: int, frames: int, ignore=()) -> dict:
+    """セリフを start に置くチャンネル {"audio", "subtitle", "name"}。
+
+    立ち絵はキャラのチャンネル（同じキャラのセリフは重ねられない）。音声・字幕・キャラ名は設定のチャンネルが
+    埋まっていれば、そこから上で空いていて、立ち絵・見出し・他の役割の設定でないチャンネル（別のキャラのセリフと
+    同時に喋るとき）。字幕・キャラ名は上にしか行かないので、立ち絵より手前に描かれる。
+    """
     settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
-    channels = (settings.audio_channel, ch.channel, settings.subtitle_channel)
+    roles = {"audio": settings.audio_channel, "subtitle": settings.subtitle_channel}
     if ch.show_name:
-        channels += (settings.name_channel,)
+        roles["name"] = settings.name_channel
+    channels = (*roles.values(), ch.channel)
     if len(set(channels)) < len(channels):
         raise ValueError("音声・立ち絵・字幕（・キャラ名）のチャンネルは別々にしてください")
     if sed is None:
-        return
-    busy = [c for c in channels if _overlaps(sed, c, start, start + frames, ignore)]
-    if busy:
-        raise ValueError(f"チャンネル {', '.join(map(str, busy))} の {start}〜{start + frames} フレームに"
-                         "他のストリップがあります")
+        return roles
+    end = start + frames
+    if _overlaps(sed, ch.channel, start, end, ignore):
+        raise ValueError(f"{ch.name}の立ち絵（チャンネル {ch.channel}）の {start}〜{end} フレームに他のストリップが"
+                         "あります（同じキャラのセリフは重ねられません）")
+    reserved = {settings.audio_channel, settings.subtitle_channel, settings.name_channel, settings.headline_channel}
+    reserved |= {c.channel for c in settings.characters}
+    taken: set[int] = set()
+    result = {}
+    for role, channel in roles.items():
+        if role == "name":
+            channel = max(channel, result["subtitle"] + 1)  # キャラ名は字幕より上
+        while channel in taken or _overlaps(sed, channel, start, end, ignore) or (
+                channel != roles[role] and channel in reserved):
+            channel += 1
+            if channel > 128:
+                raise ValueError(f"{start}〜{end} フレームに空いているチャンネルがありません")
+        taken.add(channel)
+        result[role] = channel
+    return result
 
 
 def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voice: dict | None = None,
-                 accent: list | None = None, audio: dict | None = None) -> list:
+                 accent: list | None = None, audio: dict | None = None, channels: dict | None = None) -> list:
     """書き出したセリフを start に置く。置いたストリップ（音声・立ち絵・字幕）を返す。
 
     セリフごとの声（`voice`、None ならキャラクターの既定値）は音声ストリップの `tachie_voice_*` に持つ。
+    `channels` は `line_channels` の結果（None なら設定のチャンネル）。
     """
     scene = seq_scene(context)
     settings = scene.tachie
+    channels = channels or {"audio": settings.audio_channel, "subtitle": settings.subtitle_channel,
+                            "name": settings.name_channel}
     sed = scene.sequence_editor or scene.sequence_editor_create()
     if scene.view_settings.view_transform != "Standard":
         # 3D 用の AgX / Filmic のままだと立ち絵の色が淡くなる
@@ -409,7 +434,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     label = f"{ch.name}: " + (text if len(text) <= 16 else text[:15] + "…")
 
     sound = sed.strips.new_sound(name=f"音声 {label}", filepath=_path_for_blend(lines_dir / clip.wav),
-                                 channel=settings.audio_channel, frame_start=start)
+                                 channel=channels["audio"], frame_start=start)
 
     image = sed.strips.new_image(name=f"立ち絵 {label}", filepath=_path_for_blend(frames_dir / frame_files[0]),
                                  channel=ch.channel, frame_start=start, fit_method="ORIGINAL")
@@ -418,15 +443,15 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     image.blend_type = "ALPHA_OVER"
     set_pose(image, None, ch)
 
-    subtitle = sed.strips.new_effect(name=f"字幕 {label}", type="TEXT", channel=settings.subtitle_channel,
+    subtitle = sed.strips.new_effect(name=f"字幕 {label}", type="TEXT", channel=channels["subtitle"],
                                      frame_start=start, length=clip.frames)
+    set_text_offset(subtitle, None)
     apply_subtitle(subtitle, ch, text)
     extra = []
     if ch.show_name:  # 字幕の上のキャラ名（字幕と同じ長さ）
-        name = sed.strips.new_effect(name=f"名前 {label}", type="TEXT", channel=settings.name_channel,
+        name = sed.strips.new_effect(name=f"名前 {label}", type="TEXT", channel=channels["name"],
                                      frame_start=start, length=clip.frames)
         apply_name(name, ch, text)
-        name["tachie_role"] = "name"
         extra.append(name)
 
     if subtitle.right_handle - 1 > scene.frame_end:
@@ -605,18 +630,37 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     delta = start + clip.frames - old_end
     # 消す前に置けるか確かめる（ずらすストリップは邪魔にならない）
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
-    check_free(context, ch, start, clip.frames, ignore=old + movers)
+    channels = line_channels(context, ch, start, clip.frames, ignore=old + movers)
+    shift = delta
+    if delta < 0:
+        # 縮めるとき、このセリフの途中から始まって後ろまで続くストリップ（同時に喋る別のキャラのセリフなど）は
+        # 動かさないので、同じチャンネルの後ろのストリップがそこへ重ならないところまでしか詰めない
+        # （重なると Blender が別のチャンネルへ逃がす）
+        stay = [s for s in sed.strips if s not in old and s not in movers and not s.get("tachie_idle")
+                and s.right_handle > old_end + delta]
+        for m in movers:
+            if m.get("tachie_idle"):
+                continue
+            for s in stay:
+                if s.channel == m.channel:
+                    shift = max(shift, s.right_handle - m.left_handle)
 
     old_image = next((s for s in old if s.type == "IMAGE"), None)
     pose = get_pose(old_image) if old_image is not None else None
+    old_subtitle = line_subtitle(old)
+    offset = text_offset(old_subtitle) if old_subtitle is not None else None
     for s in old:
         sed.strips.remove(s)
     remove_idle(sed)
-    if settings.ripple and delta:
-        shift_after(sed, old_end, delta)
-    strips = place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio)
+    if settings.ripple and shift:
+        shift_after(sed, old_end, shift)
+    strips = place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio, channels)
     if pose is not None:  # セリフごとの位置・大きさは作り直しても引き継ぐ
         set_pose(strips[1], pose, ch)
+    if offset is not None:
+        for t in strips[2:]:
+            set_text_offset(t, offset)
+            place_text(t, ch, text)
     return strips
 
 
@@ -625,6 +669,39 @@ POSE_PROPS = {
     "tachie_pos_y": ("縦の位置", -1.0, 1.0, 0.0, "上下にずらす量（画面の高さに対する割合）"),
     "tachie_scale": ("大きさ", 0.1, 5.0, 1.0, "拡大率（足元を中心に拡大する）"),
 }
+
+
+# 字幕（とキャラ名）をセリフごとにずらす量。字幕ストリップで編集し、自動反映でキャラ名にも写す
+TEXT_POSE_PROPS = {
+    "tachie_sub_x": ("字幕の横の位置", "字幕を左右にずらす量（画面の幅に対する割合）"),
+    "tachie_sub_y": ("字幕の縦の位置", "字幕を上下にずらす量（画面の高さに対する割合）"),
+}
+
+
+def line_subtitle(strips):
+    return next((s for s in strips if s.type == "TEXT" and s.get("tachie_role") != "name"), None)
+
+
+def set_text_offset(strip, offset: tuple[float, float] | None) -> None:
+    for key, value in zip(TEXT_POSE_PROPS, offset or (0.0, 0.0)):
+        strip[key] = float(value)
+        strip.id_properties_ui(key).update(min=-1.0, max=1.0, soft_min=-1.0, soft_max=1.0, step=1, precision=3,
+                                           description=TEXT_POSE_PROPS[key][1])
+
+
+def subtitle_clashes(sed, strips) -> list[str]:
+    """置いた字幕と、時間も位置も重なっている別のセリフの字幕のキャラ名。"""
+    mine = line_subtitle(strips)
+    if mine is None:
+        return []
+    names = []
+    for s in sed.strips:
+        if (s.type == "TEXT" and s.get("tachie_id") and s.get("tachie_role") != "name"
+                and s.get("tachie_id") != mine.get("tachie_id") and not s.mute
+                and s.left_handle < mine.right_handle and mine.left_handle < s.right_handle
+                and abs(s.location[0] - mine.location[0]) < 0.2 and abs(s.location[1] - mine.location[1]) < 0.08):
+            names.append(s.get("tachie_character", "?"))
+    return sorted(set(names))
 
 
 def get_pose(strip) -> dict:
@@ -1016,10 +1093,10 @@ class TACHIE_OT_add_line(bpy.types.Operator):
         start = seq_scene(context).frame_current
         try:
             clip, lines_dir = render_clip(context, ch, text, settings.expression, kana=kana)
-            check_free(context, ch, start, clip.frames)
+            channels = line_channels(context, ch, start, clip.frames)
             if seq_scene(context).sequence_editor:
                 remove_idle(seq_scene(context).sequence_editor)
-            strips = place_strips(context, ch, clip, lines_dir, text, start)
+            strips = place_strips(context, ch, clip, lines_dir, text, start, channels=channels)
             if settings.auto_idle:
                 refresh_idle(context)
         except ERRORS as e:
@@ -1028,7 +1105,13 @@ class TACHIE_OT_add_line(bpy.types.Operator):
         connect(context, strips)
         if settings.advance:
             seq_scene(context).frame_current = strips[1].right_handle
-        self.report({"INFO"}, f"{strips[1].duration} フレームのセリフを追加しました")
+        clashes = subtitle_clashes(seq_scene(context).sequence_editor, strips)
+        if clashes:
+            self.report({"WARNING"}, f"{strips[1].duration} フレームのセリフを追加しました。字幕が"
+                                     f"{'・'.join(clashes)}の字幕と重なっています（キャラの字幕の高さか、"
+                                     "セリフの「字幕の縦の位置」でずらしてください）")
+        else:
+            self.report({"INFO"}, f"{strips[1].duration} フレームのセリフを追加しました")
         return {"FINISHED"}
 
 
@@ -2785,8 +2868,8 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
             for line in lines:
                 ch = find_character(settings, line.character)
                 clip, lines_dir = render_clip(context, ch, line.text, line.expression, kana=line.kana)
-                check_free(context, ch, cursor, clip.frames)
-                strips = place_strips(context, ch, clip, lines_dir, line.text, cursor)
+                channels = line_channels(context, ch, cursor, clip.frames)
+                strips = place_strips(context, ch, clip, lines_dir, line.text, cursor, channels=channels)
                 connect(context, strips)
                 cursor = strips[1].right_handle + gap
                 placed += 1

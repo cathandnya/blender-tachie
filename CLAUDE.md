@@ -22,7 +22,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   YMM4 と同じ名前で探す（`add_character` を使う）。既にあるキャラは設定を変えない。表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
   立ち絵アイテムの基本がキャラの基本と違う区間は、セリフの区間を除いて表情ストリップにする。余韻は次のセリフに 1 フレーム
-  あけて重ならないように縮める。YMM4 の音量 50 = 等倍（未確認）、立ち絵の X/Y は画像の中心（`position_x`/`position_y`）、
+  あけて重ならないように縮める（声の終わりより `SIMULTANEOUS_FRAMES` 以上前から始まる別のキャラのセリフは同時に喋るので相手にしない）。YMM4 の音量 50 = 等倍（未確認）、立ち絵の X/Y は画像の中心（`position_x`/`position_y`）、
   Zoom は素材の高さに対する %（`height`）。画像・動画などのアイテムはまだ読まない（数だけ報告）。実ファイルのテストは `YMMP_DIR`。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
@@ -45,6 +45,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   自動の反映は `depsgraph_update_post` のハンドラで署名（`faces_signature`）の変化を見て、タイマーでモーダル操作の
   終わりを待ってから `refresh_faces` する（`_applying_faces` で再入防止）。反映では undo の段を積まない（直前の操作の段は反映前の
   状態で、元に戻すと署名（`tachie_faced` を含む）が変わって描き直されるため）。キャラに無い表情の表情ストリップは無視する。
+  同時に喋るセリフ（#17）: `line_channels` が置く前にチャンネルを決める。立ち絵はキャラのチャンネル（同じキャラは重ねられない）、
+  音声・字幕・キャラ名は設定のチャンネルが埋まっていれば上の空き（立ち絵・見出し・他の役割の設定チャンネルは飛ばす、
+  キャラ名は字幕より上）。セリフのストリップはチャンネルではなく `tachie_id` と種類・`tachie_role` で探す。
+  字幕をセリフごとにずらす量は字幕ストリップの `tachie_sub_x` / `tachie_sub_y`（`properties.place_text`、再生成で引き継ぐ）。
+  自動反映（`motion_signature` に含める）で `refresh_motion` がキャラ名にも写して location を当て直す。
+  `subtitle_clashes` で時間も位置も重なる字幕を知らせる。
   ストリップの位置は `content_start` / `duration` を使う（`frame_start` / `frame_final_duration` は 6.0 で削除予定）。
   立ち絵の動き（#11、`blender_addon/motion.py`）: 立ち絵ストリップの transform.offset_x / offset_y / rotation と
   blend_alpha にキーフレームを打つ（シーンの Action、Blender 5 はスロットの channelbag。`anim_utils.action_get_channelbag_for_slot`）。

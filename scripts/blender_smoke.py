@@ -580,6 +580,72 @@ run(bpy.ops.tachie.remove_sound_effect, index=se_index)
 assert len(effects) == se_index
 s.se_at_lines = False
 
+# 同時に喋るセリフ: 別のキャラなら重ねて置ける（音声・字幕・キャラ名は上の空いたチャンネル）。同じキャラは重ねられない
+frame_end_before = scene.frame_end
+t0 = max(r for _, r, _ in lines().values()) + 30
+metan.show_name = True
+scene.frame_current = t0
+s.active_character, s.expression, s.text = 0, "", "同時に喋るのだ。"
+run(bpy.ops.tachie.add_line)
+scene.frame_current = t0 + 5
+s.active_character, s.text = 1, "同時に喋りますわね、ずんだもんさん。"
+run(bpy.ops.tachie.add_line)
+both = {sts[0]["tachie_text"]: sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"].startswith("同時に")}
+zsts, msts = both["同時に喋るのだ。"], both["同時に喋りますわね、ずんだもんさん。"]
+role = lambda sts, kind: next(x for x in sts if (x.type, x.get("tachie_role")) == kind)
+SOUND, SUB, NAME = ("SOUND", None), ("TEXT", None), ("TEXT", "name")
+assert role(zsts, SOUND).channel == s.audio_channel and role(zsts, SUB).channel == s.subtitle_channel
+reserved = {s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel} | {c.channel for c in s.characters}
+msound, msub, mname = role(msts, SOUND), role(msts, SUB), role(msts, NAME)
+assert msound.channel != s.audio_channel and msound.channel not in reserved, msound.channel
+assert msub.channel > s.subtitle_channel and msub.channel not in reserved, msub.channel
+assert mname.channel == s.name_channel or (mname.channel > msub.channel and mname.channel not in reserved)
+assert msound.left_handle == t0 + 5 and msound.left_handle < role(zsts, SOUND).right_handle
+scene.frame_current = t0 + 10  # 同じキャラは重ねられない
+s.active_character, s.text = 0, "かぶせるのだ。"
+try:
+    bpy.ops.tachie.add_line()
+    raise AssertionError("同じキャラなのに重ねて置けた")
+except RuntimeError as e:
+    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
+# 縮めて再生成: 同時に喋るめたんのセリフは動かさず、その後ろのめたんのセリフはそこに重ならないところまで詰める
+zl, zr, _ = next(v for v in lines().values() if v[2][0]["tachie_text"] == "同時に喋るのだ。")
+ml, mr, _ = next(v for v in lines().values() if v[2][0]["tachie_text"] == "同時に喋りますわね、ずんだもんさん。")
+assert zl < ml < zr < mr, (zl, zr, ml, mr)
+scene.frame_current = mr
+s.active_character, s.text = 1, "同時に続けますわ。"
+run(bpy.ops.tachie.add_line)
+s.ripple = True
+sed.active_strip = role(zsts, SOUND)
+sed.active_strip["tachie_text"] = "同時に。"
+run(bpy.ops.tachie.regenerate)
+(cl, cr, csts), = [v for v in lines().values() if v[2][0]["tachie_text"] == "同時に続けますわ。"]
+assert cl >= mr and role(csts, ("IMAGE", None)).channel == metan.channel, (cl, mr)
+assert next(v for v in lines().values() if v[2][0]["tachie_text"] == "同時に喋りますわね、ずんだもんさん。")[:2] == (ml, mr)
+# 字幕をセリフごとにずらす（キャラ名も一緒に動く）。再生成・スタイル変更でも残る
+name_y = mname.location[1]
+msub["tachie_sub_x"], msub["tachie_sub_y"] = -0.1, 0.3
+ops.refresh_motion_now(scene)
+assert abs(msub.location[0] - 0.4) < 1e-6 and abs(msub.location[1] - (metan.subtitle_y + 0.3)) < 1e-6
+assert abs(mname.location[1] - min(0.98, name_y + 0.3)) < 1e-6 and abs(mname.location[0] - 0.4) < 1e-6
+sed.active_strip = msound
+run(bpy.ops.tachie.regenerate)
+msts = ops.line_strips(sed, sed.active_strip["tachie_id"])
+msub = role(msts, SUB)
+assert abs(msub["tachie_sub_y"] - 0.3) < 1e-6 and abs(msub.location[1] - (metan.subtitle_y + 0.3)) < 1e-6
+assert role(msts, SOUND).channel not in reserved and msub.channel not in reserved
+metan.font_size += 2
+assert abs(msub.location[1] - (metan.subtitle_y + 0.3)) < 1e-6 and abs(role(msts, NAME).location[0] - 0.4) < 1e-6
+metan.font_size -= 2
+cue_texts = [c.text for c in ops.subtitle_cues(scene)]
+assert any("同時に。" in t for t in cue_texts) and any("同時に喋りますわね" in t for t in cue_texts)
+assert any(a <= t0 and b >= role(msts, SOUND).right_handle for a, b in ducking.voice_spans(sed, 0))
+for x in [x for x in sed.strips if x.get("tachie_text", "").startswith("同時に")]:
+    sed.strips.remove(x)
+metan.show_name = False
+ops.refresh_idle(bpy.context)
+scene.frame_end = frame_end_before
+
 # YMM4 のプロジェクトの読み込み: 今あるキャラ（ずんだもん）はそのまま、無いキャラは素材フォルダから追加する
 import json  # noqa: E402
 
@@ -616,6 +682,7 @@ ymmp.write_text(json.dumps({
     "Timelines": [{"VideoInfo": {"FPS": 60, "Width": 1920, "Height": 1080}, "Length": ymm_base + 700, "Items": [
         ymm_voice("ずんだもん", "読み込んだセリフなのだ", 0, {"Eye": YMM_CHAR + "ずんだもん\\目\\なごみ目.png"}),
         ymm_voice("めたん（YMM4）", "読み込んだセリフですわ", 300),
+        ymm_voice("めたん（YMM4）", "読み込んだかぶせるセリフ", 20),  # ずんだもんと同時に喋る
         {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "めたん（YMM4）",
          "TachieItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png",
                                  "Mouth": metan_dir + "\\口\\ほほえみ.png"}, "X": -770.0, "Y": 600.0,
@@ -633,7 +700,7 @@ n_chars = len(s.characters)
 run(bpy.ops.tachie.import_ymmp, filepath=str(ymmp), match_video=False)
 report = bpy.data.texts["YMM4 の読み込み結果"].as_string()
 print(report)
-assert "セリフ 2 / 2 個" in report and "画像: 1" in report and "存在しないフォント" in report, report
+assert "セリフ 3 / 3 個" in report and "画像: 1" in report and "存在しないフォント" in report, report
 ymetan = s.characters[n_chars]
 assert ymetan.name == "めたん（YMM4）" and ymetan.speaker == 2 and abs(ymetan.speed_scale - 1.1) < 1e-6
 assert abs(ymetan.audio_after - 0.2) < 1e-6 and ymetan.font_size == 70 and ymetan.subtitle_y == 0.0

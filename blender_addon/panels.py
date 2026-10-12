@@ -1,6 +1,6 @@
 import bpy
 
-from .operators import line_sound, line_strips, load_material, output_dir, prefs, selected_targets, seq_scene
+from .operators import line_sound, line_strips, line_subtitle, load_material, output_dir, prefs, selected_targets, seq_scene
 from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, VOICE_PROPS
 
 
@@ -153,6 +153,7 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             else:
                 col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
             draw_pose(layout, next((s for s in line_strips(sed, strip["tachie_id"]) if s.type == "IMAGE"), None))
+            draw_text_pose(layout, line_subtitle(line_strips(sed, strip["tachie_id"])))
             row = layout.row()
             row.scale_y = 1.2
             row.operator("tachie.regenerate", icon="FILE_REFRESH")
@@ -240,6 +241,17 @@ def draw_pose(layout, strip) -> None:
         return
     col = layout.column(align=True)
     for key, (label, *_) in POSE_PROPS.items():
+        col.prop(strip, f'["{key}"]', text=label)
+
+
+def draw_text_pose(layout, strip) -> None:
+    """セリフごとの字幕（とキャラ名）の位置。"""
+    from .operators import TEXT_POSE_PROPS
+
+    if strip is None or "tachie_sub_x" not in strip:
+        return
+    col = layout.column(align=True)
+    for key, (label, _) in TEXT_POSE_PROPS.items():
         col.prop(strip, f'["{key}"]', text=label)
 
 

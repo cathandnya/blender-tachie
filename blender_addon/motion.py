@@ -13,7 +13,7 @@ from pathlib import Path
 
 import bpy
 
-from .properties import apply_placement
+from .properties import apply_placement, place_text, text_offset
 
 # 声が出ているとみなす音量（lipsync.mouth の無音のしきい値と同じ）
 VOICED_RMS = 0.02
@@ -154,6 +154,17 @@ def refresh_motion(scene, lines_dir: Path) -> int:
         apply_placement(s, characters[owner(s)])
         s.transform.rotation = 0.0
         s.blend_alpha = 1.0
+    # セリフごとの字幕の位置（字幕ストリップでずらした量をキャラ名にも写す）。tachie_sub_x を持たない古いセリフの
+    # 字幕は触らない（手で動かした location を、動きの作り直しのたびに既定の位置へ戻さないため）
+    offsets = {s["tachie_id"]: text_offset(s) for s in sed.strips
+               if s.type == "TEXT" and s.get("tachie_id") and s.get("tachie_role") != "name" and "tachie_sub_x" in s}
+    for t in sed.strips:
+        ch = characters.get(t.get("tachie_character"))
+        if t.type != "TEXT" or ch is None or t.get("tachie_id") not in offsets:
+            continue
+        if t.get("tachie_role") == "name":
+            t["tachie_sub_x"], t["tachie_sub_y"] = offsets[t["tachie_id"]]
+        place_text(t, ch, t.get("tachie_placed_text", t.get("tachie_text", "")))
     count = 0
     for t in texts:  # 字幕（とキャラ名）のフェードイン
         t.blend_alpha = 1.0
@@ -192,7 +203,7 @@ def refresh_motion(scene, lines_dir: Path) -> int:
 
 
 def motion_signature(scene) -> str:
-    """動きに関わる値（立ち絵ストリップの位置・長さ、セリフごとの位置・大きさ、キャラの動きの設定）。"""
+    """動きに関わる値（立ち絵ストリップの位置・長さ、セリフごとの位置・大きさ・字幕の位置、キャラの動きの設定）。"""
     sed = scene.sequence_editor
     if sed is None:
         return ""
@@ -203,7 +214,9 @@ def motion_signature(scene) -> str:
     items = []
     for s in sed.strips:
         if s.type == "TEXT" and s.get("tachie_id"):  # 字幕のフェードは字幕の位置で決まる
-            items.append((s.name, s.channel, int(s.content_start), s.left_handle, s.right_handle, ()))
+            offset = () if s.get("tachie_role") == "name" else tuple(round(v, 4) for v in text_offset(s))
+            active = active or offset not in ((), (0.0, 0.0))
+            items.append((s.name, s.channel, int(s.content_start), s.left_handle, s.right_handle, offset))
             continue
         if owner(s) is None:
             continue
