@@ -86,6 +86,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `uv run python -m tachie_studio.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ --other 左腕_基本 --other 右腕_基本 -o out/z.png`
 - `uv run python -m tachie_studio.lipsync "こんにちは、ずんだもんなのだ。" --speaker 3 -o out/line` — wav とフレームごとの口・目の状態（JSON）
 - `uv run python -m tachie_studio.lipsync --speakers` — スタイル ID 一覧
+- `uv run python -m tachie_studio.tachie.psd_animation char/ずんだもん char/ずんだもん/<PSD> [--dry-run]` — 動く立ち絵の連番から PSD 立ち絵用の口パク・まばたき設定（`<PSD 名>-ymm.json`）を作る
 - `uv run python -m tachie_studio.pipeline examples/script.txt -c examples/characters.toml -o out/demo --scale 0.5 --idle 5`
 - `uv run python scripts/build_addon.py [--install]` — 拡張機能のビルド（とインストール）
 - `scripts/smoke.sh` — Blender での結合テスト（VOICEVOX と char/ が必要、20 秒ほど）
@@ -143,6 +144,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   同じ画像の一覧を体（口を閉じた画像、既定は名前に「デフォルト」）と口（セリフ中の画像、既定は「口開」）の両方に入れ、
   合成は画像 1 枚（`compose._simple_layers`: mouth_frame 0 なら体、それ以外は口）。口パクは `simple_mouth` が
   閉じ = 体・開き = 口の 2 段階の口パーツを作るので、音量式でそのまま動く。まばたきは無い。GIF / WebP は最初のフレームだけ。
-  パネルの表情の欄は 2 つだけ（`panels.part_rows`）。PSD 立ち絵（#7）は素材待ち。
+  パネルの表情の欄は 2 つだけ（`panels.part_rows`）。
+- PSD 立ち絵（#7、作りかけ）: `tachie/psd.py` がレイヤーの木（フォルダ・表示・名前、`index` は下から 0 始まりで
+  フォルダの終わりの記録も数える）を自前で読む（Pillow はフォルダを読めず、手元の PSD ではレイヤー情報で落ちる）。
+  YMM4 の `<PSD 名>-ymm.json` は `{"Presets": [], "MouthAnimations": [{"Layers": ["n5", "n4"]}], "EyeAnimations": …}`、
+  `Layers` は開き → 閉じの順で `n<index>`。`tachie/psd_animation.py` は動く立ち絵の連番の中身（どのパーツの画像と同じか）
+  から口パク・まばたきの相手を割り出して書く。フォルダ（`*目セット`）をフォルダ本体の記録の番号で指してよいかと、
+  `Presets` の書式は YMM4 で未確認。
 - 口の動かし方 `mouth = "auto"`: 母音画像があればあいうえお式、無ければ音量式。`vowel` で母音画像の無い素材は
   母音を開き具合に置き換える（a=最大、i/u=小さめ）。
