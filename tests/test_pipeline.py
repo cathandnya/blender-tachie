@@ -175,7 +175,7 @@ def test_expression_for(tmp_path: Path):
                                   "expressions": {"困り": {"目": "ジト目", "他": "汗"}}}}, tmp_path)["a"]
     assert cfg.expression_for(None) == cfg.expression
     e = cfg.expression_for("困り")
-    assert (e.eye, e.mouth, e.others) == ("ジト目", "閉じ", ["汗"])
+    assert (e.eye, e.mouth, e.others) == ("ジト目", "閉じ", ["汗", "左腕"])  # 他はスロットごと
     with pytest.raises(ValueError):
         cfg.expression_for("怒り")
     with pytest.raises(ValueError, match="耳"):
@@ -373,3 +373,31 @@ def test_render_line_after_and_fade(tmp_path: Path, char_dir: Path):
     last = Image.open(sorted((out / "l").iterdir())[-1]).getpixel((0, 5))
     assert last[2] == 20
     assert read_wav(out / "l.wav").samples[-1] == 0
+
+
+
+def test_expression_for_slots(tmp_path: Path):
+    from tachie_studio.pipeline.config import merge_slots
+
+    assert merge_slots(["A", "B"], ["", "X"]) == ["A", "X"]
+    assert merge_slots(["A", "B"], ["X"]) == ["X", "B"]
+    assert merge_slots(["A"], ["", "", "Z"]) == ["A", "", "Z"]
+    assert merge_slots([], ["", ""]) == []
+    cfg = parse_characters({"a": {"folder": "x", "speaker": 1, "parts": {"他": ["右腕", "左腕"], "後": ["影"]},
+                                  "expressions": {"指差し": {"他": ["", "指差し"]}, "消す": {"後": ["_"]}}}},
+                           tmp_path, use_material=False)["a"]
+    assert cfg.expression_for("指差し").others == ["右腕", "指差し"]
+    assert cfg.expression_for("消す").backs == ["_"] and cfg.expression_for("消す").others == ["右腕", "左腕"]
+    # 空きスロットを含む基本の表情も往復する
+    cfg2 = parse_characters({"a": {"folder": "x", "speaker": 1, "parts": {"他": ["", "左腕"]},
+                                   "expressions": {"p": {"他": ["", "x"]}}}}, tmp_path, use_material=False)["a"]
+    assert cfg2.expression.others == ["", "左腕"]
+    again = parse_characters(__import__("tomllib").loads(dump_characters({"a": cfg2})), tmp_path, use_material=False)
+    assert again["a"].expression == cfg2.expression and again["a"].expressions == cfg2.expressions
+
+
+def test_material_presets_fill(tmp_path: Path, char_dir: Path):
+    (char_dir / "preset.ini").write_text("[眠い]\n目=目.png\n\n[困り]\n目=目.png\n", encoding="utf-8")
+    (char_dir / "tachie.toml").write_text('speaker = 2\n\n[expressions."困り"]\n"口" = "口"\n', encoding="utf-8")
+    cfg = parse_characters({"テスト": {"folder": str(char_dir)}}, tmp_path)["テスト"]
+    assert cfg.expressions == {"眠い": {"目": "目"}, "困り": {"口": "口"}}  # 同じ名前は tachie.toml

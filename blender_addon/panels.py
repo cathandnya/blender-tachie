@@ -28,6 +28,7 @@ class TACHIE_MT_characters(bpy.types.Menu):
     def draw(self, context):
         self.layout.operator("tachie.import_characters", icon="IMPORT")
         self.layout.operator("tachie.export_characters", icon="EXPORT")
+        self.layout.operator("tachie.import_presets", icon="SHADERFX")
         self.layout.separator()
         self.layout.operator("tachie.save_defaults", text="初期値としてアドオン設定に保存", icon="PREFERENCES").target = "PREFS"
         self.layout.operator("tachie.save_defaults", text="素材フォルダに初期値を書き出す（tachie.toml）",

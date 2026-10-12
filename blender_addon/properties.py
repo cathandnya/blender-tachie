@@ -139,7 +139,7 @@ class TachieExpression(bpy.types.PropertyGroup):
 
 
 _add_part_props(TachieExpression, "空なら基本の表情のまま",
-                "他（後）をどれか 1 つでも指定すると、他（後）は丸ごとこのプリセットのものになる")
+                "空のスロットは基本の表情のまま。消すときは素材の透明なパーツ（_ など）を選ぶ")
 
 
 def character_image_strips(ch):

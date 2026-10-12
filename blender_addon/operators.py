@@ -13,8 +13,9 @@ from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, SLOT_CATEGORIES, V
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
 from .tachie_studio.pipeline.script import split_kana
 from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
-                                            load_material_table, merge_tables, parse_characters)
-from .tachie_studio.tachie import Expression, load_character
+                                            load_material_defaults, load_material_table, merge_tables,
+                                            parse_characters)
+from .tachie_studio.tachie import PRESET_FILE, Expression, load_character, load_presets
 from .tachie_studio.tachie.compose import load_image
 from .tachie_studio.voicevox import VoicevoxClient, VoicevoxError
 
@@ -87,10 +88,15 @@ def _cache(character, expr: Expression, directory: Path, scale: float) -> FrameC
 # ---- キャラクター設定 ⇔ pipeline の設定 ----
 
 def _parts_dict(item) -> dict:
-    """キャラクターか表情プリセットのパーツ指定を {フォルダ名: 値} にする（空は省く）。"""
+    """キャラクターか表情プリセットのパーツ指定を {フォルダ名: 値} にする（空は省く）。
+
+    他・後はスロットの位置を保ったリスト（"" は空きスロット、末尾の空きは落とす）。
+    """
     parts = {}
     for category, props in PART_PROPS.items():
-        values = [v for p in props if (v := getattr(item, p))]
+        values = [getattr(item, p) for p in props]
+        while values and not values[-1]:
+            values.pop()
         if values:
             parts[category] = values if category in SLOT_CATEGORIES else values[0]
     return parts
@@ -1197,9 +1203,9 @@ class TACHIE_OT_character_add(bpy.types.Operator):
         try:
             character = load_material(self.directory)
             key = material_key(self.directory)
-            material = load_material_table(character.path)
+            material = load_material_defaults(character.path)
             saved = load_character_defaults().get(key, {})
-            # 優先: アドオン設定 → 素材の tachie.toml → 固定値
+            # 優先: アドオン設定 → 素材の tachie.toml → 素材の preset.ini → 固定値
             table = merge_tables({"speaker": 3}, material, saved)
             name = str(table.pop("name", "") or key)
             config = parse_characters({name: {**table, "folder": self.directory}}, Path("."), use_material=False)[name]
@@ -1227,7 +1233,10 @@ class TACHIE_OT_character_add(bpy.types.Operator):
         except (VoicevoxError, OSError):
             pass
         settings.active_character = n - 1
-        sources = [label for label, t in (("アドオン設定", saved), (MATERIAL_CONFIG, material)) if t]
+        has_toml = (Path(character.path) / MATERIAL_CONFIG).is_file()
+        has_ini = (Path(character.path) / PRESET_FILE).is_file()
+        sources = [label for label, used in (("アドオン設定", bool(saved)), (MATERIAL_CONFIG, has_toml),
+                                             (PRESET_FILE, has_ini)) if used]
         if sources:
             self.report({"INFO"}, f"{ch.name} を {'と'.join(sources)} の初期値で追加しました")
         return {"FINISHED"}
@@ -1489,6 +1498,54 @@ class TACHIE_OT_import_characters(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
+class TACHIE_OT_import_presets(bpy.types.Operator, ImportHelper):
+    """YMM4 の表情プリセット（素材フォルダの preset.ini）を、選択中のキャラクターの表情プリセットに読み込む
+    （同じ名前は上書き）"""
+
+    bl_idname = "tachie.import_presets"
+    bl_label = "YMM4 の表情プリセットを読み込む"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filename_ext = ".ini"
+    filter_glob: bpy.props.StringProperty(default="*.ini", options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        ch = seq_scene(context).tachie.character()
+        return ch is not None and bool(ch.folder)
+
+    def invoke(self, context, event):
+        ch = seq_scene(context).tachie.character()
+        self.filepath = str(Path(bpy.path.abspath(ch.folder)) / PRESET_FILE)
+        return ImportHelper.invoke(self, context, event)
+
+    def execute(self, context):
+        ch = seq_scene(context).tachie.character()
+        try:
+            presets, warnings = load_presets(bpy.path.abspath(ch.folder), self.filepath)
+        except (ValueError, OSError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        if not presets:
+            self.report({"WARNING"}, f"{self.filepath} に表情プリセットがありません")
+            return {"CANCELLED"}
+        for name, parts in presets.items():
+            item = next((e for e in ch.expressions if e.name == name), None) or ch.expressions.add()
+            item.name = name
+            for props in PART_PROPS.values():
+                for prop in props:
+                    setattr(item, prop, "")
+            for category, value in parts.items():
+                for prop, v in zip(PART_PROPS[category], [value] if isinstance(value, str) else value):
+                    setattr(item, prop, v)
+        message = f"{len(presets)} 個の表情プリセットを読み込みました"
+        if warnings:
+            message += f"（{len(warnings)} 件飛ばしました: {' / '.join(warnings[:3])}{' …' if len(warnings) > 3 else ''}）"
+            print("\n".join(warnings))
+        self.report({"WARNING"} if warnings else {"INFO"}, message)
+        return {"FINISHED"}
+
+
 class TACHIE_OT_export_characters(bpy.types.Operator, ExportHelper):
     """キャラクター設定を TOML に書き出す（他のプロジェクトや python -m tachie_studio.pipeline で使える）"""
 
@@ -1726,6 +1783,7 @@ _classes = (
     TACHIE_OT_pick_font,
     TACHIE_OT_reload_character,
     TACHIE_OT_import_characters,
+    TACHIE_OT_import_presets,
     TACHIE_OT_export_characters,
 )
 

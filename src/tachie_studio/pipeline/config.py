@@ -37,7 +37,7 @@
     y = 0.12
 
 素材フォルダに `tachie.toml`（キャラ名のテーブルなしで同じ形式、`folder` は書かない。`name` で表示名）を置くと、
-キャラ設定に無い項目をそこから補う。Blender アドオンではキャラクターを追加するときの初期値になる。
+キャラ設定に無い項目をそこから補う。YMM4 の表情プリセット（素材フォルダの preset.ini）も表情プリセットとして補う。Blender アドオンではキャラクターを追加するときの初期値になる。
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from ..tachie import Expression
+from ..tachie import Expression, load_presets
 
 MOUTH_MODES = ("auto", "vowel", "volume")
 MATERIAL_CONFIG = "tachie.toml"  # 素材フォルダに置く初期値
@@ -106,13 +106,35 @@ class CharacterConfig:
         return query
 
     def expression_for(self, preset: str | None) -> Expression:
-        """表情プリセットを基本の表情に重ねたもの。None や "" は基本の表情。他・後は丸ごと置き換える。"""
+        """表情プリセットを基本の表情に重ねたもの。None や "" は基本の表情。
+
+        他・後はスロットごとに置き換える（YMM4 と同じ）。プリセットの "" のスロットは基本のまま。
+        """
         if not preset:
             return self.expression
         if preset not in self.expressions:
             raise ValueError(f"{self.name} に表情 {preset!r} がありません")
-        return replace(self.expression, **_expression(self.expressions[preset], f"{self.name}.expressions.{preset}",
-                                                     as_kwargs=True))
+        kwargs = _expression(self.expressions[preset], f"{self.name}.expressions.{preset}", as_kwargs=True)
+        for attr in ("others", "backs"):
+            if attr in kwargs:
+                kwargs[attr] = merge_slots(getattr(self.expression, attr), kwargs[attr])
+        return replace(self.expression, **kwargs)
+
+
+def merge_slots(base: list[str], override: list[str]) -> list[str]:
+    """他・後のスロットを重ねる。`override` の "" は `base` のまま。末尾の空きは落とす。"""
+    out = list(base) + [""] * (len(override) - len(base))
+    for i, value in enumerate(override):
+        if value:
+            out[i] = value
+    return _trim(out)
+
+
+def _trim(slots: list[str]) -> list[str]:
+    slots = list(slots)
+    while slots and not slots[-1]:
+        slots.pop()
+    return slots
 
 
 def _expression(parts: dict[str, Any], name: str, as_kwargs: bool = False) -> Expression | dict[str, Any]:
@@ -121,9 +143,10 @@ def _expression(parts: dict[str, Any], name: str, as_kwargs: bool = False) -> Ex
         if key not in PART_KEYS:
             raise ValueError(f"[{name}.parts] の {key!r} は不明です（{'・'.join(PART_KEYS)} のどれか）")
         attr = PART_KEYS[key]
-        # 空（"" / []）は「指定なし」。tachie.toml の値を空で打ち消すために書き出しでは明示する
+        # 空（"" / []）は「指定なし」。tachie.toml の値を空で打ち消すために書き出しでは明示する。
+        # 他・後はスロットの位置を保つ（"" は空きスロット）
         if attr in ("others", "backs"):
-            kwargs[attr] = [v for v in ([value] if isinstance(value, str) else value) if v]
+            kwargs[attr] = _trim(str(v or "") for v in ([value] if isinstance(value, str) else value))
         elif value:
             kwargs[attr] = value
     return kwargs if as_kwargs else Expression(**kwargs)
@@ -139,6 +162,13 @@ def load_material_table(folder: str | Path) -> dict[str, Any]:
             return tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
             raise ValueError(f"{path} を読めません: {e}") from None
+
+
+def load_material_defaults(folder: str | Path) -> dict[str, Any]:
+    """素材フォルダの初期値: preset.ini の表情プリセットに tachie.toml を重ねたもの（同じ名前は tachie.toml）。"""
+    table = load_material_table(folder)
+    presets, _ = load_presets(folder) if Path(folder).is_dir() else ({}, [])
+    return merge_tables({"expressions": presets}, table) if presets else table
 
 
 def merge_tables(*tables: dict[str, Any]) -> dict[str, Any]:
@@ -165,7 +195,7 @@ def parse_characters(data: dict[str, Any], base: Path, use_material: bool = True
             raise ValueError(f"[{name}] に folder がありません")
         folder = (base / table["folder"]).resolve()
         if use_material:
-            table = merge_tables(load_material_table(folder), table)
+            table = merge_tables(load_material_defaults(folder), table)
         try:
             speaker = int(table["speaker"])
         except KeyError as e:

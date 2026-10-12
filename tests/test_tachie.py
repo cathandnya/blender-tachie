@@ -202,3 +202,46 @@ def test_levels_drop_base_identical_to_closed(tmp_path: Path):
     c = load_character(d)
     assert [p.name for p in c.part("口", "むふ").levels] == ["むふ.0.png", "むふ.1.png", "むふ.2.png"]
     assert [p.name for p in c.part("口", "あ").levels] == ["あ.0.png", "あ.1.png", "あ.png"]
+
+
+def test_empty_slot_skipped(char_dir: Path):
+    c = load_character(char_dir)
+    layers = build_layers(c, Expression(others=["", "腕"]))
+    assert [l.part.name for l in layers if l.part.category == "他"] == ["腕"]
+
+
+def test_load_presets(char_dir: Path):
+    from tachie_studio.tachie import load_presets
+
+    assert load_presets(char_dir) == ({}, [])
+    text = ("[指差し]\r\n他2=記号.png\r\n目=静止.png\r\n\r\n[><]\r\n目=開き.png\r\n後1=影.png\r\n"
+            "\r\n[無い]\r\n眉=困り.png\r\n耳=x.png\r\n他=腕.png\r\n他4=腕.png\r\n")
+    (char_dir / "preset.ini").write_bytes("﻿".encode() + text.encode("utf-8"))
+    presets, warnings = load_presets(char_dir)
+    assert presets == {"指差し": {"他": ["", "記号"], "目": "静止"}, "><": {"目": "開き", "後": ["影"]}, "無い": {}}
+    assert len(warnings) == 4 and any("眉/困り" in w for w in warnings) and any("耳" in w for w in warnings)
+    assert any("他4" in w for w in warnings)  # スロットは 3 つまで
+    # cp932 と、別の場所のファイル
+    other = char_dir.parent / "p.ini"
+    other.write_bytes("[静止]\n目=静止.png\n".encode("cp932"))
+    assert load_presets(char_dir, other) == ({"静止": {"目": "静止"}}, [])
+    other.write_text("目=静止.png\n", encoding="utf-8")  # セクションが無い
+    with pytest.raises(ValueError):
+        load_presets(char_dir, other)
+
+
+@pytest.mark.skipif(not CHAR.is_dir(), reason="char/ に素材がない")
+@pytest.mark.parametrize("name", sorted(p.name for p in CHAR.iterdir() if (p / "preset.ini").is_file())
+                         if CHAR.is_dir() else [])
+def test_real_presets(name: str):
+    from tachie_studio.pipeline.config import parse_characters
+    from tachie_studio.tachie import load_presets
+
+    presets, warnings = load_presets(CHAR / name)
+    assert presets and not warnings, warnings
+    # キャラ設定に補われ、どのプリセットでも合成できる
+    cfg = parse_characters({name: {"folder": str(CHAR / name), "speaker": 3}}, ROOT)[name]
+    assert set(presets) <= set(cfg.expressions)
+    c = load_character(CHAR / name)
+    for preset in presets:
+        assert compose(c, cfg.expression_for(preset)).getbbox() is not None

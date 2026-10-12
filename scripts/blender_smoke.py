@@ -73,7 +73,7 @@ def dump(title):
 run(bpy.ops.tachie.import_characters, filepath=str(characters_toml))
 assert [c.name for c in s.characters] == ["ずんだもん", "四国めたん"], [c.name for c in s.characters]
 zunda, metan = s.characters
-assert zunda.part_other1 == "右腕_基本" and metan.part_body == "白ロリ服"
+assert zunda.part_other1 == "左腕_基本" and metan.part_body == "白ロリ服"
 assert metan.flip_x and metan.channel == 4 and abs(metan.position_x + 0.28) < 1e-6
 metan.flip_x = False
 zunda.position_x = 0.28
@@ -403,7 +403,7 @@ for i, (l, r) in enumerate(spans):
     bpy.ops.render.render(write_still=True)
 bpy.ops.wm.save_as_mainfile(filepath=str(out / "smoke.blend"))
 
-# キャラクター追加の初期値: アドオン設定 → 素材の tachie.toml → 固定値
+# キャラクター追加の初期値: アドオン設定 → 素材の tachie.toml → 素材の preset.ini（YMM4 の表情プリセット）→ 固定値
 from bl_ext.user_default.blender_tachie import operators as ops  # noqa: E402
 
 material = out / "material" / "ずんだもん2"  # 素材を汚さないよう、パーツのフォルダだけリンクした素材
@@ -412,14 +412,37 @@ for sub in Path(bpy.path.abspath(zunda.folder)).iterdir():
     if sub.is_dir():
         (material / sub.name).symlink_to(sub)
 (material / "tachie.toml").write_text(
-    f'name = "ずんだ（素材）"\nspeaker = 1\n\n[parts]\n"他" = ["右腕_基本"]\n\n'
+    f'name = "ずんだ（素材）"\nspeaker = 1\n\n[parts]\n"他" = ["左腕_基本", "右腕_基本"]\n\n'
     f'[layout]\nposition = -0.1\nchannel = {zunda.channel}\n', encoding="utf-8")
+real_presets = Path(bpy.path.abspath(zunda.folder)) / "preset.ini"
+if real_presets.is_file():
+    __import__("shutil").copy(real_presets, material / "preset.ini")
+else:
+    (material / "preset.ini").write_text("[泣く]\n目=_.png\n他3=記号_涙.png\n", encoding="utf-8")
 ops.character_defaults_path().write_text('["ずんだもん2"]\nspeaker = 7\n\n["ずんだもん2".layout]\nflip = true\n',
                                          encoding="utf-8")
 run(bpy.ops.tachie.character_add, directory=str(material) + "/")
 new = s.characters[-1]
-assert new.name == "ずんだ（素材）" and new.speaker == 7 and new.part_other1 == "右腕_基本", (new.name, new.speaker)
+assert new.name == "ずんだ（素材）" and new.speaker == 7 and new.part_other1 == "左腕_基本", (new.name, new.speaker)
 assert abs(new.position_x + 0.1) < 1e-6 and new.flip_x
+naku = next(e for e in new.expressions if e.name == "泣く")
+assert naku.part_eye == "_" and naku.part_other3 == "記号_涙", (naku.part_eye, naku.part_other3)
+# メニューから読み込み直す（同じ名前は上書き）
+new.expressions.clear()
+run(bpy.ops.tachie.import_presets, filepath=str(material / "preset.ini"))
+assert {"泣く"} <= {e.name for e in new.expressions}
+# スロットごと: 泣くは他1〜3 を全部、他2 だけのプリセットは他1 が基本のまま
+s.active_character = len(s.characters) - 1
+s.expression, s.text = "泣く", "えーん"
+scene.frame_current = scene.frame_end + 10
+run(bpy.ops.tachie.add_line)
+cid = list(lines())[-1]  # いちばん後ろに置いたセリフ
+assert ops.line_strips(sed, cid)[0]["tachie_expression"] == "泣く"
+partial = next((e for e in new.expressions if e.part_other2 and not e.part_other1), None)
+if partial is not None:
+    e = ops.expression_of(new, partial.name)
+    assert e.others[0] == "左腕_基本" and e.others[1] == partial.part_other2, e.others
+s.expression = ""
 assert new.channel not in {c.channel for c in s.characters if c != new} | {s.audio_channel, s.subtitle_channel}
 new.height = 0.7
 run(bpy.ops.tachie.save_defaults, target="PREFS")

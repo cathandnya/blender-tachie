@@ -24,7 +24,7 @@ class Expression:
     """表情（どのパーツを使うか）と、目・口のフレーム。
 
     パーツ名が None のカテゴリは素材の最初のパーツを使う。`others` / `backs` は
-    他1, 他2, 他3 / 後1, 後2, 後3 の順（手前から）。
+    他1, 他2, 他3 / 後1, 後2, 後3 の順（手前から）。"" は空きスロット。
 
     `eye_frame` / `mouth_frame` は `Part.frames` の添字（0 = 閉じ、-1 = 開き）。
     None は開き。`mouth_vowel` に "a"〜"o" を入れると、あいうえお口パクの画像を使う
@@ -101,7 +101,8 @@ def build_layers(character: Character, expr: Expression) -> list[Layer]:
 
     layers: list[Layer] = []
     for name in reversed(expr.backs):
-        layers += layer(character.part("後", name))
+        if name:  # "" は空きスロット
+            layers += layer(character.part("後", name))
     layers += layer(_pick(character, "体", expr.body))
     layers += layer(_pick(character, "顔色", expr.complexion))
     layers += layer(hair, opacity=1.0)
@@ -110,7 +111,8 @@ def build_layers(character: Character, expr: Expression) -> list[Layer]:
     layers += layer(_pick(character, "眉", expr.eyebrow))
     layers += layer(hair)
     for name in reversed(expr.others):
-        layers += layer(character.part("他", name))
+        if name:
+            layers += layer(character.part("他", name))
 
     # 通常以外の合成モードは手前へ（相対順は保つ）
     return [l for l in layers if l.part.blend == BLEND_NORMAL] + [

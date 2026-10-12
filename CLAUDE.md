@@ -65,7 +65,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `uv sync` — 環境構築（Python 3.13。Blender 5.2 同梱 Python に合わせる）
 - `uv run pytest`
 - `uv run python -m tachie_studio.tachie char/ずんだもん --list` — パーツ一覧
-- `uv run python -m tachie_studio.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ --other 右腕_基本 --other 左腕_基本 -o out/z.png`
+- `uv run python -m tachie_studio.tachie char/ずんだもん --eye 普通白目_カメラ目線 --mouth むふ --other 左腕_基本 --other 右腕_基本 -o out/z.png`
 - `uv run python -m tachie_studio.lipsync "こんにちは、ずんだもんなのだ。" --speaker 3 -o out/line` — wav とフレームごとの口・目の状態（JSON）
 - `uv run python -m tachie_studio.lipsync --speakers` — スタイル ID 一覧
 - `uv run python -m tachie_studio.pipeline examples/script.txt -c examples/characters.toml -o out/demo --scale 0.5 --idle 5`
@@ -111,8 +111,15 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - キャラ設定の TOML は日本語キーを `"ずんだもん"` のように引用符で囲む（TOML 1.0 の決まり）。
   `[キャラ.parts]`（表情）、`[キャラ.expressions.名前]`（表情プリセット）、`[キャラ.layout]`（position / flip / height / channel）、
   `[キャラ.subtitle]`（font / size / color …）。
-- 表情プリセットは基本の表情から変えるパーツだけを持つ。他・後はどれか 1 つでも指定すると丸ごと置き換え
-  （`CharacterConfig.expression_for`）。台本では `キャラ名(表情): セリフ`（`（）` `[]` も可）。
+- 表情プリセットは基本の表情から変えるパーツだけを持つ。他・後は**スロットごと**に置き換える（YMM4 と同じ。
+  `"他" = ["", "右腕_指差す"]` は他2 だけ。"" のスロットは基本のまま、消すときは素材の透明なパーツ `_` などを選ぶ）。
+  `Expression.others` / `backs` は位置を保ったリストで "" は空きスロット（`config.merge_slots`、合成では飛ばす）。
+  YMM4 の並びは 他1 = 左腕、他2 = 右腕（実物の preset.ini から）。基本の表情もこの順にしないとプリセットで腕が重なる。
+  重ねるのは `CharacterConfig.expression_for`。台本では `キャラ名(表情): セリフ`（`（）` `[]` も可）。
   ストリップには `tachie_expression` を付け、再生成はそれを使う。待機ストリップは基本の表情。
+- YMM4 の表情プリセットは素材フォルダの `preset.ini`（UTF-8 BOM、`[名前]` に `眉=x.png`、`他1=x.png` …）。
+  `tachie.presets.load_presets` で読み、素材に無いパーツは警告して飛ばす。`config.load_material_defaults` が
+  tachie.toml の下に重ねるので、キャラ追加と CLI の両方で補われる（優先: アドオン設定 → tachie.toml → preset.ini）。
+  メニュー「YMM4 の表情プリセットを読み込む」でも読める（同じ名前は上書き）。
 - 口の動かし方 `mouth = "auto"`: 母音画像があればあいうえお式、無ければ音量式。`vowel` で母音画像の無い素材は
   母音を開き具合に置き換える（a=最大、i/u=小さめ）。
