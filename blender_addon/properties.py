@@ -107,6 +107,15 @@ def default_font() -> str:
     return ""
 
 
+class TachieSoundEffect(bpy.types.PropertyGroup):
+    """登録した効果音（アドオン設定、全 .blend 共通）。"""
+
+    name: StringProperty(name="名前")
+    filepath: StringProperty(name="ファイル", subtype="FILE_PATH")
+    volume: FloatProperty(name="音量", default=1.0, min=0.0, max=100.0, soft_max=2.0,
+                          description="置くときの音量")
+
+
 class TachiePreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
@@ -115,6 +124,7 @@ class TachiePreferences(bpy.types.AddonPreferences):
         name="書き出し先", subtype="DIR_PATH", default="",
         description="音声と連番画像の置き場所。空なら .blend の隣の tachie フォルダ（未保存なら一時フォルダ）",
     )
+    sound_effects: CollectionProperty(type=TachieSoundEffect)
 
     def draw(self, context):
         from .operators import character_defaults_path, load_character_defaults
@@ -137,6 +147,20 @@ class TachiePreferences(bpy.types.AddonPreferences):
         if not defaults:
             box.label(text="なし。シーケンサーの立ち絵タブのメニューから保存できます")
         box.label(text=str(character_defaults_path()), icon="FILE")
+        box = layout.box()
+        box.label(text="効果音（シーケンサーの立ち絵タブの「効果音」で置く）")
+        draw_sound_effects(box, self)
+
+
+def draw_sound_effects(layout, preferences) -> None:
+    for i, se in enumerate(preferences.sound_effects):
+        row = layout.row(align=True)
+        row.prop(se, "name", text="")
+        row.prop(se, "volume")
+        row.operator("tachie.remove_sound_effect", text="", icon="X").index = i
+    if not preferences.sound_effects:
+        layout.label(text="なし")
+    layout.operator("tachie.register_sound_effect", icon="ADD")
 
 
 def _add_part_props(cls, empty_description: str, slot_description: str):
@@ -416,6 +440,11 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
                                             default=(0.15, 0.3, 0.7, 0.85), update=_update_headlines)
     headline_y: FloatProperty(name="高さ", default=0.85, min=0.0, max=1.0, subtype="FACTOR", update=_update_headlines)
     subtitle_channel: IntProperty(name="字幕", default=10, min=1, max=128)
+    se_channel: IntProperty(name="効果音", default=1, min=1, max=128,
+                            description="効果音を置くチャンネル。他のストリップがあれば、上の空いているチャンネル"
+                                        "（音声・字幕・キャラ名・見出し・立ち絵のチャンネルは除く）")
+    se_at_lines: BoolProperty(name="選んだセリフの頭に置く", default=False,
+                              description="オンなら選んでいるセリフそれぞれの頭に、オフなら再生位置に置く")
     duck_volume: FloatProperty(name="セリフ中の音量", default=0.3, min=0.0, max=1.0, subtype="FACTOR",
                                update=_update_ducking,
                                description="セリフの音声が鳴っている間の BGM の音量（BGM の音量に対する割合）。1 なら下げない")
@@ -484,7 +513,7 @@ class TachieAccentEdit(bpy.types.PropertyGroup):
     speaker: IntProperty()
 
 
-_classes = (TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary,
+_classes = (TachieSoundEffect, TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary,
             TachieMora, TachiePhrase, TachieAccentEdit)
 
 

@@ -55,6 +55,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   切れ目が `MERGE_SECONDS` + フェード 2 回分より短ければつなぐ。設定はシーンの `duck_volume`（割合）・`duck_fade`。
   自動反映の署名は (表情, 動き, ダッキング) の 3 つ組で、ダッキングだけ変わったら `refresh_ducking` だけ呼ぶ。
   `refresh_motion_now` もダッキングを作り直す。
+  効果音（#14）: アドオン設定の `sound_effects`（`TachieSoundEffect`: 名前・ファイル・音量）。`tachie.add_sound_effect` は
+  再生位置か選んだセリフ（`selected_targets`）の頭に置き、`tachie_se` = 名前を付ける。チャンネルは `se_channel` から上で
+  空いていて、音声・字幕・キャラ名・見出し・立ち絵のチャンネルでないところ（`_se_channel`）。
   まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・セリフなし・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
   音声ストリップに直接書き、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。

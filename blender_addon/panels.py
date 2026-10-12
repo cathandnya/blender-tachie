@@ -1,6 +1,6 @@
 import bpy
 
-from .operators import line_sound, line_strips, load_material, output_dir, selected_targets, seq_scene
+from .operators import line_sound, line_strips, load_material, output_dir, prefs, selected_targets, seq_scene
 from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, VOICE_PROPS
 
 
@@ -507,6 +507,24 @@ class TACHIE_PT_bgm(_Panel, bpy.types.Panel):
             layout.label(text="BGM の音量はここで変えます", icon="INFO")
 
 
+class TACHIE_PT_sound_effects(_Panel, bpy.types.Panel):
+    bl_label = "効果音"
+    bl_parent_id = "TACHIE_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        s = seq_scene(context).tachie
+        effects = prefs(context).sound_effects
+        layout.prop(s, "se_at_lines")
+        grid = layout.grid_flow(columns=2, even_columns=True, align=True)
+        for i, se in enumerate(effects):
+            grid.operator("tachie.add_sound_effect", text=se.name, icon="PLAY_SOUND").index = i
+        if not effects:
+            layout.label(text="効果音を登録してください（アドオン設定でも編集できます）")
+        layout.operator("tachie.register_sound_effect", icon="ADD")
+
+
 class TACHIE_PT_export(_Panel, bpy.types.Panel):
     bl_label = "書き出し"
     bl_parent_id = "TACHIE_PT_main"
@@ -543,6 +561,7 @@ class TACHIE_PT_channels(_Panel, bpy.types.Panel):
         row = self.layout.row(align=True)
         row.prop(s, "name_channel")
         row.prop(s, "headline_channel")
+        self.layout.prop(s, "se_channel")
         self.layout.label(text="立ち絵のチャンネルはキャラクターごとに設定")
 
 
@@ -563,6 +582,7 @@ _classes = (
     TACHIE_PT_subtitle,
     TACHIE_PT_headline,
     TACHIE_PT_bgm,
+    TACHIE_PT_sound_effects,
     TACHIE_PT_export,
     TACHIE_PT_channels,
 )

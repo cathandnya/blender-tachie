@@ -536,6 +536,50 @@ assert not keyed(bgm, "volume") and abs(bgm.volume - 0.6) < 1e-6 and "tachie_bgm
 sed.strips.remove(bgm)
 s.duck_volume = 0.3
 
+# 効果音: 登録して、再生位置と、選んだセリフの頭に置く
+se_path = out / "se.wav"
+with wave.open(str(se_path), "wb") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(8000)
+    w.writeframes(b"\0\0" * 4000)
+effects = bpy.context.preferences.addons["bl_ext.user_default.blender_tachie"].preferences.sound_effects
+bad_se = out / "bad_se.mp3"
+bad_se.write_text("not audio")
+count = len(effects)
+try:
+    bpy.ops.tachie.register_sound_effect(filepath=str(bad_se))
+except RuntimeError:
+    pass  # 音声として読めないファイルは登録しない（ERROR の報告はバックグラウンドでは例外になる）
+assert len(effects) == count
+run(bpy.ops.tachie.register_sound_effect, filepath=str(se_path))
+assert effects[-1].name == "se"
+effects[-1].volume = 0.7
+se_index = len(effects) - 1
+s.se_at_lines = False
+scene.frame_current = 5
+run(bpy.ops.tachie.add_sound_effect, index=se_index)
+se_strip = sed.active_strip
+reserved = {s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel} | {c.channel for c in s.characters}
+assert se_strip["tachie_se"] == "se" and se_strip.left_handle == 5 and abs(se_strip.volume - 0.7) < 1e-6
+assert se_strip.channel not in reserved
+s.se_at_lines = True
+heads = sorted(v[0] for v in lines().values())[:2]
+for x in sed.strips_all:
+    x.select = False
+for cid, (left, _, sts) in lines().items():
+    if left in heads:
+        sts[0].select = True
+run(bpy.ops.tachie.add_sound_effect, index=se_index)
+placed = sorted(x.left_handle for x in sed.strips if x.get("tachie_se") and x.select)
+assert placed == heads, (placed, heads)
+assert all(x.channel not in reserved for x in sed.strips if x.get("tachie_se"))
+for x in [x for x in sed.strips if x.get("tachie_se")]:
+    sed.strips.remove(x)
+run(bpy.ops.tachie.remove_sound_effect, index=se_index)
+assert len(effects) == se_index
+s.se_at_lines = False
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 zunda.talk_period = 0.5  # 動きの設定も書き出す（既定値のものは書かない）

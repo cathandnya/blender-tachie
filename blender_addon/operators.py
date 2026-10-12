@@ -2521,6 +2521,121 @@ class TACHIE_OT_unset_bgm(bpy.types.Operator):
         return {"FINISHED"}
 
 
+SOUND_GLOB = "*.wav;*.mp3;*.ogg;*.flac;*.m4a;*.aac;*.opus"
+
+
+def _sound_error(path: Path) -> str | None:
+    """音声として読めなければその理由。読めないファイルでも new_sound は 1 フレームの無音のストリップを作るので先に確かめる。"""
+    if not path.is_file():
+        return f"ファイルがありません: {path}"
+    try:
+        import aud
+
+        aud.Sound(str(path)).length
+    except Exception as e:
+        return f"音声として読めません: {path.name}（{e}）"
+    return None
+
+
+class TACHIE_OT_register_sound_effect(bpy.types.Operator, ImportHelper):
+    """効果音のファイルをアドオン設定に登録する（どの .blend でも使える）"""
+
+    bl_idname = "tachie.register_sound_effect"
+    bl_label = "効果音を登録"
+    bl_options = {"REGISTER"}
+
+    filter_glob: bpy.props.StringProperty(default=SOUND_GLOB, options={"HIDDEN"})
+
+    def execute(self, context):
+        path = Path(bpy.path.abspath(self.filepath))
+        if error := _sound_error(path):
+            self.report({"ERROR"}, error)
+            return {"CANCELLED"}
+        effects = prefs(context).sound_effects
+        se = effects.add()
+        se.name, se.filepath = path.stem, str(path)
+        context.preferences.is_dirty = True
+        self.report({"INFO"}, f"効果音「{se.name}」を登録しました")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_remove_sound_effect(bpy.types.Operator):
+    """効果音の登録を消す（置いてある効果音はそのまま）"""
+
+    bl_idname = "tachie.remove_sound_effect"
+    bl_label = "効果音の登録を消す"
+    bl_options = {"REGISTER"}
+
+    index: bpy.props.IntProperty()
+
+    def execute(self, context):
+        effects = prefs(context).sound_effects
+        if not 0 <= self.index < len(effects):
+            return {"CANCELLED"}
+        effects.remove(self.index)
+        context.preferences.is_dirty = True
+        return {"FINISHED"}
+
+
+def _se_channel(sed, settings, start: int, end: int) -> int:
+    """効果音を置くチャンネル: `se_channel` から上で、その範囲が空いていて、アドオンが使うチャンネルでないところ。"""
+    reserved = {settings.audio_channel, settings.subtitle_channel, settings.name_channel, settings.headline_channel}
+    reserved |= {c.channel for c in settings.characters}
+    channel = settings.se_channel
+    while channel < 128 and (channel in reserved or _overlaps(sed, channel, start, end)):
+        channel += 1
+    return channel
+
+
+class TACHIE_OT_add_sound_effect(bpy.types.Operator):
+    """登録した効果音を、再生位置か、選んでいるセリフそれぞれの頭に置く"""
+
+    bl_idname = "tachie.add_sound_effect"
+    bl_label = "効果音を置く"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: bpy.props.IntProperty()
+
+    def execute(self, context):
+        effects = prefs(context).sound_effects
+        if not 0 <= self.index < len(effects):
+            self.report({"ERROR"}, "効果音が登録されていません")
+            return {"CANCELLED"}
+        se = effects[self.index]
+        path = Path(bpy.path.abspath(se.filepath))
+        if error := _sound_error(path):
+            self.report({"ERROR"}, f"効果音「{se.name}」: {error}")
+            return {"CANCELLED"}
+        scene = seq_scene(context)
+        settings = scene.tachie
+        ensure_sequencer_scene(context)
+        sed = scene.sequence_editor or scene.sequence_editor_create()
+        if settings.se_at_lines:
+            ids = selected_targets(sed)[0]
+            starts = [min(s.left_handle for s in line_strips(sed, i)) for i in ids]
+            if not starts:
+                self.report({"ERROR"}, "効果音を置くセリフを選んでください")
+                return {"CANCELLED"}
+        else:
+            starts = [scene.frame_current]
+        placed = []
+        for start in starts:
+            strip = sed.strips.new_sound(name=f"効果音 {se.name}", filepath=_path_for_blend(path),
+                                         channel=128, frame_start=start)
+            strip.channel = _se_channel(sed, settings, strip.left_handle, strip.right_handle)
+            strip.volume = se.volume
+            strip["tachie_se"] = se.name
+            placed.append(strip)
+        for s in sed.strips_all:
+            s.select = False
+        for s in placed:
+            s.select = True
+        sed.active_strip = placed[-1]
+        scene.frame_end = max(scene.frame_end, max(s.right_handle for s in placed) - 1)
+        self.report({"INFO"}, f"効果音「{se.name}」を {len(placed)} か所に置きました")
+        return {"FINISHED"}
+
+
 class TACHIE_OT_export_subtitles(bpy.types.Operator, ExportHelper):
     """置いてあるセリフの字幕を SRT / WebVTT で書き出す（YouTube などの字幕用）"""
 
@@ -2844,6 +2959,9 @@ _classes = (
     TACHIE_OT_export_subtitles,
     TACHIE_OT_add_headline,
     TACHIE_OT_set_bgm,
+    TACHIE_OT_register_sound_effect,
+    TACHIE_OT_remove_sound_effect,
+    TACHIE_OT_add_sound_effect,
     TACHIE_OT_unset_bgm,
     TACHIE_OT_render_preset,
     TACHIE_OT_export_characters,
