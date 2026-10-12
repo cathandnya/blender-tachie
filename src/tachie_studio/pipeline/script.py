@@ -22,6 +22,9 @@ class Line:
     speaker: int | None = None  # スタイル ID の上書き（None ならキャラクターの話者）
     voice: dict[str, float] = field(default_factory=dict, hash=False)  # audio_query の値の上書き
     kana: str | None = None  # 発音（AquesTalk 風記法）。None なら VOICEVOX が自動で付けた読み
+    accent_phrases: list | None = field(default=None, hash=False)  # 抑揚を編集した accent_phrases（kana より優先）
+    # 抑揚を編集したときの発音。指定すると、今の発音（kana か自動の読み）と違えば accent_phrases を使わない
+    accent_kana: str | None = None
 
 
 _KANA_RE = re.compile(r"^(?P<text>.*?)\s*[{｛](?P<kana>[^{}｛｝]*)[}｝]\s*$")

@@ -209,6 +209,64 @@ word = next(w for w in ops._dict_words if w[1] == "立絵試験語")
 assert word[2] == "タチエシケンゴ" and word[3] == 1
 run(bpy.ops.tachie.dict_remove, uuid=word[0])
 assert not any(w[1] == "立絵試験語" for w in ops._dict_words)
+# 抑揚の編集（ダイアログは画面が要るので、中身を入れて execute だけ呼ぶ）
+first_id = sed.active_strip["tachie_id"]
+sed.active_strip = sound(first_id)
+l0, r0, _ = lines()[first_id]
+edit = wm.tachie_accent
+strips_, text_, ch_, speaker_, kana_ = ops._line_context(bpy.context)
+ops.load_accent_edit(edit, ops._fresh_accent(bpy.context, text_, speaker_, kana_))
+edit.clip_id, edit.text, edit.kana, edit.speaker = first_id, text_, kana_ or "", speaker_
+phrase = edit.phrases[0]
+before = [m.pitch for m in phrase.moras]
+phrase.shift = 0.3  # 句全体を上げる
+assert all(abs(m.pitch - (b + 0.3 if m.voiced else b)) < 1e-4 for m, b in zip(phrase.moras, before))
+for m in phrase.moras:
+    m.vowel_length *= 2  # 最初の句をゆっくり
+run(bpy.ops.tachie.preview_accent)
+run(bpy.ops.tachie.edit_accent)
+first_id = sed.active_strip["tachie_id"]
+l1, r1, _ = lines()[first_id]
+assert l1 == l0 and r1 > r0, (l0, r0, l1, r1)
+saved = __import__("json").loads(sound(first_id)["tachie_accent"])
+assert abs(saved[0]["moras"][0]["pitch"] - phrase.moras[0].pitch) < 1e-4
+# 再生成しても抑揚の編集は残る（長さも同じ）
+sed.active_strip = sound(first_id)
+run(bpy.ops.tachie.regenerate)
+first_id = sed.active_strip["tachie_id"]
+assert sound(first_id).get("tachie_accent") and lines()[first_id][1] == r1
+run(bpy.ops.tachie.preview_line)
+# 抑揚の編集を消すと元の長さに戻る
+run(bpy.ops.tachie.clear_accent)
+first_id = sed.active_strip["tachie_id"]
+assert not sound(first_id).get("tachie_accent") and lines()[first_id][1] == r0
+# 発音を変えると抑揚の編集は捨てる
+ops.load_accent_edit(edit, ops._fresh_accent(bpy.context, text_, speaker_, kana_))
+edit.clip_id = first_id
+edit.phrases[0].moras[0].vowel_length += 0.2
+run(bpy.ops.tachie.edit_accent)
+first_id = sed.active_strip["tachie_id"]
+assert sound(first_id).get("tachie_accent")
+snd = sound(first_id)
+snd["tachie_kana"] = edited
+sed.active_strip = snd
+run(bpy.ops.tachie.regenerate)
+assert not sound(sed.active_strip["tachie_id"]).get("tachie_accent")
+run(bpy.ops.tachie.reset_kana)
+# 自動の読みが編集したときから変わったら（ユーザー辞書の登録など）抑揚の編集は捨てる
+first_id = sed.active_strip["tachie_id"]
+ops.load_accent_edit(edit, ops._fresh_accent(bpy.context, text_, speaker_, None))
+edit.clip_id, edit.kana = first_id, ""
+edit.phrases[0].moras[0].vowel_length += 0.2
+run(bpy.ops.tachie.edit_accent)
+snd = sound(sed.active_strip["tachie_id"])
+assert snd.get("tachie_accent")
+key = __import__("json").loads(snd["tachie_accent_key"])
+snd["tachie_kana"] = snd["tachie_kana_auto"] = "ア'"  # 編集したときの自動の読みが今と違ったことにする
+snd["tachie_accent_key"] = __import__("json").dumps([key[0], "ア'", key[2]], ensure_ascii=False)
+sed.active_strip = snd
+run(bpy.ops.tachie.regenerate)
+assert not sound(sed.active_strip["tachie_id"]).get("tachie_accent")
 check_idle()
 
 # 書き出したキャラ設定を読み直すと同じになる

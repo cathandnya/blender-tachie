@@ -325,3 +325,30 @@ def test_render_line_kana(tmp_path: Path, char_dir: Path):
     assert not asked and clip.extra["kana"] == clip.extra["kana_auto"] == "カ'ム"
     clip = render_line(client, cfg, character, Line(2, "テスト", "かむ", kana="ム'"), tmp_path / "o", fps=10, cache=cache)
     assert asked == [("ム'", 1, True)] and clip.extra["kana"] == "ム'" and clip.extra["kana_auto"] == "カ'ム"
+
+
+def test_render_line_edited_accent(tmp_path: Path, char_dir: Path):
+    from tachie_studio.pipeline.render import FrameCache, render_line
+    from tachie_studio.pipeline.script import Line
+
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path)["テスト"]
+    character = load_character(char_dir)
+    client = FakeClient()
+    client.accent_phrases = lambda *a, **k: (_ for _ in ()).throw(AssertionError("呼ばない"))
+    sent = []
+    synth = client.synthesis
+    client.synthesis = lambda q, s: (sent.append(q), synth(q, s))[1]
+    edited = [{"moras": [{"text": "カ", "consonant": "k", "consonant_length": 0.3, "vowel": "a", "vowel_length": 0.5,
+                          "pitch": 6.1}], "accent": 1, "pause_mora": None, "is_interrogative": False}]
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    render_line(client, cfg, character, Line(1, "テスト", "かむ", kana="カ'", accent_phrases=edited),
+                tmp_path / "o", fps=10, cache=cache)
+    assert sent[-1]["accent_phrases"] == edited and sent[-1]["kana"] == "カ'"
+    # 編集したときの読みが今の自動の読み（ユーザー辞書などで変わる）と違えば使わない
+    client.audio_query = lambda t, s, base=client.audio_query: {**base(t, s), "kana": "カ'ム"}
+    clip = render_line(client, cfg, character, Line(2, "テスト", "かむ", accent_phrases=edited, accent_kana="カム'"),
+                       tmp_path / "o", fps=10, cache=cache)
+    assert sent[-1]["accent_phrases"] != edited and "accent" not in clip.extra
+    clip = render_line(client, cfg, character, Line(3, "テスト", "かむ", accent_phrases=edited, accent_kana="カ'ム"),
+                       tmp_path / "o", fps=10, cache=cache)
+    assert sent[-1]["accent_phrases"] == edited and clip.extra["accent"]

@@ -271,7 +271,48 @@ class TachieDictionary(bpy.types.PropertyGroup):
                              description="音が下がる直前のモーラの位置。0 は平板（下がらない）")
 
 
-_classes = (TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary)
+class TachieMora(bpy.types.PropertyGroup):
+    """抑揚の編集で 1 モーラ分（name はモーラの文字）。"""
+    consonant: StringProperty()
+    vowel: StringProperty()
+    voiced: BoolProperty(default=True)  # 無声化・促音は音高 0 のまま
+    pitch: FloatProperty(name="音高", min=0.0, max=10.0, soft_min=3.0, soft_max=6.5, step=1, precision=2)
+    consonant_length: FloatProperty(name="子音", min=0.0, max=1.0, soft_max=0.3, step=0.1, precision=3,
+                                    unit="TIME_ABSOLUTE", description="子音の長さ（秒）")
+    vowel_length: FloatProperty(name="母音", min=0.0, max=1.0, soft_max=0.3, step=0.1, precision=3,
+                                unit="TIME_ABSOLUTE", description="母音の長さ（秒）")
+
+
+def _shift_phrase(self, context):
+    delta = self.shift - self.shift_applied
+    for m in self.moras:
+        if m.voiced:
+            m.pitch = max(0.0, m.pitch + delta)
+    self.shift_applied = self.shift
+
+
+class TachiePhrase(bpy.types.PropertyGroup):
+    """抑揚の編集で 1 アクセント句分。moras 以外の値（accent / pause_mora / is_interrogative）は rest に JSON で持つ。"""
+    moras: CollectionProperty(type=TachieMora)
+    rest: StringProperty()
+    shift: FloatProperty(name="句の高さ", default=0.0, soft_min=-1.0, soft_max=1.0, step=1, precision=2,
+                         update=_shift_phrase, description="句全体の音高をずらす")
+    shift_applied: FloatProperty(default=0.0)
+
+
+class TachieAccentEdit(bpy.types.PropertyGroup):
+    """抑揚の編集ダイアログの中身（保存しない）。"""
+    phrases: CollectionProperty(type=TachiePhrase)
+    tab: EnumProperty(items=[("PITCH", "イントネーション", "モーラごとの音高"),
+                             ("LENGTH", "長さ", "モーラごとの子音・母音の長さ")])
+    clip_id: StringProperty()
+    text: StringProperty()
+    kana: StringProperty()
+    speaker: IntProperty()
+
+
+_classes = (TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary,
+            TachieMora, TachiePhrase, TachieAccentEdit)
 
 
 def register():
@@ -279,9 +320,11 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.Scene.tachie = PointerProperty(type=TachieSceneSettings)
     bpy.types.WindowManager.tachie_dict = PointerProperty(type=TachieDictionary)
+    bpy.types.WindowManager.tachie_accent = PointerProperty(type=TachieAccentEdit)
 
 
 def unregister():
+    del bpy.types.WindowManager.tachie_accent
     del bpy.types.WindowManager.tachie_dict
     del bpy.types.Scene.tachie
     for c in reversed(_classes):

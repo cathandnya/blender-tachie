@@ -124,7 +124,14 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     query = config.apply_voice(client.audio_query(line.text, speaker))
     query.update(line.voice)
     kana_auto = query.get("kana", "")
-    if line.kana:
+    # 自動の読みはユーザー辞書などで変わる。編集したときの読みと違えば抑揚の編集は使わない
+    use_accent = line.accent_phrases is not None and (
+        line.accent_kana is None or line.accent_kana == (line.kana or kana_auto))
+    if use_accent:
+        query["accent_phrases"] = line.accent_phrases
+        if line.kana:
+            query["kana"] = line.kana
+    elif line.kana:
         query["accent_phrases"] = client.accent_phrases(line.kana, speaker, is_kana=True)
         query["kana"] = line.kana
     wav_bytes = client.synthesis(query, speaker)
@@ -156,6 +163,8 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     _link_frames([cache.get(e, m) for e, m in zip(eyes, mouth_states)], out_dir / stem)
 
     extra = {"mouth_mode": mode, "kana": query.get("kana", ""), "kana_auto": kana_auto}
+    if use_accent:
+        extra["accent"] = True
     if line.expression:
         extra["expression"] = line.expression
     return RenderedClip(kind="line", index=line.index, character=line.character, text=line.text,

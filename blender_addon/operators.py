@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -257,11 +258,14 @@ def character_cache(context, ch, preset: str | None = None) -> FrameCache:
 
 
 def render_clip(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
-                voice: dict | None = None, kana: str | None = None):
+                voice: dict | None = None, kana: str | None = None, accent: list | None = None,
+                accent_kana: str | None = None):
     """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。
 
     `speaker`（スタイル）と `voice`（audio_query の値）はセリフごとの値。None ならキャラクターの既定値。
     `kana` は発音（AquesTalk 風記法）。None や空なら VOICEVOX が自動で付けた読み。
+    `accent` は抑揚を編集した accent_phrases（kana より優先）。`accent_kana` は編集したときの発音で、
+    今の発音（`kana` か自動の読み）と違えば `accent` は使わない（ユーザー辞書で自動の読みが変わったときなど）。
     """
     cache = character_cache(context, ch, preset)
     config = CharacterConfig(name=ch.name, folder=cache.character.path, speaker=ch.speaker,
@@ -270,7 +274,8 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
     lines_dir = output_dir(context) / "lines"
     clip = render_line(client(context), config, cache.character, Line(0, ch.name, text, preset or None, speaker,
                                                                     voice if voice is not None else character_voice(ch),
-                                                                    kana or None),
+                                                                    kana or None, accent or None,
+                                                                    accent_kana=accent_kana),
                        lines_dir,
                        fps=scene_fps(seq_scene(context)), cache=cache, stem=clip_id)
     return clip, lines_dir
@@ -290,7 +295,8 @@ def check_free(context, ch, start: int, frames: int, ignore=()) -> None:
                          "他のストリップがあります")
 
 
-def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voice: dict | None = None) -> list:
+def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voice: dict | None = None,
+                 accent: list | None = None) -> list:
     """書き出したセリフを start に置く。置いたストリップ（音声・立ち絵・字幕）を返す。
 
     セリフごとの声（`voice`、None ならキャラクターの既定値）は音声ストリップの `tachie_voice_*` に持つ。
@@ -338,7 +344,33 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     # 発音は音声ストリップに。自動の読みと違えば「編集した発音」として再生成でも使う
     sound["tachie_kana"] = clip.extra.get("kana", "")
     sound["tachie_kana_auto"] = clip.extra.get("kana_auto", "")
+    # 抑揚の編集は、そのときのテキスト・発音・スタイルでだけ使う（どれかが変われば取り直す）
+    if accent and clip.extra.get("accent"):
+        sound["tachie_accent"] = json.dumps(accent, ensure_ascii=False)
+        sound["tachie_accent_key"] = json.dumps([text, clip.extra.get("kana", ""), clip.speaker], ensure_ascii=False)
     return strips
+
+
+def line_accent(strips, text: str, kana: str | None, speaker: int, auto: str | None = None) -> list | None:
+    """抑揚を編集した accent_phrases。テキスト・発音（None なら自動の読み）・スタイルが編集したときと同じ場合だけ。
+
+    `auto` は今の自動の読み（None なら置いたときの読み）。ユーザー辞書の登録で変わることがある。
+    """
+    sound = line_sound(strips)
+    if sound is None or not sound.get("tachie_accent"):
+        return None
+    try:
+        key = json.loads(sound.get("tachie_accent_key", "[]"))
+        accent = json.loads(sound["tachie_accent"])
+    except ValueError:
+        return None
+    if text != sound.get("tachie_placed_text", text):
+        return None  # テキストが変わった（自動の読みも変わる）
+    if auto is None:
+        auto = sound.get("tachie_kana_auto", "")
+    if key != [text, kana or auto, speaker]:
+        return None
+    return accent
 
 
 def set_line_voice(sound, voice: dict) -> None:
@@ -394,12 +426,12 @@ def line_text(strips) -> str:
 
 def regenerate(context, clip_id: str, text: str | None = None, preset: str | None = None,
                speaker: int | None = None, voice: dict | None = None, character: str | None = None,
-               kana: str | None = None) -> list:
+               kana: str | None = None, accent: list | None = None) -> list:
     """セリフを作り直して同じ位置に置き直す。新しいストリップを返す。
 
     指定しなかった値は置いてあるセリフから取る（声とスタイルは音声ストリップ）。`character` で別のキャラにすると、
     スタイルと声はそのキャラの既定値になり、そのキャラに無い表情プリセットは基本の表情に戻る。
-    `kana` は "" で自動の読みに戻す。
+    `kana` は "" で自動の読みに戻す（抑揚の編集も捨てる）。`accent` は編集した accent_phrases、[] で編集を捨てる。
     """
     settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
@@ -423,11 +455,19 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
         ch = find_character(settings, old[0]["tachie_character"])
         speaker = int(sound.get("tachie_speaker", ch.speaker)) if speaker is None else speaker
         voice = line_voice(old, ch) if voice is None else voice
+    if kana == "":
+        accent = []
     kana = line_kana(old, text) if kana is None else kana
+    accent_kana = None
+    if accent is None:
+        accent = line_accent(old, text, kana, speaker)
+        if accent:
+            # 自動の読みが置いたときから変わっていたら使わない（render_line で確かめる）
+            accent_kana = kana or (line_sound(old) or old[0]).get("tachie_kana_auto", "")
     start = min(s.left_handle for s in old)
     old_end = max(s.right_handle for s in old)
 
-    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice, kana)
+    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice, kana, accent, accent_kana)
     delta = start + clip.frames - old_end
     # 消す前に置けるか確かめる（ずらすストリップは邪魔にならない）
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
@@ -438,7 +478,7 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     remove_idle(sed)
     if settings.ripple and delta:
         shift_after(sed, old_end, delta)
-    return place_strips(context, ch, clip, lines_dir, text, start, voice)
+    return place_strips(context, ch, clip, lines_dir, text, start, voice, accent)
 
 
 def remove_idle(sed) -> None:
@@ -770,9 +810,6 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
         return active_line_id(context) is not None
 
     def execute(self, context):
-        global _preview
-        import aud
-
         sed = seq_scene(context).sequence_editor
         strips = line_strips(sed, active_line_id(context))
         sound = line_sound(strips)
@@ -785,19 +822,201 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
             query = c.audio_query(text, speaker)
             query.update(line_voice(strips, ch))
             kana = kana or line_kana(strips, text)
-            if kana:
+            accent = line_accent(strips, text, kana, speaker, auto=query.get("kana", ""))
+            if accent:
+                query["accent_phrases"] = accent
+            elif kana:
                 query["accent_phrases"] = c.accent_phrases(kana, speaker, is_kana=True)
             wav = c.synthesis(query, speaker)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        path = output_dir(context) / "preview.wav"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if _preview is not None:
-            _preview.stop()
-        path.write_bytes(wav)
-        _preview = aud.Device().play(aud.Sound(str(path)).cache())
+        play_preview(context, wav)
         return {"FINISHED"}
+
+
+def play_preview(context, wav: bytes) -> None:
+    """合成した wav を鳴らす（前の試聴は止める）。"""
+    global _preview
+    import aud
+
+    path = output_dir(context) / "preview.wav"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if _preview is not None:
+        _preview.stop()
+    path.write_bytes(wav)
+    _preview = aud.Device().play(aud.Sound(str(path)).cache())
+
+
+# ---- 抑揚の編集 ----
+
+def _line_context(context):
+    """選択中のセリフの (strips, テキスト, キャラクター, スタイル, 発音)。発音は編集したものか None。"""
+    sed = seq_scene(context).sequence_editor
+    strips = line_strips(sed, active_line_id(context))
+    sound = line_sound(strips)
+    text, kana = split_kana(sed.active_strip["tachie_text"].strip())
+    ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
+    speaker = int((sound or strips[0]).get("tachie_speaker", ch.speaker))
+    return strips, text, ch, speaker, kana or line_kana(strips, text)
+
+
+def load_accent_edit(edit, phrases: list) -> None:
+    edit.phrases.clear()
+    for ap in phrases:
+        item = edit.phrases.add()
+        item.rest = json.dumps({k: v for k, v in ap.items() if k != "moras"}, ensure_ascii=False)
+        for mora in ap["moras"]:
+            m = item.moras.add()
+            m.name = mora["text"]
+            m.consonant = mora.get("consonant") or ""
+            m.vowel = mora["vowel"]
+            m.pitch = mora.get("pitch") or 0.0
+            m.voiced = (mora.get("pitch") or 0.0) > 0
+            m.consonant_length = mora.get("consonant_length") or 0.0
+            m.vowel_length = mora.get("vowel_length") or 0.0
+
+
+def accent_from_edit(edit) -> list:
+    phrases = []
+    for item in edit.phrases:
+        ap = json.loads(item.rest or "{}")
+        ap["moras"] = [{
+            "text": m.name,
+            "consonant": m.consonant or None,
+            "consonant_length": round(m.consonant_length, 6) if m.consonant else None,
+            "vowel": m.vowel,
+            "vowel_length": round(m.vowel_length, 6),
+            "pitch": round(m.pitch, 6),
+        } for m in item.moras]
+        phrases.append(ap)
+    return phrases
+
+
+def _fresh_accent(context, text: str, speaker: int, kana: str | None) -> list:
+    c = client(context)
+    if kana:
+        return c.accent_phrases(kana, speaker, is_kana=True)
+    return c.audio_query(text, speaker)["accent_phrases"]
+
+
+class TACHIE_OT_edit_accent(bpy.types.Operator):
+    """選択中のセリフの抑揚（モーラごとの音高・長さ）を編集する"""
+
+    bl_idname = "tachie.edit_accent"
+    bl_label = "抑揚を編集"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def invoke(self, context, event):
+        edit = context.window_manager.tachie_accent
+        try:
+            strips, text, ch, speaker, kana = _line_context(context)
+            if kana:
+                phrases = line_accent(strips, text, kana, speaker) or _fresh_accent(context, text, speaker, kana)
+            else:  # 自動の読みは今のもので確かめる（ユーザー辞書で変わることがある）
+                query = client(context).audio_query(text, speaker)
+                phrases = line_accent(strips, text, None, speaker, auto=query.get("kana", "")) or query["accent_phrases"]
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        load_accent_edit(edit, phrases)
+        edit.clip_id, edit.text, edit.kana, edit.speaker = active_line_id(context), text, kana or "", speaker
+        widest = max((len(p["moras"]) for p in phrases), default=1)
+        return context.window_manager.invoke_props_dialog(self, width=max(420, min(1400, 64 * widest + 80)),
+                                                          confirm_text="反映して作り直す")
+
+    def draw(self, context):
+        edit = context.window_manager.tachie_accent
+        layout = self.layout
+        row = layout.row(align=True)
+        row.prop(edit, "tab", expand=True)
+        row.operator("tachie.preview_accent", text="", icon="PLAY")
+        row.operator("tachie.reload_accent", text="", icon="FILE_REFRESH")
+        for item in edit.phrases:
+            box = layout.box()
+            if edit.tab == "PITCH":
+                box.prop(item, "shift", slider=True)
+            row = box.row(align=True)
+            for m in item.moras:
+                col = row.column(align=True)
+                col.label(text=m.name)
+                if edit.tab == "PITCH":
+                    sub = col.column(align=True)
+                    sub.enabled = m.voiced
+                    sub.prop(m, "pitch", text="")
+                else:
+                    sub = col.column(align=True)
+                    sub.enabled = bool(m.consonant)
+                    sub.prop(m, "consonant_length", text="")
+                    col.prop(m, "vowel_length", text="")
+        if edit.tab == "LENGTH":
+            layout.label(text="上が子音、下が母音の長さ（秒）")
+
+    def execute(self, context):
+        edit = context.window_manager.tachie_accent
+        if active_line_id(context) != edit.clip_id:
+            self.report({"ERROR"}, "編集中に選択中のセリフが変わりました")
+            return {"CANCELLED"}
+        return _regenerate_active(self, context, kana=edit.kana or None, accent=accent_from_edit(edit))
+
+
+class TACHIE_OT_preview_accent(bpy.types.Operator):
+    """編集中の抑揚で合成して試聴する"""
+
+    bl_idname = "tachie.preview_accent"
+    bl_label = "試聴"
+
+    def execute(self, context):
+        edit = context.window_manager.tachie_accent
+        sed = seq_scene(context).sequence_editor
+        try:
+            strips = line_strips(sed, edit.clip_id)
+            ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
+            c = client(context)
+            query = c.audio_query(edit.text, edit.speaker)
+            query.update(line_voice(strips, ch))
+            query["accent_phrases"] = accent_from_edit(edit)
+            wav = c.synthesis(query, edit.speaker)
+        except (*ERRORS, IndexError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        play_preview(context, wav)
+        return {"FINISHED"}
+
+
+class TACHIE_OT_reload_accent(bpy.types.Operator):
+    """編集中の抑揚を、発音から自動で付けたものに戻す"""
+
+    bl_idname = "tachie.reload_accent"
+    bl_label = "抑揚を取り直す"
+
+    def execute(self, context):
+        edit = context.window_manager.tachie_accent
+        try:
+            load_accent_edit(edit, _fresh_accent(context, edit.text, edit.speaker, edit.kana or None))
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class TACHIE_OT_clear_accent(bpy.types.Operator):
+    """選択中のセリフの抑揚の編集を捨てて作り直す"""
+
+    bl_idname = "tachie.clear_accent"
+    bl_label = "抑揚の編集を消す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def execute(self, context):
+        return _regenerate_active(self, context, accent=[])
 
 
 def _katakana(text: str) -> str:
@@ -1449,6 +1668,10 @@ _classes = (
     TACHIE_OT_reset_line_voice,
     TACHIE_OT_reset_kana,
     TACHIE_OT_preview_line,
+    TACHIE_OT_edit_accent,
+    TACHIE_OT_preview_accent,
+    TACHIE_OT_reload_accent,
+    TACHIE_OT_clear_accent,
     TACHIE_OT_dict_refresh,
     TACHIE_OT_dict_add,
     TACHIE_OT_dict_remove,

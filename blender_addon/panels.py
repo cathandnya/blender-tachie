@@ -109,6 +109,12 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                 row.prop(sound, '["tachie_kana"]', text="")
                 row.operator("tachie.preview_line", text="", icon="PLAY")
                 row.operator("tachie.reset_kana", text="", icon="FILE_REFRESH")
+                row = layout.row(align=True)
+                edited = bool(sound.get("tachie_accent"))
+                row.operator("tachie.edit_accent", text="抑揚を編集（編集済み）" if edited else "抑揚を編集",
+                             icon="IPO_EASE_IN_OUT")
+                if edited:
+                    row.operator("tachie.clear_accent", text="", icon="X")
             row = layout.row(align=True)
             row.label(text="表情")
             row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "LINE"
