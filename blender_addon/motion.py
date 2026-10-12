@@ -138,7 +138,15 @@ def refresh_motion(scene, lines_dir: Path) -> int:
         return 0
     characters = {c.name: c for c in scene.tachie.characters}
     # 消した（名前を変えた）キャラの立ち絵に付けた動きも消す（作り直さないので残ったままになる）
-    clear_motion(scene, {s.name for s in sed.strips if owner(s) is not None})
+    # 字幕とキャラ名のうち、フェードするものと前にフェードを打ったもの（tachie_fade_keyed）だけを触る
+    # （フェードしない字幕に手で付けた不透明度やキーフレームは消さない）
+    def fade_of(t) -> float:
+        ch = characters.get(t.get("tachie_character"))
+        return ch.subtitle_fade if ch is not None else 0.0
+
+    texts = [s for s in sed.strips if s.type == "TEXT" and s.get("tachie_id")
+             and (fade_of(s) > 0 or s.get("tachie_fade_keyed"))]
+    clear_motion(scene, {s.name for s in sed.strips if owner(s) is not None} | {s.name for s in texts})
     images = [s for s in sed.strips if owner(s) in characters]
     fps = scene.render.fps / scene.render.fps_base
     width, height = scene.render.resolution_x, scene.render.resolution_y
@@ -147,6 +155,17 @@ def refresh_motion(scene, lines_dir: Path) -> int:
         s.transform.rotation = 0.0
         s.blend_alpha = 1.0
     count = 0
+    for t in texts:  # 字幕（とキャラ名）のフェードイン
+        t.blend_alpha = 1.0
+        fade = fade_of(t)
+        if fade > 0:
+            end = min(t.left_handle + max(1, round(fade * fps)), t.right_handle - 1)
+            _key(t, "blend_alpha", t.left_handle, 0.0)
+            _key(t, "blend_alpha", max(end, t.left_handle + 1), 1.0)
+            t["tachie_fade_keyed"] = True
+            count += 1
+        elif "tachie_fade_keyed" in t:
+            del t["tachie_fade_keyed"]
     for ch in characters.values():
         mine = [s for s in images if owner(s) == ch.name and s.channel == ch.channel]
         if ch.talk_bounce > 0 or ch.talk_sway > 0:
@@ -179,10 +198,13 @@ def motion_signature(scene) -> str:
         return ""
     chars = scene.tachie.characters
     settings = [(c.name, c.channel, round(c.talk_bounce, 4), round(c.talk_sway, 3), round(c.talk_period, 3),
-                 c.enter_effect, c.exit_effect, round(c.effect_seconds, 3)) for c in chars]
-    active = any(s[2] or s[3] or s[5] != "NONE" or s[6] != "NONE" for s in settings)
+                 c.enter_effect, c.exit_effect, round(c.effect_seconds, 3), round(c.subtitle_fade, 3)) for c in chars]
+    active = any(s[2] or s[3] or s[5] != "NONE" or s[6] != "NONE" or s[8] for s in settings)
     items = []
     for s in sed.strips:
+        if s.type == "TEXT" and s.get("tachie_id"):  # 字幕のフェードは字幕の位置で決まる
+            items.append((s.name, s.channel, int(s.content_start), s.left_handle, s.right_handle, ()))
+            continue
         if owner(s) is None:
             continue
         pose = (round(s.get("tachie_pos_x", 0.0), 4), round(s.get("tachie_pos_y", 0.0), 4),

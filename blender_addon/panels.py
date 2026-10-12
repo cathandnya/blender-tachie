@@ -446,7 +446,41 @@ class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
         row.prop(ch, "text_color", text="文字")
         row.prop(ch, "outline_color", text="縁")
         layout.prop(ch, "outline_width")
+        col = layout.column(align=True)
+        col.prop(ch, "subtitle_box")
+        sub = col.column(align=True)
+        sub.active = ch.subtitle_box
+        sub.prop(ch, "box_color")
+        sub.prop(ch, "box_margin")
+        sub.prop(ch, "box_roundness")
+        layout.prop(ch, "show_name")
+        layout.prop(ch, "subtitle_fade")
         layout.prop(ch, "font_path", text="")
+
+
+class TACHIE_PT_headline(_Panel, bpy.types.Panel):
+    bl_label = "見出し"
+    bl_parent_id = "TACHIE_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        s = seq_scene(context).tachie
+        layout.prop(s, "headline_text", text="")
+        row = layout.row(align=True)
+        row.operator("tachie.add_headline", icon="FONT_DATA")
+        row.prop(s, "headline_seconds")
+        col = layout.column(align=True)
+        col.prop(s, "headline_size")
+        col.prop(s, "headline_y")
+        row = layout.row(align=True)
+        row.prop(s, "headline_color", text="文字")
+        row.prop(s, "headline_outline_color", text="縁")
+        row = layout.row(align=True)
+        row.prop(s, "headline_box")
+        row.prop(s, "headline_box_color", text="")
+        layout.prop(s, "headline_font_path", text="")
+        layout.label(text="スタイルは置いてある見出しにもすぐ反映します", icon="INFO")
 
 
 class TACHIE_PT_export(_Panel, bpy.types.Panel):
@@ -482,6 +516,9 @@ class TACHIE_PT_channels(_Panel, bpy.types.Panel):
         row = self.layout.row(align=True)
         row.prop(s, "subtitle_channel")
         row.prop(s, "audio_channel")
+        row = self.layout.row(align=True)
+        row.prop(s, "name_channel")
+        row.prop(s, "headline_channel")
         self.layout.label(text="立ち絵のチャンネルはキャラクターごとに設定")
 
 
@@ -500,6 +537,7 @@ _classes = (
     TACHIE_PT_presets,
     TACHIE_PT_placement,
     TACHIE_PT_subtitle,
+    TACHIE_PT_headline,
     TACHIE_PT_export,
     TACHIE_PT_channels,
 )

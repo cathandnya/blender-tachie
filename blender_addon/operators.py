@@ -11,7 +11,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
 from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
 from .tachie_studio.pipeline.script import split_kana
@@ -149,7 +149,9 @@ def config_of(ch) -> CharacterConfig:
                 **_config_motion(ch)},
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
-                  "y": ch.subtitle_y},
+                  "y": ch.subtitle_y, "box": ch.subtitle_box, "box_color": list(ch.box_color),
+                  "box_margin": ch.box_margin, "box_roundness": ch.box_roundness, "name": ch.show_name,
+                  "fade": ch.subtitle_fade},
         audio=character_audio(ch),
         engine="" if ch.engine == "DEFAULT" else engine_url(bpy.context, ch),
     )
@@ -237,7 +239,9 @@ def apply_config(ch, config: CharacterConfig) -> None:
         setattr(ch, prop, layout.get(key, ch.bl_rna.properties[prop].default))
     for prop, key in (("font_path", "font"), ("font_size", "size"), ("text_color", "color"),
                       ("outline_color", "outline_color"), ("outline_width", "outline_width"),
-                      ("subtitle_y", "y")):
+                      ("subtitle_y", "y"), ("subtitle_box", "box"), ("box_color", "box_color"),
+                      ("box_margin", "box_margin"), ("box_roundness", "box_roundness"), ("show_name", "name"),
+                      ("subtitle_fade", "fade")):
         if key in sub:
             setattr(ch, prop, sub[key])
 
@@ -288,9 +292,9 @@ def material_key(folder: str) -> str:
 
 
 def _free_channel(settings, ch, wanted: int | None = None) -> int:
-    """他のキャラ・音声・字幕と重ならないチャンネル。`wanted` が空いていればそれ。"""
+    """他のキャラ・音声・字幕・キャラ名・見出しと重ならないチャンネル。`wanted` が空いていればそれ。"""
     used = {c.channel for c in settings.characters if c != ch}
-    used |= {settings.audio_channel, settings.subtitle_channel}
+    used |= {settings.audio_channel, settings.subtitle_channel, settings.name_channel, settings.headline_channel}
     if wanted is not None and wanted not in used:
         return wanted
     return next(c for c in range(min(used | {wanted or 3, 3}), 129) if c not in used)
@@ -373,8 +377,10 @@ def check_free(context, ch, start: int, frames: int, ignore=()) -> None:
     settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
     channels = (settings.audio_channel, ch.channel, settings.subtitle_channel)
-    if len(set(channels)) < 3:
-        raise ValueError("音声・立ち絵・字幕のチャンネルは別々にしてください")
+    if ch.show_name:
+        channels += (settings.name_channel,)
+    if len(set(channels)) < len(channels):
+        raise ValueError("音声・立ち絵・字幕（・キャラ名）のチャンネルは別々にしてください")
     if sed is None:
         return
     busy = [c for c in channels if _overlaps(sed, c, start, start + frames, ignore)]
@@ -413,12 +419,19 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     subtitle = sed.strips.new_effect(name=f"字幕 {label}", type="TEXT", channel=settings.subtitle_channel,
                                      frame_start=start, length=clip.frames)
     apply_subtitle(subtitle, ch, text)
+    extra = []
+    if ch.show_name:  # 字幕の上のキャラ名（字幕と同じ長さ）
+        name = sed.strips.new_effect(name=f"名前 {label}", type="TEXT", channel=settings.name_channel,
+                                     frame_start=start, length=clip.frames)
+        apply_name(name, ch, text)
+        name["tachie_role"] = "name"
+        extra.append(name)
 
     if subtitle.right_handle - 1 > scene.frame_end:
         # 再生・レンダリングがセリフの途中で切れないように
         scene.frame_end = subtitle.right_handle - 1
 
-    strips = [sound, image, subtitle]
+    strips = [sound, image, subtitle, *extra]
     for s in strips:
         s["tachie_id"] = clip.frames_dir
         s["tachie_text"] = text
@@ -1480,7 +1493,8 @@ class TACHIE_OT_dict_remove(bpy.types.Operator):
 
 
 def _free_face_channel(sed, settings, start: int, end: int) -> int:
-    channel = settings.subtitle_channel + 1
+    # 字幕・キャラ名・見出しのチャンネルより上で空いているところ
+    channel = max(settings.subtitle_channel, settings.name_channel, settings.headline_channel) + 1
     while channel < 128 and any(s.channel == channel and s.left_handle < end and start < s.right_handle
                                 for s in sed.strips):
         channel += 1
@@ -2392,7 +2406,8 @@ def subtitle_cues(scene) -> list:
     first, last = scene.frame_start, scene.frame_end + 1
     cues = []
     for s in sed.strips:
-        if s.type != "TEXT" or not s.get("tachie_id") or s.mute or sed.channels[s.channel].mute:
+        if (s.type != "TEXT" or not s.get("tachie_id") or s.get("tachie_role") == "name" or s.mute
+                or sed.channels[s.channel].mute):
             continue
         start, end = max(s.left_handle, first), min(s.right_handle, last)
         if end <= start:
@@ -2400,6 +2415,42 @@ def subtitle_cues(scene) -> list:
         text = s.get("tachie_placed_text", s.get("tachie_text", s.text))
         cues.append(Cue((start - first) / fps, (end - first) / fps, text, s.get("tachie_character", "")))
     return cues
+
+
+class TACHIE_OT_add_headline(bpy.types.Operator):
+    """見出しテロップ（話題の切り替えなどに出す大きめの文字）を再生位置に置く。スタイルはシーンで共通"""
+
+    bl_idname = "tachie.add_headline"
+    bl_label = "見出しを置く"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scene = seq_scene(context)
+        settings = scene.tachie
+        text = settings.headline_text.strip()
+        if not text:
+            self.report({"ERROR"}, "見出しの文字を入力してください")
+            return {"CANCELLED"}
+        ensure_sequencer_scene(context)
+        sed = scene.sequence_editor or scene.sequence_editor_create()
+        start = scene.frame_current
+        frames = max(1, round(settings.headline_seconds * scene_fps(scene)))
+        if _overlaps(sed, settings.headline_channel, start, start + frames):
+            self.report({"ERROR"}, f"チャンネル {settings.headline_channel} の {start}〜{start + frames} フレームに"
+                                   "他のストリップがあります")
+            return {"CANCELLED"}
+        strip = sed.strips.new_effect(name=f"見出し {text[:16]}", type="TEXT", channel=settings.headline_channel,
+                                      frame_start=start, length=frames)
+        strip["tachie_headline"] = True
+        strip.text = text
+        apply_headline(strip, settings)
+        if strip.right_handle - 1 > scene.frame_end:
+            scene.frame_end = strip.right_handle - 1
+        for s in sed.strips_all:
+            s.select = False
+        strip.select = True
+        sed.active_strip = strip
+        return {"FINISHED"}
 
 
 class TACHIE_OT_export_subtitles(bpy.types.Operator, ExportHelper):
@@ -2723,6 +2774,7 @@ _classes = (
     TACHIE_OT_import_characters,
     TACHIE_OT_import_presets,
     TACHIE_OT_export_subtitles,
+    TACHIE_OT_add_headline,
     TACHIE_OT_render_preset,
     TACHIE_OT_export_characters,
 )

@@ -468,6 +468,41 @@ assert not keyed(image_of(zid), "transform.offset_y") and not keyed(zstrips[0], 
     if zstrips[0].name in {x.name for x in sed.strips} else True
 assert abs(image_of(zid).transform.scale_x - 1.0) < 1e-6
 
+# 字幕の帯・キャラ名・フェードイン、見出しテロップ
+metan.subtitle_box, metan.box_roundness = True, 0.5
+msubs = [x for x in sed.strips if x.type == "TEXT" and x.get("tachie_character") == "四国めたん"]
+assert msubs and all(x.use_box and abs(x.box_roundness - 0.5) < 1e-6 for x in msubs)
+metan.show_name, metan.subtitle_fade = True, 0.2
+mid = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "四国めたん")
+sed.active_strip = sound(mid)
+run(bpy.ops.tachie.regenerate)
+mid = sed.active_strip["tachie_id"]
+mstrips = ops.line_strips(sed, mid)
+name_strip = next(x for x in mstrips if x.get("tachie_role") == "name")
+msub = next(x for x in mstrips if x.type == "TEXT" and x.get("tachie_role") != "name")
+assert name_strip.text == "四国めたん" and name_strip.channel == s.name_channel
+assert name_strip.location[1] > msub.location[1] and name_strip.left_handle == msub.left_handle
+assert [v for _, v in keyed(msub, "blend_alpha")] == [0.0, 1.0] and keyed(name_strip, "blend_alpha")
+assert all(c.text != "四国めたん" for c in ops.subtitle_cues(scene))  # キャラ名は字幕ファイルに入らない
+s.headline_text, s.headline_seconds = "第 1 章 Blender で動画", 2.0
+scene.frame_current = 1
+run(bpy.ops.tachie.add_headline)
+head = sed.active_strip
+assert head["tachie_headline"] and head.text == "第 1 章 Blender で動画" and head.use_box
+head.text = "第 1 章 Blender で動画を作る"  # ストリップで直した文字はスタイルを変えても残す
+s.headline_size = 120
+assert head.font_size == 120 and head.text == "第 1 章 Blender で動画を作る"  # スタイルはすぐ反映
+metan.show_name, metan.subtitle_fade, metan.subtitle_box = False, 0.0, False
+sed.active_strip = sound(mid)
+run(bpy.ops.tachie.regenerate)
+assert not any(x.get("tachie_role") == "name" for x in sed.strips)
+# フェードしない字幕に手で付けた不透明度は、動きを作り直しても消さない
+zsub = next(x for x in sed.strips if x.type == "TEXT" and x.get("tachie_character") == "ずんだもん")
+zsub.blend_alpha = 0.5
+ops.refresh_motion_now(scene)
+assert abs(zsub.blend_alpha - 0.5) < 1e-6 and not any(x.get("tachie_fade_keyed") for x in sed.strips)
+zsub.blend_alpha = 1.0
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 zunda.talk_period = 0.5  # 動きの設定も書き出す（既定値のものは書かない）

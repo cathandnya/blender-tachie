@@ -44,6 +44,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   拡大・回転の中心 `transform.origin` は足元 (0.5, 0)。`refresh_idle` の最後と、自動反映（`auto_signature` に
   `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
   キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。
+  字幕の装飾（#12）: テキストストリップの box（`use_box` / `box_color` / `box_margin` / `box_roundness`）。キャラ名は
+  セリフの 4 本目のストリップ（`tachie_role = "name"`、`name_channel`、字幕の行数から高さを見積もる `properties.apply_name`）で、
+  字幕ファイル（`subtitle_cues`）には入れない。字幕のフェードインは `motion.refresh_motion` が blend_alpha に打つ。
+  見出しテロップは `tachie_headline` のテキストストリップ（`headline_channel`、スタイルはシーンの `headline_*` で即反映）。
+  表情ストリップは字幕・キャラ名・見出しのチャンネルより上の空きに置く。1 文字ずつ出す字幕は作っていない
+  （テキストストリップに文字を段階的に出す仕組みが無い）。
   まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・セリフなし・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
   音声ストリップに直接書き、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。

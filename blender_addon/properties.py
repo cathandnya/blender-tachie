@@ -210,6 +210,36 @@ def apply_subtitle(strip, ch, text: str) -> None:
     strip.use_outline = ch.outline_width > 0
     strip.outline_width = ch.outline_width
     strip.outline_color = ch.outline_color
+    strip.use_box = ch.subtitle_box
+    strip.box_color = ch.box_color
+    strip.box_margin = ch.box_margin
+    strip.box_roundness = ch.box_roundness
+
+
+def apply_name(strip, ch, text: str) -> None:
+    """キャラ名のストリップ: 字幕の上（行数から高さを見積もる）に、キャラの縁取りの色の帯で名前を出す。"""
+    render = ch.id_data.render
+    lines = wrap(text, chars_per_line(render.resolution_x, ch.font_size)).count("\n") + 1
+    size = ch.font_size * 0.6
+    strip.text = ch.name
+    strip.font_size = size
+    font = load_font(ch.font_path)
+    if font is not None:
+        strip.font = font
+    margin = ch.box_margin if ch.subtitle_box else 0.0
+    y = ch.subtitle_y + (lines * ch.font_size * 1.25 + size * 0.3) / render.resolution_y + margin * 2
+    strip.location = (0.5, min(0.98, y))
+    strip.anchor_y = "BOTTOM"
+    strip.color = ch.text_color
+    strip.use_outline = False
+    strip.use_box = True
+    strip.box_color = (*ch.outline_color[:3], 1.0)
+    strip.box_margin = 0.006
+    strip.box_roundness = 0.5
+
+
+def _update_subtitle_fade(self, context):
+    _update_motion(self, context)
 
 
 def _update_subtitle(self, context):
@@ -218,8 +248,12 @@ def _update_subtitle(self, context):
         return
     for strip in sed.strips:
         if strip.type == "TEXT" and strip.get("tachie_character") == self.name:
+            text = strip.get("tachie_placed_text", strip.get("tachie_text", strip.text))
             try:
-                apply_subtitle(strip, self, strip.get("tachie_text", strip.text))
+                if strip.get("tachie_role") == "name":
+                    apply_name(strip, self, text)
+                else:
+                    apply_subtitle(strip, self, text)
             except RuntimeError:
                 pass  # フォントが読めないときは今の見た目のまま
 
@@ -285,6 +319,19 @@ class TachieCharacter(bpy.types.PropertyGroup):
     outline_color: FloatVectorProperty(name="縁取り", subtype="COLOR", size=4, min=0, max=1,
                                        default=(0.0, 0.0, 0.0, 1.0), update=_update_subtitle)
     outline_width: FloatProperty(name="縁取りの太さ", default=0.15, min=0.0, max=1.0, update=_update_subtitle)
+    subtitle_box: BoolProperty(name="背景の帯", default=False, update=_update_subtitle,
+                               description="字幕の後ろに帯（箱）を敷く")
+    box_color: FloatVectorProperty(name="帯の色", subtype="COLOR", size=4, min=0, max=1,
+                                   default=(0.0, 0.0, 0.0, 0.6), update=_update_subtitle)
+    box_margin: FloatProperty(name="帯の余白", default=0.012, min=0.0, max=0.1, step=0.1, precision=3,
+                              update=_update_subtitle)
+    box_roundness: FloatProperty(name="帯の角の丸み", default=0.4, min=0.0, max=1.0, subtype="FACTOR",
+                                 update=_update_subtitle)
+    show_name: BoolProperty(name="キャラ名を出す", default=False,
+                            description="字幕の上にキャラ名（縁取りの色の帯）を出す。変えたら全セリフを再生成で反映")
+    subtitle_fade: FloatProperty(name="字幕のフェードイン", default=0.0, min=0.0, max=2.0, step=1, precision=2,
+                                 unit="TIME_ABSOLUTE", update=_update_subtitle_fade,
+                                 description="字幕（とキャラ名）が出るときにフェードする長さ（秒）。0 ならすぐ出る")
     subtitle_y: FloatProperty(name="字幕の高さ", default=0.12, min=0.0, max=1.0, subtype="FACTOR",
                               update=_update_subtitle)
 
@@ -306,6 +353,34 @@ for _prop, (_label, _min, _max, _default, _desc) in AUDIO_PROPS.items():
         description=_desc + "。新しく置くセリフの既定値")
 
 
+def apply_headline(strip, settings) -> None:
+    """見出しテロップのスタイル（シーンで共通）。文字はストリップで直したものを残すので触らない。"""
+    strip.font_size = settings.headline_size
+    font = load_font(settings.headline_font_path)
+    if font is not None:
+        strip.font = font
+    strip.location = (0.5, settings.headline_y)
+    strip.anchor_y = "CENTER"
+    strip.color = settings.headline_color
+    strip.use_outline = True
+    strip.outline_width = 0.15
+    strip.outline_color = settings.headline_outline_color
+    strip.use_box = settings.headline_box
+    strip.box_color = settings.headline_box_color
+    strip.box_margin = 0.02
+    strip.box_roundness = 0.3
+
+
+def _update_headlines(self, context):
+    sed = self.id_data.sequence_editor
+    for strip in sed.strips if sed else []:
+        if strip.type == "TEXT" and strip.get("tachie_headline"):
+            try:
+                apply_headline(strip, self)
+            except RuntimeError:
+                pass
+
+
 class TachieSceneSettings(bpy.types.PropertyGroup):
     characters: CollectionProperty(type=TachieCharacter)
     active_character: IntProperty(name="キャラクター", default=0)
@@ -317,6 +392,23 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
                             description="台本を流し込むときのセリフとセリフの間（秒）")
 
     audio_channel: IntProperty(name="音声", default=2, min=1, max=128)
+    name_channel: IntProperty(name="キャラ名", default=11, min=1, max=128,
+                              description="字幕の上に出すキャラ名のチャンネル（キャラ名を出すキャラのみ）")
+    headline_channel: IntProperty(name="見出し", default=12, min=1, max=128)
+    headline_text: StringProperty(name="見出し", default="")
+    headline_seconds: FloatProperty(name="長さ", default=3.0, min=0.1, max=3600.0, unit="TIME_ABSOLUTE",
+                                    description="「見出しを置く」で置く長さ（秒）")
+    headline_font_path: StringProperty(name="フォント", subtype="FILE_PATH", default=default_font(),
+                                       update=_update_headlines)
+    headline_size: FloatProperty(name="文字サイズ", default=96, min=8, max=600, update=_update_headlines)
+    headline_color: FloatVectorProperty(name="文字色", subtype="COLOR", size=4, min=0, max=1,
+                                        default=(1.0, 1.0, 1.0, 1.0), update=_update_headlines)
+    headline_outline_color: FloatVectorProperty(name="縁取り", subtype="COLOR", size=4, min=0, max=1,
+                                                default=(0.1, 0.1, 0.3, 1.0), update=_update_headlines)
+    headline_box: BoolProperty(name="背景の帯", default=True, update=_update_headlines)
+    headline_box_color: FloatVectorProperty(name="帯の色", subtype="COLOR", size=4, min=0, max=1,
+                                            default=(0.15, 0.3, 0.7, 0.85), update=_update_headlines)
+    headline_y: FloatProperty(name="高さ", default=0.85, min=0.0, max=1.0, subtype="FACTOR", update=_update_headlines)
     subtitle_channel: IntProperty(name="字幕", default=10, min=1, max=128)
     still_seconds: FloatProperty(name="長さ", default=5.0, min=0.1, max=3600.0, unit="TIME_ABSOLUTE",
                                  description="「立ち絵だけを置く」で置く長さ（秒）")
