@@ -52,3 +52,30 @@ def frame_rms(wav: Wav, fps: float, n_frames: int | None = None) -> list[float]:
         chunk = wav.samples[a:b]
         out.append(math.sqrt(sum(s * s for s in chunk) / len(chunk)) if chunk else 0.0)
     return out
+
+
+def apply_fade(wav_bytes: bytes, fade_in: float = 0.0, fade_out: float = 0.0) -> bytes:
+    """16bit PCM の wav の先頭と末尾を直線でフェードする（秒）。"""
+    if fade_in <= 0 and fade_out <= 0:
+        return wav_bytes
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        params = w.getparams()
+        if params.sampwidth != 2:
+            raise ValueError(f"16bit PCM 以外の wav には対応していません（{params.sampwidth * 8}bit）")
+        raw = array.array("h", w.readframes(params.nframes))
+    if sys.byteorder == "big":
+        raw.byteswap()
+    ch, n = params.nchannels, params.nframes
+    fin, fout = min(n, int(fade_in * params.framerate)), min(n, int(fade_out * params.framerate))
+    # フェードの区間だけ触る（重なるところは小さい方）
+    for i in sorted(set(range(fin)) | set(range(n - fout, n))):
+        gain = min(i / fin if i < fin else 1.0, (n - 1 - i) / fout if i >= n - fout else 1.0)
+        for c in range(ch):
+            raw[i * ch + c] = int(raw[i * ch + c] * gain)
+    if sys.byteorder == "big":
+        raw.byteswap()
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setparams(params)
+        w.writeframes(raw.tobytes())
+    return out.getvalue()

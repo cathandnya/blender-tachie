@@ -21,6 +21,13 @@
     height = 0.9                    # 画面の高さに対する立ち絵の高さ
     channel = 3                     # 立ち絵のチャンネル
 
+    ["ずんだもん".audio]               # 省略可（fade_in / fade_out / after は秒。volume / pan は Blender アドオンのみ）
+    volume = 1.0
+    pan = 0.0
+    fade_in = 0.0
+    fade_out = 0.0
+    after = 0.3                     # セリフ後の余韻（口を閉じてまばたきだけする長さ）
+
     ["ずんだもん".subtitle]            # 省略可
     font = "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc"
     size = 64
@@ -45,7 +52,7 @@ from ..tachie import Expression
 
 MOUTH_MODES = ("auto", "vowel", "volume")
 MATERIAL_CONFIG = "tachie.toml"  # 素材フォルダに置く初期値
-_NESTED = ("parts", "layout", "subtitle")  # キー単位で重ねるテーブル
+_NESTED = ("parts", "layout", "subtitle", "audio")  # キー単位で重ねるテーブル
 
 # 設定のキー → audio_query のキー
 VOICE_KEYS = {
@@ -92,6 +99,7 @@ class CharacterConfig:
     expressions: dict[str, dict[str, Any]] = field(default_factory=dict)  # プリセット名 → 上書きするパーツ
     layout: dict[str, Any] = field(default_factory=dict)  # position / flip / height / channel
     subtitle: dict[str, Any] = field(default_factory=dict)  # font / size / color / outline_color / outline_width / y
+    audio: dict[str, float] = field(default_factory=dict)  # volume / pan / fade_in / fade_out / after
 
     def apply_voice(self, query: dict[str, Any]) -> dict[str, Any]:
         query.update(self.voice)
@@ -178,6 +186,7 @@ def parse_characters(data: dict[str, Any], base: Path, use_material: bool = True
             expressions=expressions,
             layout=dict(table.get("layout", {})),
             subtitle=dict(table.get("subtitle", {})),
+            audio={str(k): float(v) for k, v in table.get("audio", {}).items()},
         )
     return characters
 
@@ -223,7 +232,7 @@ def _dump_table(c: CharacterConfig, key: str | None, folder: str | None, name: s
              for k, attr in PART_KEYS.items()}
     sections = [("parts", parts)]
     sections += [(f"expressions.{_toml_key(p)}", v) for p, v in c.expressions.items()]
-    sections += [("layout", c.layout), ("subtitle", c.subtitle)]
+    sections += [("layout", c.layout), ("subtitle", c.subtitle), ("audio", c.audio)]
     for section, values in sections:
         if values or section.startswith("expressions."):
             out.append("")

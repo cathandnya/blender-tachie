@@ -17,6 +17,7 @@ from typing import Callable
 from PIL import Image
 
 from ..lipsync import blink_track, frame_count, phonemes_from_query, read_wav, scale_to
+from ..lipsync.wav import apply_fade
 from ..lipsync.mouth import CLOSED, volume_track, vowel_track, vowels_to_levels
 from ..tachie import Character, Expression, Part, compose, load_character
 from ..voicevox import VoicevoxClient
@@ -134,9 +135,12 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     elif line.kana:
         query["accent_phrases"] = client.accent_phrases(line.kana, speaker, is_kana=True)
         query["kana"] = line.kana
-    wav_bytes = client.synthesis(query, speaker)
+    audio = {k: getattr(line, k) if getattr(line, k) is not None else float(config.audio.get(k, 0.0))
+             for k in ("fade_in", "fade_out", "after")}
+    wav_bytes = apply_fade(client.synthesis(query, speaker), audio["fade_in"], audio["fade_out"])
     wav = read_wav(wav_bytes)
     n = frame_count(wav.duration, fps)
+    after = frame_count(audio["after"], fps) if audio["after"] > 0 else 0
 
     expr = cache.expression
     mouth = _mouth_part(character, expr)
@@ -153,6 +157,8 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
         mouth_states = [("level", lv) for lv in volume_track(wav, fps, len(mouth.levels), n)]
     else:
         mouth_states = [("level", len(mouth.frames) - 1 if mouth else 0)] * n
+    mouth_states += [mouth_states[-1] if mode not in ("vowel", "volume") and mouth_states else ("level", 0)] * after
+    n += after
 
     eyes = blink_track(n, fps, len(eye.frames) if eye else 1, seed=_seed(line.index, line.character, line.text))
 
@@ -165,6 +171,8 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     extra = {"mouth_mode": mode, "kana": query.get("kana", ""), "kana_auto": kana_auto}
     if use_accent:
         extra["accent"] = True
+    if after:
+        extra["after_frames"] = after
     if line.expression:
         extra["expression"] = line.expression
     return RenderedClip(kind="line", index=line.index, character=line.character, text=line.text,

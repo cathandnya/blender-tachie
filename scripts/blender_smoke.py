@@ -268,6 +268,26 @@ sed.active_strip = snd
 run(bpy.ops.tachie.regenerate)
 assert not sound(sed.active_strip["tachie_id"]).get("tachie_accent")
 check_idle()
+# 音量・パン（すぐ反映）とフェード・余韻（再生成で反映）
+first_id = sed.active_strip["tachie_id"]
+snd = sound(first_id)
+assert snd.volume == 1.0 and snd["tachie_after"] == 0.0
+voice_end = snd.right_handle
+image_end = next(x for x in ops.line_strips(sed, first_id) if x.type == "IMAGE").right_handle
+snd.volume, snd.pan = 0.5, -0.5
+snd["tachie_after"], snd["tachie_fade_out"] = 0.5, 0.2
+sed.active_strip = snd
+run(bpy.ops.tachie.regenerate)
+first_id = sed.active_strip["tachie_id"]
+snd = sound(first_id)
+image = next(x for x in ops.line_strips(sed, first_id) if x.type == "IMAGE")
+assert (snd.volume, snd.pan) == (0.5, -0.5) and snd.right_handle == voice_end
+assert image.right_handle == image_end + 15, (image.right_handle, image_end)  # 0.5 秒 = 15 フレーム
+from bl_ext.user_default.blender_tachie.tachie_studio.lipsync import read_wav  # noqa: E402
+
+assert read_wav(bpy.path.abspath(snd.sound.filepath)).samples[-1] == 0
+check_idle()
+zunda.audio_after = 0.3
 
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
@@ -277,6 +297,7 @@ from bl_ext.user_default.blender_tachie.tachie_studio.pipeline import load_chara
 again = load_characters(exported)
 assert again["ずんだもん"].expression.eye == "ジト目" and again["四国めたん"].layout["channel"] == 4
 assert again["ずんだもん"].voice == {"speedScale": 1.1} and again["四国めたん"].voice == {}, again["ずんだもん"].voice
+assert abs(again["ずんだもん"].audio["after"] - 0.3) < 1e-6 and again["四国めたん"].audio["volume"] == 1.0
 print(exported.read_text(encoding="utf-8"))
 
 # 台本の流し込み（テキストエディタの台本、表情つき）

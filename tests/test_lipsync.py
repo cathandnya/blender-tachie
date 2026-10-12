@@ -185,3 +185,24 @@ def test_engine_user_dict():
     finally:
         client.delete_user_dict_word(uuid)
     assert uuid not in client.user_dict()
+
+
+def test_apply_fade():
+    import io
+    import wave
+
+    from tachie_studio.lipsync.wav import apply_fade
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(100)
+        w.writeframes(b"".join((10000).to_bytes(2, "little", signed=True) for _ in range(100)))
+    raw = buf.getvalue()
+    assert apply_fade(raw) is raw
+    out = read_wav(apply_fade(raw, fade_in=0.1, fade_out=0.2))
+    s = [round(x * 32768) for x in out.samples]
+    assert s[0] == 0 and s[5] == 5000 and s[10] == 10000 and s[50] == 10000
+    assert s[-1] == 0 and s[90] == 4500 and s[79] == 10000  # 末尾 20 サンプル: (99 - 90) / 20
+    assert len(s) == 100

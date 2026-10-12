@@ -25,6 +25,10 @@ class Line:
     accent_phrases: list | None = field(default=None, hash=False)  # 抑揚を編集した accent_phrases（kana より優先）
     # 抑揚を編集したときの発音。指定すると、今の発音（kana か自動の読み）と違えば accent_phrases を使わない
     accent_kana: str | None = None
+    # 以下 None ならキャラクター設定の [audio] の値
+    fade_in: float | None = None  # 音声の先頭のフェード（秒）
+    fade_out: float | None = None  # 音声の末尾のフェード（秒）
+    after: float | None = None  # セリフ後の余韻（秒）。音声の後ろに口を閉じた立ち絵（まばたきのみ）を足す
 
 
 _KANA_RE = re.compile(r"^(?P<text>.*?)\s*[{｛](?P<kana>[^{}｛｝]*)[}｝]\s*$")

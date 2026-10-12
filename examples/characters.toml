@@ -3,6 +3,7 @@
 # mouth: auto（母音画像があればあいうえお式、なければ音量式）/ vowel / volume
 # 日本語のキーは TOML の決まりで "" で囲む。
 # 声の調整（省略可）: speed pitch intonation volume pre_phoneme post_phoneme pause
+# 音声（省略可）: ["キャラ".audio] に volume pan fade_in fade_out after（セリフ後の余韻、秒）
 
 ["ずんだもん"]
 folder = "../char/ずんだもん"

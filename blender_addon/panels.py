@@ -1,7 +1,7 @@
 import bpy
 
 from .operators import line_sound, line_strips, output_dir, seq_scene
-from .properties import PART_PROPS, VOICE_PROPS
+from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, VOICE_PROPS
 
 
 class _Panel:
@@ -122,6 +122,13 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             if sound is not None and "tachie_voice_speed_scale" in sound:
                 for prop, (_, label, *_) in VOICE_PROPS.items():
                     col.prop(sound, f'["tachie_voice_{prop}"]', text=label)
+                col = layout.column(align=True)
+                col.prop(sound, "volume", text=AUDIO_PROPS["volume"][0])
+                col.prop(sound, "pan", text=AUDIO_PROPS["pan"][0])
+                for key in BAKED_AUDIO:
+                    if f"tachie_{key}" in sound:
+                        col.prop(sound, f'["tachie_{key}"]', text=AUDIO_PROPS[key][0])
+                col = layout.column(align=True)
                 col.operator("tachie.reset_line_voice", icon="LOOP_BACK")
             else:
                 col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
@@ -193,6 +200,9 @@ class TACHIE_PT_voice(_Panel, bpy.types.Panel):
         col = layout.column(align=True)
         for prop in VOICE_PROPS:
             col.prop(ch, prop)
+        col = layout.column(align=True)
+        for key in AUDIO_PROPS:
+            col.prop(ch, f"audio_{key}")
         layout.label(text="新しく置くセリフの既定値", icon="INFO")
         op = layout.operator("tachie.regenerate_all", text="置いたセリフにも当て直す", icon="FILE_REFRESH")
         op.character_only, op.use_character_voice = True, True

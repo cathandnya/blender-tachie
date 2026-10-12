@@ -30,6 +30,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   以後キャラの既定値を変えても置いたセリフは変わらない（YMM4 と同じ。「置いたセリフにも当て直す」で反映）。
   スタイルは `tachie_speaker`（3 本とも）。再生成はこれらを引き継ぐ。セリフのキャラクターを変えると、
   スタイルと声はそのキャラの既定値、無い表情プリセットは基本に戻る。範囲は `id_properties_ui` で付ける（Strip でも使える）。
+  音量・パンは音声ストリップの `volume` / `pan` をそのまま使う（すぐ反映、再生成でも引き継ぐ）。フェードイン/アウトと
+  セリフ後の余韻は `tachie_fade_in` / `tachie_fade_out` / `tachie_after`（秒）で、wav と連番に焼き込む（再生成で反映）。
+  余韻は音声の後ろに口を閉じた立ち絵（まばたきは続ける）を足すので、立ち絵と字幕だけが音声より長い。
+  キャラの既定値は `audio_*`（`properties.AUDIO_PROPS`）、TOML は `[キャラ.audio]`。再生速度（リサンプリング）は
+  口パクの連番も伸ばす必要があるので作らない（VOICEVOX の読み上げ速度・声の高さで代わりにする）。
   発音（AquesTalk 風記法 `キョ'ウワ/イ'イ/テ'ンキ`）も音声ストリップの `tachie_kana`（今の発音）と `tachie_kana_auto`
   （そのテキストの自動の読み）に持つ。再生成は `tachie_kana` が自動と違い、かつテキストが置いたときのまま
   （`tachie_placed_text`）のときだけ使う（`line_kana`）。発音は `POST /accent_phrases?is_kana=true` で accent_phrases を

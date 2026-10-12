@@ -352,3 +352,24 @@ def test_render_line_edited_accent(tmp_path: Path, char_dir: Path):
     clip = render_line(client, cfg, character, Line(3, "テスト", "かむ", accent_phrases=edited, accent_kana="カ'ム"),
                        tmp_path / "o", fps=10, cache=cache)
     assert sent[-1]["accent_phrases"] == edited and clip.extra["accent"]
+
+
+def test_render_line_after_and_fade(tmp_path: Path, char_dir: Path):
+    from tachie_studio.lipsync import read_wav
+    from tachie_studio.pipeline.render import FrameCache, render_line
+    from tachie_studio.pipeline.script import Line
+
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path)["テスト"]
+    character = load_character(char_dir)
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    out = tmp_path / "o"
+    plain = render_line(FakeClient(), cfg, character, Line(1, "テスト", "あ"), out, fps=10, cache=cache, stem="p")
+    longer = render_line(FakeClient(), cfg, character, Line(2, "テスト", "あ", after=0.5, fade_out=0.3), out,
+                         fps=10, cache=cache, stem="l")
+    assert longer.frames == plain.frames + 5 and longer.extra["after_frames"] == 5
+    assert longer.duration == plain.duration  # 音声の長さは変わらない
+    assert len(list((out / "l").iterdir())) == longer.frames
+    # 余韻の間は口を閉じる（口の .0 = 閉じは青 20）
+    last = Image.open(sorted((out / "l").iterdir())[-1]).getpixel((0, 5))
+    assert last[2] == 20
+    assert read_wav(out / "l.wav").samples[-1] == 0

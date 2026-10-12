@@ -9,7 +9,7 @@ from pathlib import Path
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
+from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
 from .tachie_studio.pipeline.script import split_kana
 from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
@@ -115,7 +115,13 @@ def config_of(ch) -> CharacterConfig:
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
                   "y": ch.subtitle_y},
+        audio=character_audio(ch),
     )
+
+
+def character_audio(ch) -> dict:
+    """キャラクターの音声ストリップ側の既定値（volume / pan / fade_in / fade_out / after）。"""
+    return {k: round(getattr(ch, f"audio_{k}"), 6) for k in AUDIO_PROPS}
 
 
 def _config_voice(ch) -> dict:
@@ -148,6 +154,8 @@ def apply_config(ch, config: CharacterConfig) -> None:
     ch.mouth = config.mouth
     for prop, (key, *_) in VOICE_PROPS.items():
         setattr(ch, prop, config.voice.get(key, VOICE_DEFAULTS[key]))
+    for key, (_, lo, hi, default, _) in AUDIO_PROPS.items():
+        setattr(ch, f"audio_{key}", min(hi, max(lo, config.audio.get(key, default))))
     e = config.expression
     for prop, value in (("part_eyebrow", e.eyebrow), ("part_eye", e.eye), ("part_mouth", e.mouth),
                         ("part_hair", e.hair), ("part_complexion", e.complexion), ("part_body", e.body)):
@@ -259,14 +267,16 @@ def character_cache(context, ch, preset: str | None = None) -> FrameCache:
 
 def render_clip(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
                 voice: dict | None = None, kana: str | None = None, accent: list | None = None,
-                accent_kana: str | None = None):
+                accent_kana: str | None = None, audio: dict | None = None):
     """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。
 
     `speaker`（スタイル）と `voice`（audio_query の値）はセリフごとの値。None ならキャラクターの既定値。
     `kana` は発音（AquesTalk 風記法）。None や空なら VOICEVOX が自動で付けた読み。
     `accent` は抑揚を編集した accent_phrases（kana より優先）。`accent_kana` は編集したときの発音で、
     今の発音（`kana` か自動の読み）と違えば `accent` は使わない（ユーザー辞書で自動の読みが変わったときなど）。
+    `audio` はフェードと余韻（None ならキャラクターの既定値）。
     """
+    audio = audio if audio is not None else character_audio(ch)
     cache = character_cache(context, ch, preset)
     config = CharacterConfig(name=ch.name, folder=cache.character.path, speaker=ch.speaker,
                              expression=cache.expression, mouth=ch.mouth)
@@ -275,7 +285,10 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
     clip = render_line(client(context), config, cache.character, Line(0, ch.name, text, preset or None, speaker,
                                                                     voice if voice is not None else character_voice(ch),
                                                                     kana or None, accent or None,
-                                                                    accent_kana=accent_kana),
+                                                                    accent_kana=accent_kana,
+                                                                    fade_in=audio.get("fade_in", 0.0),
+                                                                    fade_out=audio.get("fade_out", 0.0),
+                                                                    after=audio.get("after", 0.0)),
                        lines_dir,
                        fps=scene_fps(seq_scene(context)), cache=cache, stem=clip_id)
     return clip, lines_dir
@@ -296,7 +309,7 @@ def check_free(context, ch, start: int, frames: int, ignore=()) -> None:
 
 
 def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voice: dict | None = None,
-                 accent: list | None = None) -> list:
+                 accent: list | None = None, audio: dict | None = None) -> list:
     """書き出したセリフを start に置く。置いたストリップ（音声・立ち絵・字幕）を返す。
 
     セリフごとの声（`voice`、None ならキャラクターの既定値）は音声ストリップの `tachie_voice_*` に持つ。
@@ -341,6 +354,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         s["tachie_mouth"] = clip.extra.get("mouth_mode", "")
         s["tachie_expression"] = clip.extra.get("expression", "")
     set_line_voice(sound, voice if voice is not None else character_voice(ch))
+    set_line_audio(sound, audio if audio is not None else character_audio(ch))
     # 発音は音声ストリップに。自動の読みと違えば「編集した発音」として再生成でも使う
     sound["tachie_kana"] = clip.extra.get("kana", "")
     sound["tachie_kana_auto"] = clip.extra.get("kana_auto", "")
@@ -379,6 +393,32 @@ def set_line_voice(sound, voice: dict) -> None:
         sound[name] = float(voice.get(key, VOICE_DEFAULTS[key]))
         sound.id_properties_ui(name).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=1, precision=2,
                                             description=desc)
+
+
+def set_line_audio(sound, audio: dict) -> None:
+    """音量とパンはストリップの値に、フェードと余韻はカスタムプロパティ `tachie_<名前>` に持つ。"""
+    sound.volume = audio.get("volume", 1.0)
+    sound.pan = audio.get("pan", 0.0)
+    for key in BAKED_AUDIO:
+        label, lo, hi, default, desc = AUDIO_PROPS[key]
+        name = f"tachie_{key}"
+        sound[name] = float(audio.get(key, default))
+        sound.id_properties_ui(name).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=1, precision=2,
+                                            subtype="TIME_ABSOLUTE", description=desc)
+
+
+def line_audio(strips, ch) -> dict:
+    """セリフの音量・パン・フェード・余韻（音声ストリップの値。無いものはキャラクターの既定値）。"""
+    audio = character_audio(ch)
+    sound = line_sound(strips)
+    if sound is not None:
+        audio["volume"], audio["pan"] = sound.volume, sound.pan
+        for key in BAKED_AUDIO:
+            value = sound.get(f"tachie_{key}")
+            if value is not None:
+                _, lo, hi, _, _ = AUDIO_PROPS[key]
+                audio[key] = min(hi, max(lo, float(value)))
+    return audio
 
 
 def line_sound(strips):
@@ -426,7 +466,7 @@ def line_text(strips) -> str:
 
 def regenerate(context, clip_id: str, text: str | None = None, preset: str | None = None,
                speaker: int | None = None, voice: dict | None = None, character: str | None = None,
-               kana: str | None = None, accent: list | None = None) -> list:
+               kana: str | None = None, accent: list | None = None, audio: dict | None = None) -> list:
     """セリフを作り直して同じ位置に置き直す。新しいストリップを返す。
 
     指定しなかった値は置いてあるセリフから取る（声とスタイルは音声ストリップ）。`character` で別のキャラにすると、
@@ -451,10 +491,12 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
             preset = ""
         speaker = ch.speaker if speaker is None else speaker
         voice = character_voice(ch) if voice is None else voice
+        audio = character_audio(ch) if audio is None else audio
     else:
         ch = find_character(settings, old[0]["tachie_character"])
         speaker = int(sound.get("tachie_speaker", ch.speaker)) if speaker is None else speaker
         voice = line_voice(old, ch) if voice is None else voice
+        audio = line_audio(old, ch) if audio is None else audio
     if kana == "":
         accent = []
     kana = line_kana(old, text) if kana is None else kana
@@ -467,7 +509,7 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     start = min(s.left_handle for s in old)
     old_end = max(s.right_handle for s in old)
 
-    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice, kana, accent, accent_kana)
+    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice, kana, accent, accent_kana, audio)
     delta = start + clip.frames - old_end
     # 消す前に置けるか確かめる（ずらすストリップは邪魔にならない）
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
@@ -478,7 +520,7 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     remove_idle(sed)
     if settings.ripple and delta:
         shift_after(sed, old_end, delta)
-    return place_strips(context, ch, clip, lines_dir, text, start, voice, accent)
+    return place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio)
 
 
 def remove_idle(sed) -> None:
@@ -764,7 +806,7 @@ class TACHIE_OT_pick_line_character(bpy.types.Operator):
 
 
 class TACHIE_OT_reset_line_voice(bpy.types.Operator):
-    """選択中のセリフの声とスタイルを、キャラクターの今の既定値に戻して作り直す"""
+    """選択中のセリフの声・スタイル・音量などを、キャラクターの今の既定値に戻して作り直す"""
 
     bl_idname = "tachie.reset_line_voice"
     bl_label = "キャラクターの声に戻す"
@@ -781,7 +823,8 @@ class TACHIE_OT_reset_line_voice(bpy.types.Operator):
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        return _regenerate_active(self, context, speaker=ch.speaker, voice=character_voice(ch))
+        return _regenerate_active(self, context, speaker=ch.speaker, voice=character_voice(ch),
+                                  audio=character_audio(ch))
 
 
 class TACHIE_OT_reset_kana(bpy.types.Operator):
@@ -1093,7 +1136,7 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
     character_only: bpy.props.BoolProperty(name="選択中のキャラクターだけ", default=False)
     use_character_voice: bpy.props.BoolProperty(
         name="キャラクターの声を当て直す", default=False,
-        description="セリフごとの声とスタイルを、キャラクターの今の既定値に置き換える",
+        description="セリフごとの声・スタイル・音量などを、キャラクターの今の既定値に置き換える",
         options={"SKIP_SAVE"})  # 前回の値が残ると、ふつうの「全セリフを再生成」でセリフごとの声が消える
 
     def execute(self, context):
@@ -1117,7 +1160,7 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
                 kwargs = {}
                 if self.use_character_voice:
                     ch = find_character(settings, line_strips(sed, cid)[0]["tachie_character"])
-                    kwargs = {"speaker": ch.speaker, "voice": character_voice(ch)}
+                    kwargs = {"speaker": ch.speaker, "voice": character_voice(ch), "audio": character_audio(ch)}
                 connect(context, regenerate(context, cid, **kwargs))
                 count += 1
                 wm.progress_update(count)

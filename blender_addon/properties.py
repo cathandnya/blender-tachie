@@ -41,11 +41,21 @@ VOICE_PROPS = {
     "speed_scale": ("speedScale", "読み上げ速度", 0.5, 2.0, "話す速さ（1 が標準）"),
     "pitch_scale": ("pitchScale", "声の高さ", -0.15, 0.15, "音高（0 が標準）"),
     "intonation_scale": ("intonationScale", "抑揚", 0.0, 2.0, "抑揚の大きさ（1 が標準）"),
-    "volume_scale": ("volumeScale", "音量", 0.0, 2.0, "音量（1 が標準）"),
+    "volume_scale": ("volumeScale", "合成の音量", 0.0, 2.0, "VOICEVOX で合成するときの音量（1 が標準）"),
     "pre_phoneme": ("prePhonemeLength", "開始無音", 0.0, 1.5, "音声の前の無音（秒）"),
     "post_phoneme": ("postPhonemeLength", "終了無音", 0.0, 1.5, "音声の後ろの無音（秒）"),
     "pause_scale": ("pauseLengthScale", "間の長さ", 0.0, 2.0, "句読点の間の長さ（1 が標準）"),
 }
+# 音声ストリップ側: プロパティ名 → (表示名, 最小, 最大, 既定, 説明)。volume / pan はストリップの値をそのまま使う（すぐ反映）。
+# fade_in / fade_out / after は wav と連番に焼き込む（再生成で反映）
+AUDIO_PROPS = {
+    "volume": ("音量", 0.0, 2.0, 1.0, "音声ストリップの音量（1 が元の大きさ）"),
+    "pan": ("パン", -1.0, 1.0, 0.0, "左右の定位（-1 が左、1 が右）"),
+    "fade_in": ("フェードイン", 0.0, 2.0, 0.0, "音声の先頭のフェード（秒）"),
+    "fade_out": ("フェードアウト", 0.0, 2.0, 0.0, "音声の末尾のフェード（秒）"),
+    "after": ("セリフ後の余韻", 0.0, 10.0, 0.0, "音声の後ろに、口を閉じた立ち絵（まばたきのみ）を足す長さ（秒）"),
+}
+BAKED_AUDIO = ("fade_in", "fade_out", "after")
 
 
 FONT_DIRS = ("/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts", "~/Library/Fonts",
@@ -236,6 +246,11 @@ for _prop, (_key, _label, _min, _max, _desc) in VOICE_PROPS.items():
     TachieCharacter.__annotations__[_prop] = FloatProperty(
         name=_label, default=VOICE_DEFAULTS[_key], min=_min, max=_max, step=1, precision=2,
         description=_desc + "。新しく置くセリフの既定値（置いたセリフは選択中のセリフで変える）")
+for _prop, (_label, _min, _max, _default, _desc) in AUDIO_PROPS.items():
+    TachieCharacter.__annotations__[f"audio_{_prop}"] = FloatProperty(
+        name=_label, default=_default, min=_min, max=_max, step=1, precision=2,
+        unit="TIME_ABSOLUTE" if _prop in BAKED_AUDIO else "NONE",
+        description=_desc + "。新しく置くセリフの既定値")
 
 
 class TachieSceneSettings(bpy.types.PropertyGroup):
