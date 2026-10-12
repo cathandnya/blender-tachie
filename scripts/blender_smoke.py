@@ -595,4 +595,23 @@ from bl_ext.user_default.blender_tachie.tachie_studio.pipeline.config import loa
 assert load_material_table(material)["speaker"] == 7
 run(bpy.ops.tachie.remove_defaults, key="ずんだもん2")
 assert ops.load_character_defaults() == {}
+
+# シンプル立ち絵（画像を入れただけのフォルダ）: 口を閉じた画像と開いた画像を音量で切り替える
+from bl_ext.user_default.blender_tachie.tachie_studio.tachie import Expression, compose, load_character  # noqa: E402
+
+simple_dir = out / "material" / "シンプル"
+simple_dir.mkdir(parents=True)
+zc = load_character(bpy.path.abspath(zunda.folder))
+compose(zc, Expression(mouth_frame=0)).save(simple_dir / "00 デフォルト.png")
+compose(zc, Expression(mouth="ほあー")).save(simple_dir / "01 口開き.png")
+run(bpy.ops.tachie.character_add, directory=str(simple_dir) + "/")
+simple = s.characters[-1]
+assert simple.name == "シンプル" and ops.load_material(simple.folder).simple
+s.active_character, s.expression, s.text = len(s.characters) - 1, "", "シンプル立ち絵なのだ。"
+scene.frame_current = scene.frame_end + 10
+run(bpy.ops.tachie.add_line)
+cid = list(lines())[-1]
+img = image_of(cid)
+names = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
+assert len(names) == 2, names  # 閉じと開きの 2 枚だけを行き来する
 print("OK")

@@ -1,6 +1,6 @@
 import bpy
 
-from .operators import line_sound, line_strips, output_dir, selected_targets, seq_scene
+from .operators import line_sound, line_strips, load_material, output_dir, selected_targets, seq_scene
 from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, VOICE_PROPS
 
 
@@ -227,6 +227,21 @@ class TACHIE_PT_voice(_Panel, bpy.types.Panel):
         op.character_only, op.use_character_voice = True, True
 
 
+# シンプル立ち絵は画像 1 枚: 体 = 口を閉じた画像、口 = セリフ中（口を開いた）画像
+SIMPLE_LABELS = {"体": "立ち絵（口を閉じる）", "口": "セリフ中（口を開く）"}
+
+
+def part_rows(ch):
+    """表情の欄に出す (カテゴリ, [プロパティ], 表示名) の並び。シンプル立ち絵は 2 つだけ。"""
+    try:
+        simple = bool(ch.folder) and load_material(ch.folder).simple
+    except (ValueError, FileNotFoundError, OSError):
+        simple = False
+    if simple:
+        return [(c, PART_PROPS[c], SIMPLE_LABELS[c]) for c in ("体", "口")]
+    return [(c, props, c) for c, props in PART_PROPS.items()]
+
+
 class TACHIE_PT_expression(_Panel, bpy.types.Panel):
     bl_label = "表情"
     bl_parent_id = "TACHIE_PT_character"
@@ -235,10 +250,10 @@ class TACHIE_PT_expression(_Panel, bpy.types.Panel):
         layout = self.layout
         ch = seq_scene(context).tachie.character()
         col = layout.column(align=True)
-        for category, props in PART_PROPS.items():
+        for category, props, title in part_rows(ch):
             for i, prop in enumerate(props):
                 row = col.row(align=True)
-                label = category if len(props) == 1 else f"{category}{i + 1}"
+                label = title if len(props) == 1 else f"{category}{i + 1}"
                 row.label(text=label)
                 value = getattr(ch, prop)
                 empty = "（なし）" if len(props) > 1 else "（既定）"
@@ -265,10 +280,10 @@ class TACHIE_PT_presets(_Panel, bpy.types.Panel):
             layout.label(text="台本では「キャラ名(表情): セリフ」で使えます", icon="INFO")
             return
         col = layout.column(align=True)
-        for category, props in PART_PROPS.items():
+        for category, props, title in part_rows(ch):
             for i, prop in enumerate(props):
                 row = col.row(align=True)
-                row.label(text=category if len(props) == 1 else f"{category}{i + 1}")
+                row.label(text=title if len(props) == 1 else f"{category}{i + 1}")
                 op = row.operator("tachie.pick_part", text=getattr(preset, prop) or "（基本のまま）")
                 op.prop = prop
                 op.preset = preset.name

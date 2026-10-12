@@ -245,3 +245,33 @@ def test_real_presets(name: str):
     c = load_character(CHAR / name)
     for preset in presets:
         assert compose(c, cfg.expression_for(preset)).getbbox() is not None
+
+
+def test_simple_material(tmp_path: Path):
+    d = tmp_path / "シンプル"
+    _png(d / "00 デフォルト.png", (10, 0, 0, 255))
+    _png(d / "01 口開き.png", (20, 0, 0, 255))
+    _png(d / "02 Xd.png", (30, 0, 0, 255))
+    c = load_character(d)
+    assert c.simple and set(c.parts) == {"体", "口"} and len(c.parts["体"]) == 3
+    assert c.default("体").name == "00 デフォルト" and c.default("口").name == "01 口開き"
+    # 口を閉じている（mouth_frame 0）ときは体の画像、開いているときは口の画像
+    assert compose(c, Expression(mouth_frame=0)).getpixel((0, 0))[0] == 10
+    assert compose(c, Expression(mouth_frame=1)).getpixel((0, 0))[0] == 20
+    assert compose(c, Expression(body="02 Xd", mouth="02 Xd", mouth_frame=1)).getpixel((0, 0))[0] == 30
+    assert compose(c, Expression(body="02 Xd", mouth_frame=0)).getpixel((0, 0))[0] == 30
+
+
+def test_simple_material_frames_and_default(tmp_path: Path):
+    d = tmp_path / "シンプル2"
+    _png(d / "閉じ.png", (10, 0, 0, 255))
+    _png(d / "開き.png", (20, 0, 0, 255))
+    c = load_character(d)
+    # 「デフォルト」「口開」が名前に無くても、口は体と違う画像になる
+    assert c.default("体").name != c.default("口").name
+    closed, opened = c.default("体").name, c.default("口").name
+    px = {"閉じ": 10, "開き": 20}
+    # mouth_frame は frames の添字なので -1 は開き、母音も開き
+    assert compose(c, Expression(mouth_frame=-1)).getpixel((0, 0))[0] == px[opened]
+    assert compose(c, Expression(mouth_frame=0)).getpixel((0, 0))[0] == px[closed]
+    assert compose(c, Expression(mouth_vowel="a")).getpixel((0, 0))[0] == px[opened]

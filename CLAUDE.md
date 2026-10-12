@@ -139,5 +139,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `tachie.presets.load_presets` で読み、素材に無いパーツは警告して飛ばす。`config.load_material_defaults` が
   tachie.toml の下に重ねるので、キャラ追加と CLI の両方で補われる（優先: アドオン設定 → tachie.toml → preset.ini）。
   メニュー「YMM4 の表情プリセットを読み込む」でも読める（同じ名前は上書き）。
+- シンプル立ち絵（YMM4。眉・目などのフォルダが無く、画像だけのフォルダ）は `Character.kind == "simple"`。
+  同じ画像の一覧を体（口を閉じた画像、既定は名前に「デフォルト」）と口（セリフ中の画像、既定は「口開」）の両方に入れ、
+  合成は画像 1 枚（`compose._simple_layers`: mouth_frame 0 なら体、それ以外は口）。口パクは `simple_mouth` が
+  閉じ = 体・開き = 口の 2 段階の口パーツを作るので、音量式でそのまま動く。まばたきは無い。GIF / WebP は最初のフレームだけ。
+  パネルの表情の欄は 2 つだけ（`panels.part_rows`）。PSD 立ち絵（#7）は素材待ち。
 - 口の動かし方 `mouth = "auto"`: 母音画像があればあいうえお式、無ければ音量式。`vowel` で母音画像の無い素材は
   母音を開き具合に置き換える（a=最大、i/u=小さめ）。

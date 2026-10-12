@@ -437,3 +437,20 @@ def test_levels_from_rms_matches_volume_track():
 
     wav = read_wav(FakeClient().synthesis({"speedScale": 1.0}, 1))
     assert levels_from_rms(frame_rms(wav, 10), 4) == volume_track(wav, 10, 4)
+
+
+def test_simple_material_lipsync(tmp_path: Path):
+    from tachie_studio.pipeline.render import FrameCache, render_line, resolve_mouth_mode, _mouth_part
+    from tachie_studio.pipeline.script import Line
+
+    d = tmp_path / "シンプル"
+    _png(d / "デフォルト.png", (10, 0, 0, 255))
+    _png(d / "口開き.png", (20, 0, 0, 255))
+    cfg = parse_characters({"s": {"folder": str(d), "speaker": 1}}, tmp_path)["s"]
+    character = load_character(d)
+    assert resolve_mouth_mode("auto", _mouth_part(character, cfg.expression)) == "volume"
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    out = tmp_path / "o"
+    clip = render_line(FakeClient(), cfg, character, Line(1, "s", "あ"), out, fps=10, cache=cache, stem="x")
+    reds = [Image.open(p).getpixel((0, 0))[0] for p in sorted((out / "x").iterdir())]
+    assert len(reds) == clip.frames and reds[0] == 10 and reds[-1] == 10 and 20 in reds  # 無音は閉じ、声で開く

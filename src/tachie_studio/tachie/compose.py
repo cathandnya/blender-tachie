@@ -80,6 +80,8 @@ def build_layers(character: Character, expr: Expression) -> list[Layer]:
     （opacity を下げると前髪越しに眉や目が見える）。
     合成モードが通常以外のパーツは、他のパーツより手前に描く。
     """
+    if character.simple:
+        return _simple_layers(character, expr)
     if len(expr.others) > SLOT_COUNT or len(expr.backs) > SLOT_COUNT:
         raise ValueError(f"他・後はそれぞれ {SLOT_COUNT} つまでです")
 
@@ -118,6 +120,24 @@ def build_layers(character: Character, expr: Expression) -> list[Layer]:
     return [l for l in layers if l.part.blend == BLEND_NORMAL] + [
         l for l in layers if l.part.blend != BLEND_NORMAL
     ]
+
+
+def simple_mouth(character: Character, expr: Expression) -> Part | None:
+    """シンプル立ち絵の口パク用の口: 閉じ = 体の画像、開き = 口の画像の 2 段階。"""
+    closed, opened = _pick(character, "体", expr.body), _pick(character, "口", expr.mouth)
+    if closed is None or opened is None:
+        return None
+    return Part(category="口", name=opened.name, path=opened.path, frames=[closed.path, opened.path])
+
+
+def _simple_layers(character: Character, expr: Expression) -> list[Layer]:
+    """シンプル立ち絵は画像 1 枚。口を閉じている（mouth_frame が 0）ときは体の画像、開いているときは口の画像。"""
+    mouth = simple_mouth(character, expr)
+    if mouth is None:
+        return []
+    # mouth_frame は frames = [閉じ, 開き] の添字（-1 = 開き）。母音は開きの画像
+    path = mouth.path if expr.mouth_vowel is not None else _frame(mouth, expr.mouth_frame)
+    return [Layer(mouth, path, 1.0)]
 
 
 def _with_opacity(image: Image.Image, opacity: float) -> Image.Image:
