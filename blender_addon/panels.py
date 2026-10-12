@@ -176,7 +176,7 @@ class TACHIE_PT_dictionary(_Panel, bpy.types.Panel):
         col.prop(d, "accent_type")
         layout.operator("tachie.dict_add", icon="ADD")
         row = layout.row()
-        row.label(text="登録済み" if operators._dict_words is not None else "VOICEVOX エンジンの辞書")
+        row.label(text="登録済み" if operators._dict_words is not None else "既定のエンジン（アドオン設定）の辞書")
         row.operator("tachie.dict_refresh", text="", icon="FILE_REFRESH")
         if operators._dict_words:
             box = layout.box().column(align=True)
@@ -201,6 +201,9 @@ class TACHIE_PT_character(_Panel, bpy.types.Panel):
         layout = self.layout
         ch = seq_scene(context).tachie.character()
         layout.prop(ch, "folder")
+        layout.prop(ch, "engine")
+        if ch.engine == "CUSTOM":
+            layout.prop(ch, "engine_url")
         row = layout.row(align=True)
         row.prop(ch, "speaker")
         row.operator("tachie.pick_speaker", text=ch.speaker_name or "選ぶ", icon="VIEWZOOM")
@@ -414,6 +417,29 @@ class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
         layout.prop(ch, "font_path", text="")
 
 
+class TACHIE_PT_export(_Panel, bpy.types.Panel):
+    bl_label = "書き出し"
+    bl_parent_id = "TACHIE_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        layout = self.layout
+        r = seq_scene(context).render
+        fps = r.fps / r.fps_base
+        video = r.image_settings.file_format == "FFMPEG"
+        summary = f"{r.resolution_x * r.resolution_percentage // 100}×{r.resolution_y * r.resolution_percentage // 100}" \
+                  f" / {fps:g}fps / " + (f"{r.ffmpeg.format}（{r.ffmpeg.codec}）" if video else r.image_settings.file_format)
+        layout.label(text=summary, icon="OUTPUT")
+        layout.operator_menu_enum("tachie.render_preset", "preset", text="書き出し設定を選ぶ", icon="PRESET")
+        row = layout.row()
+        row.scale_y = 1.2
+        op = row.operator("render.render", text="動画を書き出す", icon="RENDER_ANIMATION")
+        op.animation = True
+        # シーケンサーに映っているシーン（設定を表示しているもの）を書き出す。ウィンドウのシーンと違うことがある
+        op.use_sequencer_scene = getattr(context, "sequencer_scene", None) is not None
+        layout.operator("tachie.export_subtitles", text="字幕を書き出す（SRT / WebVTT）", icon="TEXT")
+
+
 class TACHIE_PT_channels(_Panel, bpy.types.Panel):
     bl_label = "チャンネル"
     bl_parent_id = "TACHIE_PT_main"
@@ -441,6 +467,7 @@ _classes = (
     TACHIE_PT_presets,
     TACHIE_PT_placement,
     TACHIE_PT_subtitle,
+    TACHIE_PT_export,
     TACHIE_PT_channels,
 )
 

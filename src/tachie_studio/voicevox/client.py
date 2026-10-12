@@ -33,7 +33,10 @@ class VoicevoxClient:
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:  # URL の書き間違い（http:// が無いなど）も接続できないエラーにする
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        except ValueError as e:
+            raise VoicevoxError(f"エンジンの URL が正しくありません（{self.base_url}）: {e}") from e
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as res:
                 return res.read()

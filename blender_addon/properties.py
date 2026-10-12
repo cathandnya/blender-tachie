@@ -36,6 +36,15 @@ PART_PROPS = {
 }
 SLOT_CATEGORIES = ("他", "後")
 
+# 声のエンジン（VOICEVOX と同じ API のもの）: 名前 → (表示名, URL)。URL は各エンジンの標準のポート
+ENGINE_PRESETS = {
+    "AIVIS": ("AivisSpeech", "http://127.0.0.1:10101"),
+    "SHAREVOX": ("SHAREVOX", "http://127.0.0.1:50025"),
+    "COEIROINK": ("COEIROINK（v1）", "http://127.0.0.1:50031"),
+}
+ENGINE_ITEMS = [("DEFAULT", "既定（アドオン設定のエンジン）", "アドオン設定の VOICEVOX エンジン")] + [
+    (k, label, url) for k, (label, url) in ENGINE_PRESETS.items()] + [("CUSTOM", "URL を指定", "")]
+
 # 声の調整: TachieCharacter のプロパティ名 → (audio_query のキー, 表示名, 最小, 最大, 説明)。範囲は VOICEVOX アプリに合わせる
 VOICE_PROPS = {
     "speed_scale": ("speedScale", "読み上げ速度", 0.5, 2.0, "話す速さ（1 が標準）"),
@@ -213,7 +222,11 @@ class TachieCharacter(bpy.types.PropertyGroup):
     # name は PropertyGroup が持っている
     folder: StringProperty(name="素材フォルダ", subtype="DIR_PATH",
                            description="動く立ち絵の素材フォルダ（眉・目・口などのフォルダがある所）")
-    speaker: IntProperty(name="話者 ID", default=3, min=0, description="VOICEVOX のスタイル ID")
+    # AivisSpeech のスタイル ID は負の数にもなる（32 bit の符号付き）
+    speaker: IntProperty(name="話者 ID", default=3, description="VOICEVOX（互換エンジン）のスタイル ID")
+    engine: EnumProperty(name="エンジン", items=ENGINE_ITEMS, default="DEFAULT",
+                         description="声のエンジン（VOICEVOX と同じ API のもの）。変えたら話者を選び直す")
+    engine_url: StringProperty(name="URL", default="http://127.0.0.1:50021", description="エンジンの URL")
     speaker_name: StringProperty(name="話者", default="")
     mouth: EnumProperty(name="口パク", items=MOUTH_ITEMS, default="auto")
 

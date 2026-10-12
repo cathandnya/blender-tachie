@@ -474,6 +474,36 @@ try:
 except RuntimeError as e:
     print("期待どおり失敗:", str(e).strip().splitlines()[-1])
 assert len(lines()) == 5
+# 字幕を SRT / WebVTT で書き出す
+srt = out / "subtitles.srt"
+run(bpy.ops.tachie.export_subtitles, filepath=str(srt), with_speaker=True)
+srt_text = srt.read_text(encoding="utf-8")
+first_l = min(v[0] for v in lines().values())
+assert srt_text.count(" --> ") == 5 and srt_text.startswith("1\n"), srt_text[:200]
+assert ": " in srt_text.splitlines()[2]  # キャラ名付き
+run(bpy.ops.tachie.export_subtitles, filepath=str(srt), format="VTT")
+assert (out / "subtitles.vtt").read_text(encoding="utf-8").startswith("WEBVTT")
+print(srt_text.splitlines()[:3])
+# 書き出し設定のプリセット（セリフを置いたあとで fps を変えると再生成を案内する）
+fps_before = (scene.render.fps, scene.render.resolution_x, scene.render.resolution_y)
+run(bpy.ops.tachie.render_preset, preset="FHD60")
+r = scene.render
+assert (r.resolution_x, r.resolution_y, r.fps, r.image_settings.file_format, r.ffmpeg.codec, r.ffmpeg.audio_codec) == \
+    (1920, 1080, 60, "FFMPEG", "H264", "AAC")
+r.fps, r.resolution_x, r.resolution_y = fps_before  # 以降のテストは元の設定で
+r.image_settings.media_type = "IMAGE"
+# 声のエンジン（VOICEVOX 互換）: キャラごとに URL を指定する（ここでは同じエンジンを別の URL 表記で）
+zunda.engine, zunda.engine_url = "CUSTOM", prefs.voicevox_url.replace("127.0.0.1", "localhost")
+assert ops.engine_url(bpy.context, zunda).startswith("http://localhost")
+first_zunda = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
+sed.active_strip = sound(first_zunda)
+run(bpy.ops.tachie.regenerate)
+assert ops.config_of(zunda).engine.startswith("http://localhost")
+cfg_engine = ops.config_of(zunda)
+cfg_engine.engine = "http://127.0.0.1:10101"
+ops.apply_config(zunda, cfg_engine)
+assert zunda.engine == "AIVIS"  # 既知のエンジンの URL は名前で選ばれる
+zunda.engine = "DEFAULT"
 assert scene.frame_end == max(r for _, r, _ in lines().values()) - 1, scene.frame_end
 
 # 左右反転は置いてあるストリップ（セリフと待機）にすぐ反映される

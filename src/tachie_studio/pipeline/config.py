@@ -4,6 +4,7 @@
     folder = "../char/ずんだもん"   # 設定ファイルからの相対パスでもよい
     speaker = 3                     # VOICEVOX のスタイル ID
     mouth = "auto"                  # auto / vowel（あいうえお）/ volume（音量）
+    engine = "http://127.0.0.1:10101"  # 省略可: 声のエンジン（AivisSpeech など VOICEVOX 互換）。省略すると既定
     speed = 1.1                     # 省略可: speed pitch intonation volume pre_phoneme post_phoneme pause
 
     ["ずんだもん".parts]               # 既定の表情。キーは素材のフォルダ名
@@ -101,6 +102,7 @@ class CharacterConfig:
     layout: dict[str, Any] = field(default_factory=dict)  # position / flip / height / channel
     subtitle: dict[str, Any] = field(default_factory=dict)  # font / size / color / outline_color / outline_width / y
     audio: dict[str, float] = field(default_factory=dict)  # volume / pan / fade_in / fade_out / after
+    engine: str = ""  # 声のエンジンの URL（VOICEVOX 互換）。空なら既定のエンジン
 
     def apply_voice(self, query: dict[str, Any]) -> dict[str, Any]:
         query.update(self.voice)
@@ -225,6 +227,7 @@ def parse_characters(data: dict[str, Any], base: Path, use_material: bool = True
             layout=dict(table.get("layout", {})),
             subtitle=dict(table.get("subtitle", {})),
             audio={str(k): float(v) for k, v in table.get("audio", {}).items()},
+            engine=str(table.get("engine", "")),
         )
     return characters
 
@@ -264,6 +267,8 @@ def _dump_table(c: CharacterConfig, key: str | None, folder: str | None, name: s
     if folder is not None:
         out.append(f"folder = {_toml_value(folder)}")
     out.append(f"speaker = {c.speaker}")
+    if c.engine:
+        out.append(f"engine = {_toml_value(c.engine)}")
     out.append(f"mouth = {_toml_value(c.mouth)}")
     for qkey, value in c.voice.items():
         out.append(f"{voice_names[qkey]} = {_toml_value(value)}")

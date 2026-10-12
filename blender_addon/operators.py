@@ -11,7 +11,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
 from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
 from .tachie_studio.pipeline.script import split_kana
@@ -55,8 +55,17 @@ def prefs(context):
     return context.preferences.addons[__package__].preferences
 
 
-def client(context) -> VoicevoxClient:
-    return VoicevoxClient(prefs(context).voicevox_url)
+def engine_url(context, ch=None) -> str:
+    """キャラクターの声のエンジンの URL（ch が None か「既定」ならアドオン設定のもの）。"""
+    if ch is None or ch.engine == "DEFAULT":
+        return prefs(context).voicevox_url
+    if ch.engine == "CUSTOM":
+        return ch.engine_url or prefs(context).voicevox_url
+    return ENGINE_PRESETS[ch.engine][1]
+
+
+def client(context, ch=None, timeout: float = 60.0) -> VoicevoxClient:
+    return VoicevoxClient(engine_url(context, ch), timeout=timeout)
 
 
 def output_dir(context) -> Path:
@@ -141,6 +150,7 @@ def config_of(ch) -> CharacterConfig:
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
                   "y": ch.subtitle_y},
         audio=character_audio(ch),
+        engine="" if ch.engine == "DEFAULT" else engine_url(bpy.context, ch),
     )
 
 
@@ -177,6 +187,10 @@ def apply_config(ch, config: CharacterConfig) -> None:
     ch.folder = str(config.folder)
     ch.speaker = config.speaker
     ch.mouth = config.mouth
+    preset_engine = next((k for k, (_, url) in ENGINE_PRESETS.items() if url == config.engine.rstrip("/")), None)
+    ch.engine = "DEFAULT" if not config.engine else (preset_engine or "CUSTOM")
+    if ch.engine == "CUSTOM":
+        ch.engine_url = config.engine
     for prop, (key, *_) in VOICE_PROPS.items():
         setattr(ch, prop, config.voice.get(key, VOICE_DEFAULTS[key]))
     for key, (_, lo, hi, default, _) in AUDIO_PROPS.items():
@@ -326,7 +340,7 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
                              expression=cache.expression, mouth=ch.mouth)
     clip_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     lines_dir = output_dir(context) / "lines"
-    clip = render_line(client(context), config, cache.character, Line(0, ch.name, text, preset or None, speaker,
+    clip = render_line(client(context, ch), config, cache.character, Line(0, ch.name, text, preset or None, speaker,
                                                                     voice if voice is not None else character_voice(ch),
                                                                     kana or None, accent or None,
                                                                     accent_kana=accent_kana,
@@ -1123,7 +1137,7 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
         try:
             ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
             speaker = int((sound or strips[0]).get("tachie_speaker", ch.speaker))
-            c = client(context)
+            c = client(context, ch)
             query = c.audio_query(text, speaker)
             query.update(line_voice(strips, ch))
             kana = kana or line_kana(strips, text)
@@ -1205,8 +1219,8 @@ def accent_from_edit(edit) -> list:
     return phrases
 
 
-def _fresh_accent(context, text: str, speaker: int, kana: str | None) -> list:
-    c = client(context)
+def _fresh_accent(context, text: str, speaker: int, kana: str | None, ch=None) -> list:
+    c = client(context, ch)
     if kana:
         return c.accent_phrases(kana, speaker, is_kana=True)
     return c.audio_query(text, speaker)["accent_phrases"]
@@ -1228,9 +1242,9 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         try:
             strips, text, ch, speaker, kana = _line_context(context)
             if kana:
-                phrases = line_accent(strips, text, kana, speaker) or _fresh_accent(context, text, speaker, kana)
+                phrases = line_accent(strips, text, kana, speaker) or _fresh_accent(context, text, speaker, kana, ch)
             else:  # 自動の読みは今のもので確かめる（ユーザー辞書で変わることがある）
-                query = client(context).audio_query(text, speaker)
+                query = client(context, ch).audio_query(text, speaker)
                 phrases = line_accent(strips, text, None, speaker, auto=query.get("kana", "")) or query["accent_phrases"]
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
@@ -1288,7 +1302,7 @@ class TACHIE_OT_preview_accent(bpy.types.Operator):
         try:
             strips = line_strips(sed, edit.clip_id)
             ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
-            c = client(context)
+            c = client(context, ch)
             query = c.audio_query(edit.text, edit.speaker)
             query.update(line_voice(strips, ch))
             query["accent_phrases"] = accent_from_edit(edit)
@@ -1311,7 +1325,10 @@ class TACHIE_OT_reload_accent(bpy.types.Operator):
     def execute(self, context):
         edit = context.window_manager.tachie_accent
         try:
-            load_accent_edit(edit, _fresh_accent(context, edit.text, edit.speaker, edit.kana or None))
+            strips = line_strips(seq_scene(context).sequence_editor, edit.clip_id)
+            name = strips[0].get("tachie_character") if strips else None
+            ch = next((c for c in seq_scene(context).tachie.characters if c.name == name), None)
+            load_accent_edit(edit, _fresh_accent(context, edit.text, edit.speaker, edit.kana or None, ch))
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -1501,6 +1518,7 @@ def selected_targets(sed) -> tuple[list[str], list, list]:
 
 _batch_mixed: set[str] = set()
 _batch_styles: list = []
+_batch_engine = ""  # スタイルの一覧を取ったエンジンの URL
 _batch_character_items: list = []
 _batch_expression_items: list = []
 
@@ -1563,17 +1581,20 @@ class TACHIE_OT_batch_edit(bpy.types.Operator):
         return len(ids) + len(stills) + len(faces) > 0
 
     def invoke(self, context, event):
-        global _batch_styles
+        global _batch_styles, _batch_engine
         sed = seq_scene(context).sequence_editor
         ids, stills, faces = selected_targets(sed)
         _batch_mixed.clear()
         if ids:
-            try:
+            settings = seq_scene(context).tachie
+            first_ch = next((c for c in settings.characters
+                             if c.name == line_strips(sed, ids[0])[0].get("tachie_character")), None)
+            _batch_engine = engine_url(context, first_ch)
+            try:  # スタイルの一覧は先頭のセリフのキャラクターのエンジンから
                 _batch_styles = [(str(i), name, "", i) for i, name in
-                                 VoicevoxClient(prefs(context).voicevox_url, timeout=3.0).styles()]
+                                 client(context, first_ch, timeout=3.0).styles()]
             except (VoicevoxError, OSError):
                 _batch_styles = []
-            settings = seq_scene(context).tachie
             values = []
             for cid in ids:
                 strips = line_strips(sed, cid)
@@ -1688,6 +1709,10 @@ class TACHIE_OT_batch_edit(bpy.types.Operator):
                 else:
                     base_voice, base_audio = line_voice(strips, ch), line_audio(strips, ch)
                 if use_speaker:
+                    if engine_url(context, ch) != _batch_engine:
+                        # スタイル ID はエンジンごとに違う（一覧は先頭のセリフのエンジンのもの）
+                        problems.append(f"{ch.name} は声のエンジンが違うのでスタイルを変えられません")
+                        continue
                     kwargs["speaker"] = int(self.speaker)
                 if voice_changes or "character" in kwargs:
                     kwargs["voice"] = {**base_voice, **voice_changes}
@@ -1847,7 +1872,7 @@ class TACHIE_OT_character_add(bpy.types.Operator):
         if n > 1 or "channel" in config.layout:
             ch.channel = _free_channel(settings, ch, config.layout.get("channel"))
         try:  # エンジンが止まっていても追加は待たせない
-            names = VoicevoxClient(prefs(context).voicevox_url, timeout=3.0).styles()
+            names = client(context, ch, timeout=3.0).styles()
             ch.speaker_name = dict(names).get(ch.speaker, "")
         except (VoicevoxError, OSError):
             pass
@@ -1968,8 +1993,14 @@ class TACHIE_OT_pick_speaker(bpy.types.Operator):
 
     def invoke(self, context, event):
         global _style_items
+        settings = seq_scene(context).tachie
+        if self.target == "LINE" and active_line_id(context) is not None:
+            sed = seq_scene(context).sequence_editor
+            ch = next((c for c in settings.characters if c.name == sed.active_strip.get("tachie_character")), None)
+        else:
+            ch = settings.character()
         try:
-            styles = client(context).styles()
+            styles = client(context, ch).styles()
         except VoicevoxError as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -2201,15 +2232,18 @@ class TACHIE_OT_import_characters(bpy.types.Operator, ImportHelper):
         except (OSError, ValueError) as e:
             self.report({"ERROR"}, f"読み込めませんでした: {e}")
             return {"CANCELLED"}
-        try:
-            names = dict(client(context).styles())
-        except VoicevoxError:
-            names = {}  # エンジンが動いていなければ話者名は空のまま（ID で表示）
+        names_by_engine: dict[str, dict] = {}
         for config in configs.values():
             existing = next((c for c in settings.characters if c.name == config.name), None)
             ch = existing or settings.characters.add()
             apply_config(ch, config)
-            ch.speaker_name = names.get(config.speaker, "")
+            url = engine_url(context, ch)
+            if url not in names_by_engine:
+                try:
+                    names_by_engine[url] = dict(client(context, ch, timeout=3.0).styles())
+                except (VoicevoxError, OSError):
+                    names_by_engine[url] = {}  # エンジンが動いていなければ話者名は空のまま（ID で表示）
+            ch.speaker_name = names_by_engine[url].get(config.speaker, "")
         self.report({"INFO"}, f"{len(configs)} 人のキャラクター設定を読み込みました")
         return {"FINISHED"}
 
@@ -2276,6 +2310,118 @@ class TACHIE_OT_export_characters(bpy.types.Operator, ExportHelper):
         path = Path(self.filepath)
         path.write_text(dump_characters(configs, base=path.parent), encoding="utf-8")
         self.report({"INFO"}, f"{path} に書き出しました")
+        return {"FINISHED"}
+
+
+def subtitle_cues(scene) -> list:
+    """置いてあるセリフの字幕（ミュートしたもの・書き出す範囲の外は除く）。時刻はシーンの開始フレームを 0 秒とする。
+
+    テキストは置いたときのもの（パネルで編集して再生成していないテキストや「{発音}」は画面の字幕に無い）。
+    """
+    from .tachie_studio.srt import Cue
+
+    sed = scene.sequence_editor
+    if sed is None:
+        return []
+    fps = scene_fps(scene)
+    first, last = scene.frame_start, scene.frame_end + 1
+    cues = []
+    for s in sed.strips:
+        if s.type != "TEXT" or not s.get("tachie_id") or s.mute or sed.channels[s.channel].mute:
+            continue
+        start, end = max(s.left_handle, first), min(s.right_handle, last)
+        if end <= start:
+            continue
+        text = s.get("tachie_placed_text", s.get("tachie_text", s.text))
+        cues.append(Cue((start - first) / fps, (end - first) / fps, text, s.get("tachie_character", "")))
+    return cues
+
+
+class TACHIE_OT_export_subtitles(bpy.types.Operator, ExportHelper):
+    """置いてあるセリフの字幕を SRT / WebVTT で書き出す（YouTube などの字幕用）"""
+
+    bl_idname = "tachie.export_subtitles"
+    bl_label = "字幕を書き出す"
+
+    filename_ext = ".srt"
+    filter_glob: bpy.props.StringProperty(default="*.srt;*.vtt", options={"HIDDEN"})
+    format: bpy.props.EnumProperty(name="形式", items=[("SRT", "SRT", "YouTube などで使える一般的な形式"),
+                                                       ("VTT", "WebVTT", "Web 用の字幕形式")])
+    with_speaker: bpy.props.BoolProperty(name="キャラ名を付ける", default=False,
+                                         description="「キャラ名: セリフ」の形で書く")
+
+    def check(self, context):
+        # 形式に合わせて拡張子を変える
+        ext = ".vtt" if self.format == "VTT" else ".srt"
+        path = Path(self.filepath)
+        if path.suffix.lower() != ext and path.name:
+            self.filepath = str(path.with_suffix(ext))
+            return True
+        return False
+
+    def execute(self, context):
+        from .tachie_studio.srt import to_srt, to_vtt
+
+        self.check(context)
+        cues = subtitle_cues(seq_scene(context))
+        if not cues:
+            self.report({"WARNING"}, "書き出す字幕がありません")
+            return {"CANCELLED"}
+        text = (to_vtt if self.format == "VTT" else to_srt)(cues, self.with_speaker)
+        Path(self.filepath).write_text(text, encoding="utf-8")
+        self.report({"INFO"}, f"{len(cues)} 件の字幕を {self.filepath} に書き出しました")
+        return {"FINISHED"}
+
+
+# 動画の書き出し設定: 名前 → (表示名, 幅, 高さ, fps)
+RENDER_PRESETS = {
+    "FHD30": ("1920×1080 / 30fps（YouTube 標準）", 1920, 1080, 30),
+    "FHD60": ("1920×1080 / 60fps", 1920, 1080, 60),
+    "HD30": ("1280×720 / 30fps（軽い）", 1280, 720, 30),
+    "UHD30": ("3840×2160 / 30fps（4K）", 3840, 2160, 30),
+    "SHORT30": ("1080×1920 / 30fps（縦長・ショート）", 1080, 1920, 30),
+}
+
+
+def apply_render_preset(scene, preset: str) -> bool:
+    """解像度・fps・MP4（H.264 / AAC）を設定する。解像度か fps が変わったら True。"""
+    _, w, h, fps = RENDER_PRESETS[preset]
+    r = scene.render
+    changed = (r.resolution_x, r.resolution_y, r.resolution_percentage) != (w, h, 100) or scene_fps(scene) != fps
+    r.resolution_x, r.resolution_y, r.resolution_percentage = w, h, 100
+    r.fps, r.fps_base = fps, 1.0
+    im = r.image_settings
+    if hasattr(im, "media_type"):  # Blender 5: 動画は media_type を VIDEO にしてから
+        im.media_type = "VIDEO"
+    im.file_format = "FFMPEG"
+    f = r.ffmpeg
+    f.format, f.codec = "MPEG4", "H264"
+    f.constant_rate_factor, f.ffmpeg_preset = "HIGH", "GOOD"
+    f.audio_codec, f.audio_channels, f.audio_mixrate, f.audio_bitrate = "AAC", "STEREO", 48000, 192
+    r.use_sequencer = True
+    if bpy.data.filepath:
+        r.filepath = f"//render/{Path(bpy.data.filepath).stem}_"
+    return changed
+
+
+class TACHIE_OT_render_preset(bpy.types.Operator):
+    """動画の書き出し設定（解像度・フレームレート・MP4 / H.264 / AAC）をまとめて設定する"""
+
+    bl_idname = "tachie.render_preset"
+    bl_label = "書き出し設定"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: bpy.props.EnumProperty(name="書き出し設定", items=[(k, v[0], "") for k, v in RENDER_PRESETS.items()])
+
+    def execute(self, context):
+        scene = seq_scene(context)
+        changed = apply_render_preset(scene, self.preset)
+        sed = scene.sequence_editor
+        placed = sed is not None and any(s.get("tachie_id") or s.get("tachie_still") for s in sed.strips)
+        if changed and placed:
+            self.report({"WARNING"}, "解像度かフレームレートが変わりました。置いてあるセリフは「全セリフを再生成」で合わせてください")
+        else:
+            self.report({"INFO"}, f"書き出し設定: {RENDER_PRESETS[self.preset][0]}")
         return {"FINISHED"}
 
 
@@ -2511,6 +2657,8 @@ _classes = (
     TACHIE_OT_reload_character,
     TACHIE_OT_import_characters,
     TACHIE_OT_import_presets,
+    TACHIE_OT_export_subtitles,
+    TACHIE_OT_render_preset,
     TACHIE_OT_export_characters,
 )
 

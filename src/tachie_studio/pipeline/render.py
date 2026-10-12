@@ -227,9 +227,13 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     wav = read_wav(wav_bytes)
     n = frame_count(wav.duration, fps)
     after = frame_count(audio["after"], fps) if audio["after"] > 0 else 0
+    # モーラの長さが無いエンジン（AivisSpeech は常に 0 を返す）では母音の時刻が分からないので音量式にする
+    mora_lengths = sum((m.get("consonant_length") or 0) + (m.get("vowel_length") or 0)
+                       for ap in query.get("accent_phrases", []) for m in ap.get("moras", []))
+    mouth_mode = config.mouth if mora_lengths > 0 else "volume"
     motion = LineMotion(
         frames=n + after, voice_frames=n, fps=fps, seed=_seed(line.index, line.character, line.text),
-        mouth=config.mouth, vowels=vowel_track(scale_to(phonemes_from_query(query), wav.duration), fps, n),
+        mouth=mouth_mode, vowels=vowel_track(scale_to(phonemes_from_query(query), wav.duration), fps, n),
         rms=frame_rms(wav, fps, n))
     mode, _ = mouth_states(motion, character, cache.expression)
     n = motion.frames
@@ -290,6 +294,7 @@ def render_script(lines: list[Line], configs: dict[str, CharacterConfig], out_di
                   idle_seconds: float = 0.0, progress: Callable[[str], None] | None = None) -> dict:
     """台本全体を書き出し、manifest.json を書いてその内容を返す。"""
     client = client or VoicevoxClient()
+    engines: dict[str, VoicevoxClient] = {}  # キャラごとのエンジン（VOICEVOX 互換）
     out_dir.mkdir(parents=True, exist_ok=True)
     characters: dict[str, Character] = {}
     caches: dict[tuple[str, str | None], FrameCache] = {}
@@ -307,7 +312,11 @@ def render_script(lines: list[Line], configs: dict[str, CharacterConfig], out_di
         if progress:
             progress(f"[{line.index}/{len(lines)}] {line.character}: {line.text}")
         character, cache = setup(line.character, line.expression)
-        clips.append(render_line(client, configs[line.character], character, line, out_dir, fps=fps, cache=cache))
+        config = configs[line.character]
+        if config.engine and config.engine not in engines:
+            engines[config.engine] = VoicevoxClient(config.engine)
+        clips.append(render_line(engines.get(config.engine, client), config, character, line, out_dir, fps=fps,
+                                 cache=cache))
 
     if idle_seconds > 0:
         for name in dict.fromkeys(line.character for line in lines):

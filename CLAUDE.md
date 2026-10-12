@@ -11,6 +11,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `src/tachie_studio/pipeline/` — 台本（`script.py`）とキャラ設定 TOML（`config.py`）から、セリフごとの wav と透明連番画像、
   `manifest.json` を書き出す（`render.py`）。「目 × 口」の組み合わせを `cache/` に 1 回ずつ合成し、連番はハードリンク。
 - `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
+- 書き出し設定のプリセット（`operators.RENDER_PRESETS`、`apply_render_preset`）: Blender 5 は `image_settings.media_type = "VIDEO"`
+  にしてから `file_format = "FFMPEG"`。解像度・fps はセリフの連番・立ち位置・大きさに効くので、置いたあとに変えたら全再生成を案内する。
+- `src/tachie_studio/srt.py` — 字幕ファイル（SRT / WebVTT）。アドオンの「書き出し」パネルは置いた字幕ストリップの位置（シーン開始 = 0 秒、ミュートは除く）、CLI の `--srt` はセリフを順に `--gap` 秒あけて並べた時刻。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
@@ -111,6 +114,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   - 既定のビュー変換 AgX だと立ち絵の色が淡くなるので、セリフ追加時に Standard へ切り替える。
   - 日本語フォントは `/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc`（ファイル名が NFD なので glob で探す）。
 - VOICEVOX エンジンは `http://127.0.0.1:50021`（0.25.2）。
+- 声のエンジンはキャラごと（`TachieCharacter.engine` = DEFAULT / AIVIS / SHAREVOX / COEIROINK / CUSTOM、`operators.engine_url`、
+  TOML は `engine = "URL"`、CLI もキャラごとのクライアント）。互換エンジンは実機では未確認。AivisSpeech は audio_query の
+  モーラの長さ・音高が常に 0 なので、`render_line` はモーラの長さの合計が 0 なら音量式にする。スタイル ID は負にもなる。
 
 ## 動く立ち絵の解釈（実装で決めたこと）
 - 連番は公式 FAQ どおり `.0` = 閉じ → `.1`, `.2` … → 数字なし = 開き。`Part.frames` はこの順。

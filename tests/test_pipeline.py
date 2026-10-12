@@ -454,3 +454,55 @@ def test_simple_material_lipsync(tmp_path: Path):
     clip = render_line(FakeClient(), cfg, character, Line(1, "s", "あ"), out, fps=10, cache=cache, stem="x")
     reds = [Image.open(p).getpixel((0, 0))[0] for p in sorted((out / "x").iterdir())]
     assert len(reds) == clip.frames and reds[0] == 10 and reds[-1] == 10 and 20 in reds  # 無音は閉じ、声で開く
+
+
+def test_engine_per_character(tmp_path: Path, char_dir: Path, monkeypatch):
+    import tomllib
+
+    from tachie_studio.pipeline import render as render_mod
+
+    data = {"a": {"folder": str(char_dir), "speaker": 1, "engine": "http://127.0.0.1:10101"},
+            "b": {"folder": str(char_dir), "speaker": 2}}
+    configs = parse_characters(data, tmp_path)
+    assert configs["a"].engine == "http://127.0.0.1:10101" and configs["b"].engine == ""
+    again = parse_characters(tomllib.loads(dump_characters(configs)), tmp_path)
+    assert again == configs
+    # 書き出しではキャラごとのエンジンを使う（既定は渡したクライアント）
+    made = {}
+
+    class Engine(FakeClient):
+        def __init__(self, url, timeout=60.0):
+            super().__init__()
+            made[url] = self
+
+    monkeypatch.setattr(render_mod, "VoicevoxClient", Engine)
+    default = FakeClient()
+    render_script(parse_script("a: あ\nb: い\na: う"), configs, tmp_path / "o", client=default, fps=10)
+    assert [t for t, _ in made["http://127.0.0.1:10101"].calls] == ["あ", "う"]
+    assert [t for t, _ in default.calls] == ["い"]
+
+
+def test_engine_without_mora_lengths_uses_volume(tmp_path: Path, char_dir: Path):
+    """AivisSpeech のようにモーラの長さが常に 0 のエンジンでは、音量式で口パクする。"""
+    from tachie_studio.pipeline.render import FrameCache, LineMotion, render_line
+    from tachie_studio.pipeline.script import Line
+
+    client = FakeClient()
+    base = client.audio_query
+
+    def dummy_query(text, speaker):
+        q = base(text, speaker)
+        for ap in q["accent_phrases"]:
+            for m in ap["moras"]:
+                m["consonant_length"] = m["vowel_length"] = 0.0
+        return q
+
+    client.audio_query = dummy_query
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": -12345, "mouth": "vowel"}},
+                           tmp_path)["テスト"]
+    character = load_character(char_dir)
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    clip = render_line(client, cfg, character, Line(1, "テスト", "あ"), tmp_path / "o", fps=10, cache=cache, stem="x")
+    motion = LineMotion.load(tmp_path / "o" / "x.json")
+    assert motion.mouth == "volume" and clip.extra["mouth_mode"] == "volume" and clip.speaker == -12345
+    assert len({Image.open(p).getpixel((0, 5)) for p in (tmp_path / "o" / "x").iterdir()}) > 1  # 口が動く

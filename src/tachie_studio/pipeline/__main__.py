@@ -11,6 +11,7 @@ import argparse
 import time
 from pathlib import Path
 
+from ..srt import Cue, to_srt
 from ..voicevox import DEFAULT_URL, VoicevoxClient
 from .config import load_characters
 from .render import render_script
@@ -27,6 +28,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--scale", type=float, default=1.0, help="立ち絵の拡大率（例: 0.5）")
     p.add_argument("--idle", type=float, default=0.0, metavar="SECONDS", help="待機用（まばたきのみ）の連番の長さ")
     p.add_argument("--url", default=DEFAULT_URL, help="VOICEVOX エンジンの URL")
+    p.add_argument("--srt", action="store_true",
+                   help="字幕を subtitles.srt にも書き出す（セリフを順に、--gap 秒あけて並べた時刻）")
+    p.add_argument("--gap", type=float, default=0.0, metavar="SECONDS", help="--srt で並べるときのセリフの間隔")
     args = p.parse_args(argv)
 
     configs = load_characters(args.characters)
@@ -38,6 +42,22 @@ def main(argv: list[str] | None = None) -> None:
     total = sum(c["duration"] for c in manifest["clips"] if c["kind"] == "line")
     print(f"{len(lines)} セリフ / {total:.1f} 秒 / {time.monotonic() - started:.1f} 秒で書き出し → "
           f"{args.output / 'manifest.json'}")
+    if args.srt:
+        path = args.output / "subtitles.srt"
+        path.write_text(to_srt(manifest_cues(manifest, args.gap)), encoding="utf-8")
+        print(f"字幕 → {path}")
+
+
+def manifest_cues(manifest: dict, gap: float = 0.0) -> list[Cue]:
+    """manifest のセリフを順に `gap` 秒あけて並べたときの字幕（余韻も含めたセリフの長さ）。"""
+    cues, t = [], 0.0
+    for clip in manifest["clips"]:
+        if clip["kind"] != "line":
+            continue
+        length = clip["frames"] / clip["fps"]
+        cues.append(Cue(t, t + length, clip["text"], clip["character"]))
+        t += length + gap
+    return cues
 
 
 if __name__ == "__main__":
