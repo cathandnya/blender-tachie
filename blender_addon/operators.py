@@ -1436,6 +1436,271 @@ class TACHIE_OT_apply_faces(bpy.types.Operator):
         return {"FINISHED"}
 
 
+# ---- まとめて変える ----
+
+def selected_targets(sed) -> tuple[list[str], list, list]:
+    """選択中のセリフ（tachie_id、始まり順）、セリフなしの立ち絵、表情ストリップ。"""
+    if sed is None:
+        return [], [], []
+    ids, stills, faces = {}, [], []
+    for s in sed.strips:
+        if not s.select:
+            continue
+        if s.get("tachie_id"):
+            ids[s["tachie_id"]] = min(ids.get(s["tachie_id"], s.left_handle), s.left_handle)
+        elif s.get("tachie_still"):
+            stills.append(s)
+        elif s.get("tachie_face"):
+            faces.append(s)
+    return sorted(ids, key=ids.get), stills, faces
+
+
+_batch_mixed: set[str] = set()
+_batch_styles: list = []
+_batch_character_items: list = []
+_batch_expression_items: list = []
+
+
+def _batch_use(name):
+    def update(self, context):
+        setattr(self, f"use_{name}", True)
+    return update
+
+
+def _batch_characters(self, context):
+    global _batch_character_items
+    _batch_character_items = [(c.name, c.name, "") for c in seq_scene(context).tachie.characters]
+    return _batch_character_items
+
+
+def _batch_expressions(self, context):
+    """対象のキャラ全員が持っている表情プリセット（キャラクターも変えるなら変更先のもの）と基本。"""
+    global _batch_expression_items
+    scene = seq_scene(context)
+    sed = scene.sequence_editor
+    ids, stills, faces = selected_targets(sed)
+    names = {line_strips(sed, cid)[0]["tachie_character"] for cid in ids}
+    if self.use_character and self.character:
+        names = {self.character}
+    names |= {s["tachie_still"] for s in stills} | {f["tachie_face"] for f in faces}
+    common = None
+    for ch in scene.tachie.characters:
+        if ch.name in names:
+            presets = [e.name for e in ch.expressions]
+            common = presets if common is None else [p for p in common if p in presets]
+    # 動的な EnumProperty は値を番号で持つ。候補が変わっても同じ番号が同じ表情を指すように、
+    # シーンの全表情の名前順で番号を振る（並び順の番号だと、キャラクターを変えたときに別の表情に化ける）
+    numbers = {p: i for i, p in enumerate(sorted({e.name for c in scene.tachie.characters for e in c.expressions}), 1)}
+    _batch_expression_items = [(NONE, "（基本）", "", 0)] + [(p, p, "", numbers[p]) for p in common or []]
+    return _batch_expression_items
+
+
+def _batch_style_items(self, context):
+    return _batch_styles or [(NONE, "（取得できません）", "")]
+
+
+class TACHIE_OT_batch_edit(bpy.types.Operator):
+    """選択中のセリフ・立ち絵・表情ストリップの表情や音量などをまとめて変える（変えた項目だけを全部に当てる）"""
+
+    bl_idname = "tachie.batch_edit"
+    bl_label = "まとめて変える"
+    bl_options = {"REGISTER", "UNDO"}
+
+    use_expression: bpy.props.BoolProperty(name="表情", options={"SKIP_SAVE"})
+    expression: bpy.props.EnumProperty(name="表情", items=_batch_expressions, update=_batch_use("expression"))
+    use_character: bpy.props.BoolProperty(name="キャラクター", options={"SKIP_SAVE"})
+    character: bpy.props.EnumProperty(name="キャラクター", items=_batch_characters, update=_batch_use("character"))
+    use_speaker: bpy.props.BoolProperty(name="スタイル", options={"SKIP_SAVE"})
+    speaker: bpy.props.EnumProperty(name="スタイル", items=_batch_style_items, update=_batch_use("speaker"))
+
+    @classmethod
+    def poll(cls, context):
+        ids, stills, faces = selected_targets(seq_scene(context).sequence_editor)
+        return len(ids) + len(stills) + len(faces) > 0
+
+    def invoke(self, context, event):
+        global _batch_styles
+        sed = seq_scene(context).sequence_editor
+        ids, stills, faces = selected_targets(sed)
+        _batch_mixed.clear()
+        if ids:
+            try:
+                _batch_styles = [(str(i), name, "", i) for i, name in
+                                 VoicevoxClient(prefs(context).voicevox_url, timeout=3.0).styles()]
+            except (VoicevoxError, OSError):
+                _batch_styles = []
+            settings = seq_scene(context).tachie
+            values = []
+            for cid in ids:
+                strips = line_strips(sed, cid)
+                ch = next((c for c in settings.characters if c.name == strips[0]["tachie_character"]), None)
+                if ch is None:
+                    continue  # キャラクターを消したセリフ（execute で「変えられなかった」に数える）
+                sound = line_sound(strips) or strips[0]
+                v = {"character": ch.name, "speaker": str(sound.get("tachie_speaker", ch.speaker)),
+                     "expression": strips[0].get("tachie_expression", "") or NONE}
+                v.update({prop: line_voice(strips, ch)[key] for prop, (key, *_) in VOICE_PROPS.items()})
+                v.update({f"audio_{k}": val for k, val in line_audio(strips, ch).items()})
+                values.append(v)
+            first = values[0] if values else {}
+            for name, value in first.items():
+                if any(v[name] != value for v in values[1:]):
+                    _batch_mixed.add(name)
+            # 先頭のセリフの値を入れておく（update でチェックが入らないよう、use_ は後で戻す）
+            # 選べる候補に無い値（共通の表情に無いなど）は基本にする
+            if first and first["expression"] not in {i[0] for i in _batch_expressions(self, context)}:
+                first["expression"] = NONE
+            for name, value in first.items():
+                try:
+                    setattr(self, name, value)
+                except (TypeError, ValueError):
+                    pass
+        else:
+            # 立ち絵・表情ストリップだけ: 先頭の表情を入れておく（前回の値が候補に無いと空になる）
+            expression = (stills or faces)[0].get("tachie_expression", "") or NONE
+            if expression not in {i[0] for i in _batch_expressions(self, context)}:
+                expression = NONE
+            self.expression = expression
+        for name in ["expression", "character", "speaker", *VOICE_PROPS, *(f"audio_{k}" for k in AUDIO_PROPS)]:
+            setattr(self, f"use_{name}", False)
+        return context.window_manager.invoke_props_dialog(self, width=420, confirm_text="まとめて変える")
+
+    def draw(self, context):
+        ids, stills, faces = selected_targets(seq_scene(context).sequence_editor)
+        layout = self.layout
+        parts = [f"セリフ {len(ids)}" if ids else "", f"立ち絵 {len(stills)}" if stills else "",
+                 f"表情ストリップ {len(faces)}" if faces else ""]
+        layout.label(text="対象: " + "、".join(p for p in parts if p) + "（値を変えた項目だけを当てます）")
+
+        def row(name, label=None, menu=False):
+            r = layout.row(align=True)
+            r.prop(self, f"use_{name}", text="")
+            sub = r.row(align=True)
+            sub.active = getattr(self, f"use_{name}")
+            mixed = name in _batch_mixed and not getattr(self, f"use_{name}")
+            if menu:  # 選択欄はラベルを別に置く（prop の text だと切れる）
+                split = sub.split(factor=0.3, align=True)
+                split.label(text=label + ("（混在）" if mixed else ""))
+                split.prop(self, name, text="")
+                return
+            sub.prop(self, name, text=label or "")
+            if mixed:
+                sub.label(text="（混在）")
+
+        row("expression", "表情", menu=True)
+        if ids:
+            row("character", "キャラクター", menu=True)
+            if _batch_styles:
+                row("speaker", "スタイル", menu=True)
+            layout.separator()
+            for prop, (_, label, *_) in VOICE_PROPS.items():
+                row(prop, label)
+            layout.separator()
+            for key, (label, *_) in AUDIO_PROPS.items():
+                row(f"audio_{key}", label)
+
+    def execute(self, context):
+        scene = seq_scene(context)
+        sed = scene.sequence_editor
+        settings = scene.tachie
+        ids, stills, faces = selected_targets(sed)
+        if self.use_expression and not self.expression:
+            # 選べる候補に無い値（キャラクターを変えて、そのキャラに無い表情になったなど）。基本に化けさせない
+            self.report({"WARNING"}, "表情を選び直してください")
+            return {"CANCELLED"}
+        preset = ("" if self.expression == NONE else self.expression) if self.use_expression else None
+        voice_changes = {key: round(getattr(self, prop), 6) for prop, (key, *_) in VOICE_PROPS.items()
+                         if getattr(self, f"use_{prop}")}
+        audio_changes = {k: round(getattr(self, f"audio_{k}"), 6) for k in AUDIO_PROPS if getattr(self, f"use_audio_{k}")}
+        use_speaker = self.use_speaker and self.speaker not in (NONE, "")
+        if preset is None and not (voice_changes or audio_changes or self.use_character or use_speaker):
+            self.report({"WARNING"}, "変える項目がありません（値を変えるか、左のチェックを入れてください）")
+            return {"CANCELLED"}
+        mix_only = set(audio_changes) <= {"volume", "pan"}
+        regen = preset is not None or self.use_character or use_speaker or bool(voice_changes) or not mix_only
+        count, problems = 0, []
+        wm = context.window_manager
+        wm.progress_begin(0, len(ids) + len(stills))
+        try:
+            # 後ろから作り直すと、長さが変わって後ろがずれても未処理のセリフの位置を追わなくてよい
+            for cid in reversed(ids):
+                strips = line_strips(sed, cid)
+                try:
+                    ch = find_character(settings, strips[0]["tachie_character"])
+                except ERRORS as e:
+                    problems.append(str(e))
+                    continue
+                if not regen:
+                    sound = line_sound(strips)
+                    if sound is not None:
+                        set_line_audio(sound, {**line_audio(strips, ch), **audio_changes})
+                    count += 1
+                    continue
+                kwargs = {}
+                if self.use_character and self.character and self.character != ch.name:
+                    kwargs["character"] = self.character
+                    ch = find_character(settings, self.character)
+                    base_voice, base_audio = character_voice(ch), character_audio(ch)
+                else:
+                    base_voice, base_audio = line_voice(strips, ch), line_audio(strips, ch)
+                if use_speaker:
+                    kwargs["speaker"] = int(self.speaker)
+                if voice_changes or "character" in kwargs:
+                    kwargs["voice"] = {**base_voice, **voice_changes}
+                if audio_changes or "character" in kwargs:
+                    kwargs["audio"] = {**base_audio, **audio_changes}
+                if preset is not None:
+                    if preset and preset not in {e.name for e in ch.expressions}:
+                        problems.append(f"{ch.name} に表情 {preset!r} がありません")
+                        continue
+                    kwargs["preset"] = preset
+                try:
+                    regenerate(context, cid, **kwargs)
+                except ERRORS as e:
+                    problems.append(str(e))
+                    continue
+                count += 1
+                wm.progress_update(count)
+            if preset is not None:
+                # 表情ストリップを先に変える（立ち絵を古い表情ストリップで作ってから描き直さないように）
+                for face in faces:
+                    ch = next((c for c in settings.characters if c.name == face["tachie_face"]), None)
+                    if preset and (ch is None or preset not in {e.name for e in ch.expressions}):
+                        problems.append(f"{face['tachie_face']} に表情 {preset!r} がありません")
+                        continue
+                    face["tachie_expression"] = preset
+                    face.name = _face_name(face["tachie_face"], preset)
+                    count += 1
+                for still in stills:
+                    try:
+                        remake_still(context, still, preset)
+                        count += 1
+                    except ERRORS as e:
+                        problems.append(str(e))
+        finally:
+            wm.progress_end()
+            refresh_faces(context)
+            _applied_signatures[scene.name] = faces_signature(scene)
+        if problems:
+            self.report({"WARNING"}, f"{count} 個を変えました。{len(problems)} 個は変えられませんでした: {problems[0]}")
+        else:
+            self.report({"INFO"}, f"{count} 個を変えました")
+        return {"FINISHED"}
+
+
+for _prop, (_key, _label, _min, _max, _desc) in VOICE_PROPS.items():
+    TACHIE_OT_batch_edit.__annotations__[f"use_{_prop}"] = bpy.props.BoolProperty(name=_label, options={"SKIP_SAVE"})
+    TACHIE_OT_batch_edit.__annotations__[_prop] = bpy.props.FloatProperty(
+        name=_label, min=_min, max=_max, default=VOICE_DEFAULTS[_key], step=1, precision=2, description=_desc,
+        update=_batch_use(_prop))
+for _key, (_label, _min, _max, _default, _desc) in AUDIO_PROPS.items():
+    TACHIE_OT_batch_edit.__annotations__[f"use_audio_{_key}"] = bpy.props.BoolProperty(name=_label,
+                                                                                       options={"SKIP_SAVE"})
+    TACHIE_OT_batch_edit.__annotations__[f"audio_{_key}"] = bpy.props.FloatProperty(
+        name=_label, min=_min, max=_max, default=_default, step=1, precision=2, description=_desc,
+        unit="TIME_ABSOLUTE" if _key in BAKED_AUDIO else "NONE", update=_batch_use(f"audio_{_key}"))
+
+
 class TACHIE_OT_regenerate_all(bpy.types.Operator):
     """すべてのセリフを、今のキャラクター設定で作り直す（表情を変えたとき。声とスタイルはセリフごとの値のまま）"""
 
@@ -2078,6 +2343,7 @@ _classes = (
     TACHIE_OT_reset_line_voice,
     TACHIE_OT_reset_kana,
     TACHIE_OT_add_face,
+    TACHIE_OT_batch_edit,
     TACHIE_OT_apply_faces,
     TACHIE_OT_preview_line,
     TACHIE_OT_edit_accent,

@@ -1,6 +1,6 @@
 import bpy
 
-from .operators import line_sound, line_strips, output_dir, seq_scene
+from .operators import line_sound, line_strips, output_dir, selected_targets, seq_scene
 from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, VOICE_PROPS
 
 
@@ -86,6 +86,13 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
         layout = self.layout
         sed = seq_scene(context).sequence_editor
         strip = sed.active_strip if sed else None
+        ids, stills, faces = selected_targets(sed)
+        n = len(ids) + len(stills) + len(faces)
+        if n > 1:
+            row = layout.row()
+            row.scale_y = 1.2
+            row.operator("tachie.batch_edit", text=f"選択中の {n} 個をまとめて変える", icon="MODIFIER")
+            layout.separator()
         if strip is not None and strip.get("tachie_face"):
             layout.label(text=f"{strip['tachie_face']}の表情ストリップ", icon="SHADERFX")
             row = layout.row(align=True)

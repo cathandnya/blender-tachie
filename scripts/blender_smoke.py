@@ -376,6 +376,57 @@ assert not img["tachie_faced"] and frame_inode(img, 0) in base
 assert len([x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]) == len(idle_before)
 s.expression = ""
 
+# まとめて変える（ダイアログは画面が要るので execute だけ）
+def select_only(strips_):
+    for x in sed.strips_all:
+        x.select = False
+    for x in strips_:
+        x.select = True
+
+
+ids_ = list(lines())
+zunda_ids = [cid for cid in ids_ if lines()[cid][2][0]["tachie_character"] == "ずんだもん"][:2]
+assert len(zunda_ids) == 2
+scene.frame_current = lines()[zunda_ids[0]][0]
+s.active_character, s.expression = 0, ""
+run(bpy.ops.tachie.add_face)
+bface = sed.active_strip
+select_only([image_of(zunda_ids[0]), sound(zunda_ids[1]), bface])
+assert ops.selected_targets(sed)[0] == zunda_ids and ops.selected_targets(sed)[2] == [bface]
+run(bpy.ops.tachie.batch_edit, use_expression=True, expression="ドヤ")
+new_ids = [cid for cid in lines() if lines()[cid][2][0]["tachie_character"] == "ずんだもん"][:2]
+assert all(lines()[cid][2][0]["tachie_expression"] == "ドヤ" for cid in new_ids)
+assert bface["tachie_expression"] == "ドヤ"
+# 音量だけ: 作り直さない
+select_only([image_of(cid) for cid in new_ids])
+run(bpy.ops.tachie.batch_edit, use_audio_volume=True, audio_volume=0.4)
+assert [cid for cid in lines() if cid in new_ids] == new_ids, "音量だけで作り直された"
+assert all(abs(sound(cid).volume - 0.4) < 1e-6 for cid in new_ids)
+# 読み上げ速度: 短くなり、テキストと音量は保たれる
+before = {cid: (lines()[cid][1] - lines()[cid][0], lines()[cid][2][0]["tachie_text"]) for cid in new_ids}
+run(bpy.ops.tachie.batch_edit, use_speed_scale=True, speed_scale=1.6)
+after_ids = [cid for cid in lines() if lines()[cid][2][0]["tachie_character"] == "ずんだもん"][:2]
+for old_id, cid in zip(new_ids, after_ids):
+    assert lines()[cid][1] - lines()[cid][0] < before[old_id][0]
+    assert lines()[cid][2][0]["tachie_text"] == before[old_id][1]
+    assert abs(sound(cid)["tachie_voice_speed_scale"] - 1.6) < 1e-6 and abs(sound(cid).volume - 0.4) < 1e-6
+# 何も変えなければ何もしない
+assert bpy.ops.tachie.batch_edit() == {"CANCELLED"}
+# 別キャラが混ざると、両方が持っている表情だけ選べる
+metan_ids = [cid for cid in lines() if lines()[cid][2][0]["tachie_character"] == "四国めたん"][:1]
+select_only([image_of(after_ids[0]), image_of(metan_ids[0])])
+names = [i[0] for i in ops._batch_expressions(type("P", (), {"use_character": False, "character": ""})(), bpy.context)]
+common = {e.name for e in zunda.expressions} & {e.name for e in metan.expressions}
+assert names[0] == ops.NONE and set(names[1:]) == common and "ドヤ" not in names, names
+# 候補が変わっても同じ表情は同じ番号（動的な Enum は番号で値を持つ）
+mixed_items = ops._batch_expressions(type("P", (), {"use_character": False, "character": ""})(), bpy.context)
+zunda_items = ops._batch_expressions(type("P", (), {"use_character": True, "character": "ずんだもん"})(), bpy.context)
+zunda_numbers = {i[0]: i[3] for i in zunda_items}
+assert all(zunda_numbers[i[0]] == i[3] for i in mixed_items) and len(set(zunda_numbers.values())) == len(zunda_items)
+sed.strips.remove(bface)
+run(bpy.ops.tachie.apply_faces)
+check_idle()
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 run(bpy.ops.tachie.export_characters, filepath=str(exported))
