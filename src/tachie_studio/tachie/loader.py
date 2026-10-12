@@ -61,15 +61,32 @@ class Part:
 class Character:
     path: Path
     parts: dict[str, dict[str, Part]]
-    kind: str = "moving"  # "moving"（動く立ち絵）/ "simple"（シンプル立ち絵）
+    kind: str = "moving"  # "moving"（動く立ち絵）/ "simple"（シンプル立ち絵）/ "psd"（PSD 立ち絵）
+    psd: object | None = None  # PSD 立ち絵の PsdDocument
+    animations: dict = field(default_factory=dict)  # PSD 立ち絵の口パク・まばたき {"mouth": [...], "eye": [...]}
 
     @property
     def simple(self) -> bool:
         return self.kind == "simple"
 
     @property
+    def is_psd(self) -> bool:
+        return self.kind == "psd"
+
+    @property
+    def height(self) -> int:
+        """立ち絵の画像の高さ（px）。"""
+        if self.psd is not None:
+            return self.psd.height
+        base = self.default("体") or next(p for parts in self.parts.values() for p in parts.values())
+        from PIL import Image
+
+        with Image.open(base.path) as im:
+            return im.height
+
+    @property
     def name(self) -> str:
-        return self.path.name
+        return self.path.stem if self.is_psd else self.path.name
 
     def part(self, category: str, name: str) -> Part:
         try:
@@ -167,6 +184,13 @@ def _load_category(folder: Path, category: str) -> dict[str, Part]:
 
 def load_character(path: str | Path) -> Character:
     path = Path(path)
+    if path.is_file() and path.suffix.lower() == ".psd":
+        from .psd import load_animations, read_psd
+
+        doc = read_psd(path)
+        if (doc.depth, doc.mode) != (8, 3):
+            raise ValueError(f"RGB 8bit の PSD だけに対応しています（{doc.depth}bit、カラーモード {doc.mode}）: {path}")
+        return Character(path=path, parts={}, kind="psd", psd=doc, animations=load_animations(path, doc))
     if not path.is_dir():
         raise FileNotFoundError(f"素材フォルダがありません: {path}")
     parts = {

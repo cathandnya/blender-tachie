@@ -231,12 +231,68 @@ class TACHIE_PT_voice(_Panel, bpy.types.Panel):
 SIMPLE_LABELS = {"体": "立ち絵（口を閉じる）", "口": "セリフ中（口を開く）"}
 
 
-def part_rows(ch):
-    """表情の欄に出す (カテゴリ, [プロパティ], 表示名) の並び。シンプル立ち絵は 2 つだけ。"""
+def material_of(ch):
     try:
-        simple = bool(ch.folder) and load_material(ch.folder).simple
-    except (ValueError, FileNotFoundError, OSError):
-        simple = False
+        return load_material(ch.folder) if ch.folder else None
+    except (ValueError, FileNotFoundError, KeyError, OSError):
+        return None
+
+
+def draw_psd_layers(layout, ch, preset: str = "") -> None:
+    """PSD 立ち絵の表情: * のフォルダは 1 つ選ぶ、その他のレイヤーは表示・非表示（プリセットは基本との差だけ持つ）。"""
+    from .operators import item_layers, psd_layer_state
+    from .tachie_studio.tachie.psd import is_on, is_shown, radio_groups, toggles
+
+    try:
+        doc, _, state = psd_layer_state(ch, preset)
+    except (ValueError, FileNotFoundError, KeyError, OSError) as e:
+        layout.label(text=str(e), icon="ERROR")
+        return
+    own = item_layers(find_preset(ch, preset)) if preset else {}
+    character = load_material(ch.folder)
+    anims = character.animations
+    if anims.get("mouth") or anims.get("eye"):
+        layout.label(text=f"口パク {len(anims.get('mouth', []))} 組・まばたき {len(anims.get('eye', []))} 組", icon="CHECKMARK")
+    else:
+        layout.label(text="口パク・まばたきの設定（<PSD 名>-ymm.json）がありません", icon="ERROR")
+    col = layout.column(align=True)
+    for group in radio_groups(doc):
+        chosen = next((c for c in group.children if c.radio and is_on(c, state)), None)
+        changed = any(c.path() in own for c in group.children if c.radio)
+        row = col.row(align=True)
+        row.active = is_shown(group, state)  # 選ばれていないフォルダの中は効かない
+        depth = group.path().count("/") + (1 if group.parent is not None else 0)
+        row.label(text="　" * depth + (group.label if group.parent is not None else "（いちばん外）"))
+        text = chosen.label if chosen else "（なし）"
+        if preset and not changed:
+            text = f"（基本のまま: {text}）"
+        op = row.operator("tachie.psd_choose", text=text)
+        op.group, op.preset = group.path(), preset
+    col = layout.column(align=True)
+    for node in toggles(doc):
+        row = col.row(align=True)
+        row.alignment = "LEFT"
+        row.active = node.parent is None or node.parent.parent is None or is_shown(node.parent, state)
+        depth = node.path().count("/")
+        on = is_on(node, state)
+        op = row.operator("tachie.psd_toggle", text="　" * depth + node.label,
+                          icon="CHECKBOX_HLT" if on else "CHECKBOX_DEHLT", emboss=False)
+        op.path, op.preset, op.mode = node.path(), preset, "TOGGLE"
+        if preset and node.path() in own:
+            op = row.operator("tachie.psd_toggle", text="", icon="LOOP_BACK")
+            op.path, op.preset, op.mode = node.path(), preset, "RESET"
+
+
+def find_preset(ch, name: str):
+    return next((e for e in ch.expressions if e.name == name), None)
+
+
+def part_rows(ch):
+    """表情の欄に出す (カテゴリ, [プロパティ], 表示名) の並び。シンプル立ち絵は 2 つだけ、PSD は無し。"""
+    material = material_of(ch)
+    if material is not None and material.is_psd:
+        return []
+    simple = material is not None and material.simple
     if simple:
         return [(c, PART_PROPS[c], SIMPLE_LABELS[c]) for c in ("体", "口")]
     return [(c, props, c) for c, props in PART_PROPS.items()]
@@ -249,6 +305,11 @@ class TACHIE_PT_expression(_Panel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         ch = seq_scene(context).tachie.character()
+        material = material_of(ch)
+        if material is not None and material.is_psd:
+            draw_psd_layers(layout, ch)
+            layout.label(text="変えたら「全セリフを再生成」で反映", icon="INFO")
+            return
         col = layout.column(align=True)
         for category, props, title in part_rows(ch):
             for i, prop in enumerate(props):
@@ -278,6 +339,10 @@ class TACHIE_PT_presets(_Panel, bpy.types.Panel):
         preset = ch.expression()
         if preset is None:
             layout.label(text="台本では「キャラ名(表情): セリフ」で使えます", icon="INFO")
+            return
+        material = material_of(ch)
+        if material is not None and material.is_psd:
+            draw_psd_layers(layout, ch, preset.name)
             return
         col = layout.column(align=True)
         for category, props, title in part_rows(ch):

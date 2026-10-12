@@ -145,7 +145,14 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   合成は画像 1 枚（`compose._simple_layers`: mouth_frame 0 なら体、それ以外は口）。口パクは `simple_mouth` が
   閉じ = 体・開き = 口の 2 段階の口パーツを作るので、音量式でそのまま動く。まばたきは無い。GIF / WebP は最初のフレームだけ。
   パネルの表情の欄は 2 つだけ（`panels.part_rows`）。
-- PSD 立ち絵（#7、作りかけ）: `tachie/psd.py` がレイヤーの木（フォルダ・表示・名前、`index` は下から 0 始まりで
+- PSD 立ち絵（#7）: `load_character(<.psd>)` が `kind == "psd"` の Character（`psd` に PsdDocument、`animations` に
+  `-ymm.json` の口パク・まばたき）。表情は `Expression.layers`（{パス: 表示するか}、TOML は `"レイヤー" = { … }`、
+  アドオンは `psd_layers` に JSON）で、`*` を True にすると同じフォルダの他の `*` は消える（`psd.apply_layers`）。
+  口パク・まばたきは表示中のレイヤーを含む組（`active_animation`）を、閉じ → 開きの段階として `PsdPart` に見せるので、
+  音量式の口パク・まばたきがそのまま動く（`compose.psd_state` が mouth_frame / eye_frame の段のレイヤーを選ぶ）。
+  キャラ追加で PSD の表示状態の口が口パクの組に無ければ、最初の組の閉じた口を基本にする。
+  合成は通常・通過・乗算（他はクリッピングも含め通常）。圧縮は無圧縮・RLE・ZIP。
+- PSD の読み込み: `tachie/psd.py` がレイヤーの木（フォルダ・表示・名前、`index` は下から 0 始まりで
   フォルダの終わりの記録も数える）を自前で読む（Pillow はフォルダを読めず、手元の PSD ではレイヤー情報で落ちる）。
   YMM4 の `<PSD 名>-ymm.json` は `{"Presets": [], "MouthAnimations": [{"Layers": ["n5", "n4"]}], "EyeAnimations": …}`、
   `Layers` は開き → 閉じの順で `n<index>`。`tachie/psd_animation.py` は動く立ち絵の連番の中身（どのパーツの画像と同じか）

@@ -20,7 +20,7 @@ from ..lipsync import blink_track, frame_count, phonemes_from_query, read_wav, s
 from ..lipsync.mouth import CLOSED, levels_from_rms, vowel_track, vowels_to_levels
 from ..lipsync.wav import apply_fade, frame_rms
 from ..tachie import Character, Expression, Part, compose, load_character
-from ..tachie.compose import simple_mouth
+from ..tachie.compose import psd_part, simple_mouth
 from ..voicevox import VoicevoxClient
 from .config import CharacterConfig
 from .script import Line
@@ -85,12 +85,16 @@ class RenderedClip:
 
 
 def _mouth_part(character: Character, expr: Expression) -> Part | None:
+    if character.is_psd:
+        return psd_part(character, expr, "mouth")
     if character.simple:
         return simple_mouth(character, expr)
     return character.part("口", expr.mouth) if expr.mouth else character.default("口")
 
 
 def _eye_part(character: Character, expr: Expression) -> Part | None:
+    if character.is_psd:
+        return psd_part(character, expr, "eye")
     return character.part("目", expr.eye) if expr.eye else character.default("目")
 
 

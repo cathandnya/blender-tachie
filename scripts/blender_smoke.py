@@ -614,4 +614,52 @@ cid = list(lines())[-1]
 img = image_of(cid)
 names = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
 assert len(names) == 2, names  # 閉じと開きの 2 枚だけを行き来する
+
+# PSD 立ち絵: 口パク・まばたきの設定は動く立ち絵から作る（素材フォルダの PSD が無ければ飛ばす）
+psd_src = next(iter(sorted(Path(bpy.path.abspath(zunda.folder)).glob("*.psd"))), None)
+if psd_src is None:
+    print("PSD が無いので PSD 立ち絵の確認は飛ばします")
+else:
+    import shutil  # noqa: E402
+
+    from bl_ext.user_default.blender_tachie.tachie_studio.tachie.psd_animation import (  # noqa: E402
+        animations_from_material, write_config)
+    from bl_ext.user_default.blender_tachie.tachie_studio.tachie.psd import read_psd  # noqa: E402
+
+    psd_dir = out / "material" / "psd"
+    psd_dir.mkdir(parents=True)
+    psd = psd_dir / "ずんだもんPSD.psd"
+    shutil.copy(psd_src, psd)
+    config, warnings_ = animations_from_material(zc, read_psd(psd))
+    write_config(psd, config)
+    run(bpy.ops.tachie.character_add, filepath=str(psd), directory=str(psd_dir) + "/")
+    pch = s.characters[-1]
+    pmat = ops.load_material(pch.folder)
+    assert pch.name == "ずんだもんPSD" and pmat.is_psd and pmat.animations["mouth"] and pmat.animations["eye"]
+    assert "!口/*" in pch.psd_layers, pch.psd_layers  # 口パクの組の閉じた口が基本になる
+    # 表情: 目を選ぶ、記号を表示する、プリセットで口を変える
+    ops._psd_option_items = [("!目/*ジト目", "ジト目", "")]
+    s.active_character = len(s.characters) - 1
+    run(bpy.ops.tachie.psd_choose, group="!目", option="!目/*ジト目")
+    run(bpy.ops.tachie.psd_toggle, path="記号など/汗1")
+    layers = ops.item_layers(pch)
+    assert layers["!目/*ジト目"] is True and layers["記号など/汗1"] is True
+    run(bpy.ops.tachie.expression_add)
+    preset = pch.expressions[-1]
+    ops._psd_option_items = [("!口/*お", "お", "")]
+    run(bpy.ops.tachie.psd_choose, group="!口", preset=preset.name, option="!口/*お")
+    assert ops.expression_of(pch, preset.name).layers["!口/*お"] is True
+    s.expression, s.text = "", "PSD の立ち絵なのだ。"
+    scene.frame_current = scene.frame_end + 10
+    run(bpy.ops.tachie.add_line)
+    cid = list(lines())[-1]
+    img = image_of(cid)
+    assert img.channel == pch.channel
+    inodes = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
+    assert len(inodes) >= 3, inodes  # 口パク（3 段）とまばたき
+    # 書き出して読み直してもレイヤーの上書きが残る
+    exported2 = out / "exported_psd.toml"
+    run(bpy.ops.tachie.export_characters, filepath=str(exported2))
+    again2 = load_characters(exported2)
+    assert again2["ずんだもんPSD"].expression.layers["!目/*ジト目"] is True
 print("OK")

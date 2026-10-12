@@ -15,7 +15,7 @@ from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, SLOT_CATEGORIES, V
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
 from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
 from .tachie_studio.pipeline.script import split_kana
-from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
+from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
                                             parse_characters)
 from .tachie_studio.tachie import PRESET_FILE, Expression, load_character, load_presets
@@ -102,7 +102,23 @@ def _parts_dict(item) -> dict:
             values.pop()
         if values:
             parts[category] = values if category in SLOT_CATEGORIES else values[0]
+    layers = item_layers(item)
+    if layers:
+        parts[LAYERS_KEY] = layers
     return parts
+
+
+def item_layers(item) -> dict:
+    """キャラクターか表情プリセットの PSD のレイヤーの上書き {パス: 表示するか}。"""
+    try:
+        value = json.loads(item.psd_layers) if item.psd_layers else {}
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def set_item_layers(item, layers: dict) -> None:
+    item.psd_layers = json.dumps(layers, ensure_ascii=False) if layers else ""
 
 
 def find_expression(ch, preset: str):
@@ -172,11 +188,15 @@ def apply_config(ch, config: CharacterConfig) -> None:
     for category, values in (("他", e.others), ("後", e.backs)):
         for i, prop in enumerate(PART_PROPS[category]):
             setattr(ch, prop, values[i] if i < len(values) else "")
+    set_item_layers(ch, e.layers)
     ch.expressions.clear()
     for preset, parts in config.expressions.items():
         item = ch.expressions.add()
         item.name = preset
         for category, value in parts.items():
+            if category == LAYERS_KEY:
+                set_item_layers(item, dict(value))
+                continue
             values = [value] if isinstance(value, str) else list(value)
             for prop, v in zip(PART_PROPS[category], values):
                 setattr(item, prop, v)
@@ -230,7 +250,10 @@ def _defaults_texts() -> dict:
 def material_key(folder: str) -> str:
     import unicodedata
 
-    return unicodedata.normalize("NFC", os.path.basename(os.path.normpath(bpy.path.abspath(folder))))
+    name = os.path.basename(os.path.normpath(bpy.path.abspath(folder)))
+    if name.lower().endswith(".psd"):
+        name = name[:-4]
+    return unicodedata.normalize("NFC", name)
 
 
 def _free_channel(settings, ch, wanted: int | None = None) -> int:
@@ -240,6 +263,15 @@ def _free_channel(settings, ch, wanted: int | None = None) -> int:
     if wanted is not None and wanted not in used:
         return wanted
     return next(c for c in range(min(used | {wanted or 3, 3}), 129) if c not in used)
+
+
+def psd_default_mouth(ch, character) -> None:
+    """PSD の表示状態の口が口パクの組に入っていなければ、最初の組の閉じた口を基本の表情にする。"""
+    from .tachie_studio.tachie.compose import psd_part
+
+    mouths = character.animations.get("mouth") or []
+    if mouths and psd_part(character, Expression(), "mouth") is None:
+        set_item_layers(ch, {mouths[0][-1].path(): True})
 
 
 def find_character(settings, name: str):
@@ -273,9 +305,7 @@ def line_strips(sed, clip_id: str) -> list:
 def character_cache(context, ch, preset: str | None = None) -> FrameCache:
     """キャラクターの表情・大きさでの「目 × 口」合成キャッシュ。"""
     character = load_material(ch.folder)
-    base = character.default("体") or next(p for parts in character.parts.values() for p in parts.values())
-    _, image_h = load_image(base.path).size
-    scale = seq_scene(context).render.resolution_y * ch.height / image_h
+    scale = seq_scene(context).render.resolution_y * ch.height / character.height
     return _cache(character, expression_of(ch, preset), output_dir(context) / "cache", scale)
 
 
@@ -1769,13 +1799,15 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
 
 
 class TACHIE_OT_character_add(bpy.types.Operator):
-    """動く立ち絵の素材フォルダを選んでキャラクターを追加する"""
+    """立ち絵の素材フォルダ（動く立ち絵・シンプル立ち絵）か PSD ファイルを選んでキャラクターを追加する"""
 
     bl_idname = "tachie.character_add"
     bl_label = "キャラクターを追加"
     bl_options = {"REGISTER", "UNDO"}
 
     directory: bpy.props.StringProperty(subtype="DIR_PATH")
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    filter_glob: bpy.props.StringProperty(default="*.psd", options={"HIDDEN"})
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
@@ -1783,15 +1815,17 @@ class TACHIE_OT_character_add(bpy.types.Operator):
 
     def execute(self, context):
         settings = seq_scene(context).tachie
+        # PSD を選んだらそのファイル、フォルダを選んだら（ファイル名が空）フォルダ
+        source = self.filepath if self.filepath.lower().endswith(".psd") else self.directory
         try:
-            character = load_material(self.directory)
-            key = material_key(self.directory)
+            character = load_material(source)
+            key = material_key(source)
             material = load_material_defaults(character.path)
             saved = load_character_defaults().get(key, {})
             # 優先: アドオン設定 → 素材の tachie.toml → 素材の preset.ini → 固定値
             table = merge_tables({"speaker": 3}, material, saved)
             name = str(table.pop("name", "") or key)
-            config = parse_characters({name: {**table, "folder": self.directory}}, Path("."), use_material=False)[name]
+            config = parse_characters({name: {**table, "folder": source}}, Path("."), use_material=False)[name]
         except (*ERRORS, OSError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -1802,7 +1836,9 @@ class TACHIE_OT_character_add(bpy.types.Operator):
             settings.characters.remove(len(settings.characters) - 1)
             self.report({"ERROR"}, f"初期値を当てはめられません: {e}")
             return {"CANCELLED"}
-        ch.folder = self.directory
+        ch.folder = source
+        if character.is_psd and not item_layers(ch):
+            psd_default_mouth(ch, character)
         n = len(settings.characters)
         # 立ち位置が決まっていなければ、2 人目以降は左右を入れ替える
         if "position" not in config.layout and n > 1:
@@ -1854,6 +1890,9 @@ class TACHIE_OT_save_defaults(bpy.types.Operator):
                 where = "アドオン設定"
             else:
                 folder = Path(bpy.path.abspath(ch.folder))
+                if not folder.is_dir():  # PSD 立ち絵（folder が PSD ファイル）は素材の tachie.toml を読まない
+                    self.report({"ERROR"}, "PSD 立ち絵の初期値はアドオン設定に保存してください")
+                    return {"CANCELLED"}
                 path = folder / MATERIAL_CONFIG
                 try:
                     path.write_text(dump_table(config, name=name), encoding="utf-8")
@@ -1992,6 +2031,100 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         ch = seq_scene(context).tachie.character()
         target = find_expression(ch, self.preset) if self.preset else ch
         setattr(target, self.prop, "" if self.part == NONE else self.part)
+        return {"FINISHED"}
+
+
+# ---- PSD 立ち絵の表情（表示するレイヤー） ----
+
+_psd_option_items = []
+
+
+def _psd_options(self, context):
+    return _psd_option_items
+
+
+def _psd_target(context, preset: str):
+    ch = seq_scene(context).tachie.character()
+    return ch, (find_expression(ch, preset) if preset else ch)
+
+
+def psd_layer_state(ch, preset: str = ""):
+    """(PsdDocument, 基本の表情の表示状態, この表情（プリセットなら重ねたもの）の表示状態)。"""
+    from .tachie_studio.tachie.psd import apply_layers
+
+    doc = load_material(ch.folder).psd
+    base = item_layers(ch)
+    layers = {**base, **(item_layers(find_expression(ch, preset)) if preset else {})}
+    return doc, apply_layers(doc, base), apply_layers(doc, layers)
+
+
+class TACHIE_OT_psd_choose(bpy.types.Operator):
+    """PSD の * のフォルダから表示するものを 1 つ選ぶ"""
+
+    bl_idname = "tachie.psd_choose"
+    bl_label = "レイヤーを選ぶ"
+    bl_property = "option"
+    bl_options = {"UNDO"}
+
+    group: bpy.props.StringProperty(description="* の選択肢を持つフォルダのパス")
+    preset: bpy.props.StringProperty(description="空ならキャラクターの基本の表情、指定するとその表情プリセット")
+    option: bpy.props.EnumProperty(items=_psd_options)
+
+    def invoke(self, context, event):
+        global _psd_option_items
+        try:
+            ch, _ = _psd_target(context, self.preset)
+            doc = load_material(ch.folder).psd
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        group = doc.nodes().get(self.group)
+        if group is None:
+            return {"CANCELLED"}
+        empty = [(NONE, "（基本の表情のまま）", "")] if self.preset else []
+        _psd_option_items = empty + [(c.path(), c.label, "") for c in group.children if c.radio]
+        context.window_manager.invoke_search_popup(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        ch, target = _psd_target(context, self.preset)
+        doc = load_material(ch.folder).psd
+        group = doc.nodes().get(self.group)
+        layers = item_layers(target)
+        for c in group.children if group else []:
+            if c.radio:
+                layers.pop(c.path(), None)
+        if self.option != NONE:
+            layers[self.option] = True
+        set_item_layers(target, layers)
+        return {"FINISHED"}
+
+
+class TACHIE_OT_psd_toggle(bpy.types.Operator):
+    """PSD のレイヤー（フォルダ）の表示・非表示を切り替える。プリセットでは「基本のまま」にも戻せる"""
+
+    bl_idname = "tachie.psd_toggle"
+    bl_label = "表示を切り替える"
+    bl_options = {"UNDO"}
+
+    path: bpy.props.StringProperty()
+    preset: bpy.props.StringProperty()
+    mode: bpy.props.EnumProperty(items=[("TOGGLE", "切り替え", ""), ("RESET", "基本のまま", "")])
+
+    def execute(self, context):
+        from .tachie_studio.tachie.psd import is_on
+
+        ch, target = _psd_target(context, self.preset)
+        layers = item_layers(target)
+        if self.mode == "RESET":
+            layers.pop(self.path, None)
+        else:
+            doc, _, state = psd_layer_state(ch, self.preset)
+            node = doc.nodes().get(self.path)
+            if node is None:
+                return {"CANCELLED"}
+            layers[self.path] = not is_on(node, state)
+        set_item_layers(target, layers)
         return {"FINISHED"}
 
 
@@ -2372,6 +2505,8 @@ _classes = (
     TACHIE_OT_character_remove,
     TACHIE_OT_pick_speaker,
     TACHIE_OT_pick_part,
+    TACHIE_OT_psd_choose,
+    TACHIE_OT_psd_toggle,
     TACHIE_OT_pick_font,
     TACHIE_OT_reload_character,
     TACHIE_OT_import_characters,

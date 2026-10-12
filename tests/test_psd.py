@@ -156,3 +156,183 @@ def test_real_psd(name: str):
     for e in eyes:
         assert f"EyeAnimations: {e}" in lines
     assert not warnings, warnings
+
+
+def _pixel_record(name, section=0, hidden=False, rect=(0, 0, 0, 0), channels=()):
+    raw = name.encode("cp932")
+    pascal = bytes([len(raw)]) + raw
+    pascal += b"\0" * (-len(pascal) % 4)
+    extra = b"\0\0\0\0" + b"\0\0\0\0" + pascal
+    luni = struct.pack(">I", len(name)) + name.encode("utf-16-be")
+    extra += b"8BIM" + b"luni" + struct.pack(">I", len(luni)) + luni
+    if section:
+        extra += b"8BIM" + b"lsct" + struct.pack(">I", 4) + struct.pack(">I", section)
+    left, top, right, bottom = rect
+    rec = struct.pack(">iiii", top, left, bottom, right) + struct.pack(">H", len(channels))
+    for cid, data in channels:
+        rec += struct.pack(">hI", cid, len(data))
+    rec += b"8BIM" + b"norm" + bytes([255, 0, 2 if hidden else 0, 0])
+    return rec + struct.pack(">I", len(extra)) + extra
+
+
+def make_pixel_psd(path: Path, layers: list, size=(4, 4)) -> None:
+    """`layers` は上から: ("名前", (r, g, b), hidden, x) のレイヤー（x 列目だけ塗る）か ("名前", [子…], hidden) のフォルダ。"""
+    w, h = size
+    records, datas = [], []
+
+    def add(items):
+        for name, body, hidden, *col in reversed(items):
+            if isinstance(body, list):
+                records.append(_pixel_record("</Layer group>", 3))
+                datas.append(b"")
+                add(body)
+                records.append(_pixel_record(name, 1, hidden))
+                datas.append(b"")
+            else:
+                x = col[0] if col else 0
+                chans = [(cid, b"\0\0" + bytes([v]) * h) for cid, v in zip((0, 1, 2, -1), (*body, 255))]
+                records.append(_pixel_record(name, 0, hidden, (x, 0, x + 1, h), chans))
+                datas.append(b"".join(d for _, d in chans))
+
+    add(layers)
+    layer_info = struct.pack(">h", len(records)) + b"".join(records) + b"".join(datas)
+    layer_info += b"\0" * (len(layer_info) % 2)
+    lm = struct.pack(">I", len(layer_info)) + layer_info + struct.pack(">I", 0)
+    header = b"8BPS" + struct.pack(">H", 1) + b"\0" * 6 + struct.pack(">HIIHH", 3, h, w, 8, 3)
+    body = struct.pack(">I", 0) + struct.pack(">I", 0) + struct.pack(">I", len(lm)) + lm
+    path.write_bytes(header + body + struct.pack(">H", 0))
+
+
+@pytest.fixture
+def psd_char(tmp_path: Path) -> Path:
+    psd = tmp_path / "テスト.psd"
+    make_pixel_psd(psd, [
+        ("!口", [("*開", (200, 0, 0), False, 0), ("*閉", (100, 0, 0), True, 0), ("*笑", (150, 0, 0), True, 0)], False),
+        ("!目", [("*目", (0, 200, 0), False, 1), ("*閉じ目", (0, 100, 0), True, 1)], False),
+        ("汗", (0, 0, 99), True, 2),
+        ("体", (1, 1, 1), False, 3),
+    ])
+    doc = read_psd(psd)
+    # 口パク: 開 → 閉、まばたき: 目 → 閉じ目
+    (tmp_path / "テスト-ymm.json").write_text(json.dumps({"Presets": [], "MouthAnimations": [
+        {"Layers": [f"n{doc.find('口/開').index}", f"n{doc.find('口/閉').index}"]}],
+        "EyeAnimations": [{"Layers": [f"n{doc.find('目/目').index}", f"n{doc.find('目/閉じ目').index}"]}]}),
+        encoding="utf-8-sig")
+    return psd
+
+
+def test_psd_render_and_layers(psd_char: Path):
+    from tachie_studio.tachie.psd import apply_layers, is_shown, radio_groups, toggles
+
+    doc = read_psd(psd_char)
+    im = doc.render()
+    assert [im.getpixel((x, 0)) for x in range(4)] == [(200, 0, 0, 255), (0, 200, 0, 255), (0, 0, 0, 0),
+                                                       (1, 1, 1, 255)]  # 口=開、目、汗は非表示、体
+    state = apply_layers(doc, {"!口/*笑": True, "汗": True})
+    assert is_shown(doc.find("口/笑"), state) and not is_shown(doc.find("口/開"), state)
+    im = doc.render(state)
+    assert im.getpixel((0, 0))[0] == 150 and im.getpixel((2, 0)) == (0, 0, 99, 255)
+    # * を全部消すと何も出ない、! は消せない
+    assert doc.render({"!口/*開": False}).getpixel((0, 0))[3] == 0
+    assert doc.render({"!目": False}).getpixel((1, 0))[1] == 200
+    assert [g.label for g in radio_groups(doc)] == ["口", "目"]
+    assert [t.label for t in toggles(doc)] == ["汗", "体"]
+
+
+def test_psd_character_lipsync(psd_char: Path, tmp_path: Path):
+    from tachie_studio.tachie import Expression, compose
+    from tachie_studio.pipeline.render import _eye_part, _mouth_part, resolve_mouth_mode
+
+    c = load_character(psd_char)
+    assert c.is_psd and c.name == "テスト" and c.height == 4
+    assert len(c.animations["mouth"]) == 1 and len(c.animations["eye"]) == 1
+    mouth = _mouth_part(c, Expression())
+    assert len(mouth.levels) == 2 and resolve_mouth_mode("auto", mouth) == "volume"
+    assert len(_eye_part(c, Expression()).frames) == 2
+    assert compose(c, Expression(mouth_frame=0)).getpixel((0, 0))[0] == 100  # 閉
+    assert compose(c, Expression(mouth_frame=1)).getpixel((0, 0))[0] == 200  # 開
+    assert compose(c, Expression(mouth_frame=-1)).getpixel((0, 0))[0] == 200
+    assert compose(c, Expression(eye_frame=0)).getpixel((1, 0))[1] == 100  # 閉じ目
+    assert compose(c, Expression()).getpixel((1, 0))[1] == 200
+    # 口パクの無い口（笑）では口は動かない
+    assert _mouth_part(c, Expression(layers={"!口/*笑": True})) is None
+
+
+def test_psd_layers_in_config(psd_char: Path, tmp_path: Path):
+    import tomllib
+
+    from tachie_studio.pipeline.config import dump_characters, parse_characters
+
+    cfg = parse_characters({"p": {"folder": str(psd_char), "speaker": 1, "parts": {"レイヤー": {"汗": True}},
+                                  "expressions": {"笑う": {"レイヤー": {"!口/*笑": True}}}}}, tmp_path)["p"]
+    assert cfg.expression.layers == {"汗": True}
+    assert cfg.expression_for("笑う").layers == {"汗": True, "!口/*笑": True}
+    again = parse_characters(tomllib.loads(dump_characters({"p": cfg})), tmp_path)["p"]
+    assert again.expression == cfg.expression and again.expressions == cfg.expressions
+
+
+def test_psd_render_line(psd_char: Path, tmp_path: Path):
+    from test_pipeline import FakeClient
+
+    from tachie_studio.pipeline.config import parse_characters
+    from tachie_studio.pipeline.render import FrameCache, render_line
+    from tachie_studio.pipeline.script import Line
+
+    cfg = parse_characters({"p": {"folder": str(psd_char), "speaker": 1}}, tmp_path)["p"]
+    c = load_character(psd_char)
+    cache = FrameCache(c, cfg.expression, tmp_path / "cache", 1.0)
+    clip = render_line(FakeClient(), cfg, c, Line(1, "p", "あ"), tmp_path / "o", fps=10, cache=cache, stem="x")
+    reds = [Image.open(p).getpixel((0, 0))[0] for p in sorted((tmp_path / "o" / "x").iterdir())]
+    assert len(reds) == clip.frames and reds[0] == 100 and reds[-1] == 100 and 200 in reds  # 無音は閉、声で開
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED))
+def test_real_psd_lipsync(name: str):
+    psds = sorted((CHAR / name).glob("*.psd")) if (CHAR / name).is_dir() else []
+    if not psds or not (psds[0].with_name(psds[0].stem + "-ymm.json")).is_file():
+        pytest.skip("char/ に PSD と -ymm.json がない")
+    from tachie_studio.tachie import Expression, compose
+
+    c = load_character(psds[0])
+    assert c.animations["mouth"] and c.animations["eye"]
+    closed = compose(c, Expression(mouth_frame=0, eye_frame=0))
+    opened = compose(c, Expression(mouth_frame=-1))
+    assert closed.size == (c.psd.width, c.psd.height) and closed.tobytes() != opened.tobytes()
+
+
+def test_root_radio(tmp_path: Path):
+    from tachie_studio.tachie.psd import apply_layers, is_shown, radio_groups
+
+    psd = tmp_path / "r.psd"
+    make_pixel_psd(psd, [("*服1", [("右腕", (10, 0, 0), False, 0)], False),
+                         ("*服2", [("右腕", (20, 0, 0), False, 0)], True)])
+    doc = read_psd(psd)
+    groups = radio_groups(doc)
+    assert groups[0] is doc.root and doc.nodes()[""] is doc.root
+    assert doc.render().getpixel((0, 0))[0] == 10
+    state = apply_layers(doc, {"*服2": True})
+    assert doc.render(state).getpixel((0, 0))[0] == 20 and not is_shown(doc.find("服1/右腕"), state)
+
+
+def test_psd_lipsync_plain_layers(tmp_path: Path):
+    """`*` でないレイヤーの口パクでは、選ばない段のレイヤーを消す。"""
+    from tachie_studio.tachie import Expression, compose
+
+    psd = tmp_path / "p.psd"
+    make_pixel_psd(psd, [("口", [("開", (200, 0, 0), False, 0), ("閉", (100, 0, 0), True, 0)], False)])
+    doc = read_psd(psd)
+    (tmp_path / "p-ymm.json").write_text(json.dumps({"MouthAnimations": [
+        {"Layers": [f"n{doc.find('口/開').index}", f"n{doc.find('口/閉').index}"]}]}), encoding="utf-8-sig")
+    c = load_character(psd)
+    assert compose(c, Expression(mouth_frame=0)).getpixel((0, 0))[0] == 100  # 開は消える
+    assert compose(c, Expression(mouth_frame=1)).getpixel((0, 0))[0] == 200
+
+
+def test_psd_unsupported_depth(tmp_path: Path):
+    psd = tmp_path / "d.psd"
+    make_pixel_psd(psd, [("体", (1, 1, 1), False)])
+    data = bytearray(psd.read_bytes())
+    data[22:24] = struct.pack(">H", 16)
+    psd.write_bytes(bytes(data))
+    with pytest.raises(ValueError, match="8bit"):
+        load_character(psd)

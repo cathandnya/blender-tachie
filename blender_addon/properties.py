@@ -137,7 +137,10 @@ def _add_part_props(cls, empty_description: str, slot_description: str):
 class TachieExpression(bpy.types.PropertyGroup):
     """表情プリセット。空のパーツは基本の表情のまま。"""
     # name は PropertyGroup が持っている
-    __annotations__ = {}
+    __annotations__ = {
+        # PSD 立ち絵: 基本の表情から変えるレイヤーの表示 {パス: 表示するか}（JSON）
+        "psd_layers": StringProperty(name="レイヤー", default=""),
+    }
 
 
 _add_part_props(TachieExpression, "空なら基本の表情のまま",
@@ -215,6 +218,8 @@ class TachieCharacter(bpy.types.PropertyGroup):
     mouth: EnumProperty(name="口パク", items=MOUTH_ITEMS, default="auto")
 
     expressions: CollectionProperty(type=TachieExpression)
+    psd_layers: StringProperty(name="レイヤー", default="",
+                               description="PSD 立ち絵: PSD の表示状態から変えるレイヤー {パス: 表示するか}（JSON）")
     active_expression: IntProperty(default=0)
 
     position_x: FloatProperty(name="立ち位置", default=0.3, min=-1.0, max=1.0, update=_update_placement,

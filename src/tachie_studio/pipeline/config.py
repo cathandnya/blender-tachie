@@ -76,6 +76,7 @@ VOICE_DEFAULTS = {
 }
 
 # 素材のフォルダ名 → Expression のフィールド
+LAYERS_KEY = "レイヤー"  # PSD 立ち絵の表情（表示するレイヤーの上書き）
 PART_KEYS = {
     "眉": "eyebrow",
     "目": "eye",
@@ -115,6 +116,8 @@ class CharacterConfig:
         if preset not in self.expressions:
             raise ValueError(f"{self.name} に表情 {preset!r} がありません")
         kwargs = _expression(self.expressions[preset], f"{self.name}.expressions.{preset}", as_kwargs=True)
+        if "layers" in kwargs:  # PSD 立ち絵: 基本の表情の上書きにプリセットの上書きを重ねる
+            kwargs["layers"] = {**self.expression.layers, **kwargs["layers"]}
         for attr in ("others", "backs"):
             if attr in kwargs:
                 kwargs[attr] = merge_slots(getattr(self.expression, attr), kwargs[attr])
@@ -140,6 +143,11 @@ def _trim(slots: list[str]) -> list[str]:
 def _expression(parts: dict[str, Any], name: str, as_kwargs: bool = False) -> Expression | dict[str, Any]:
     kwargs: dict[str, Any] = {}
     for key, value in parts.items():
+        if key == LAYERS_KEY:  # PSD 立ち絵: 表示するレイヤーの上書き {パス: 表示するか}
+            if not isinstance(value, dict):
+                raise ValueError(f"[{name}.parts] の {LAYERS_KEY} は {{ \"パス\" = true }} の形で書いてください")
+            kwargs["layers"] = {str(k): bool(v) for k, v in value.items()}
+            continue
         if key not in PART_KEYS:
             raise ValueError(f"[{name}.parts] の {key!r} は不明です（{'・'.join(PART_KEYS)} のどれか）")
         attr = PART_KEYS[key]
@@ -236,6 +244,8 @@ def _toml_value(value: Any) -> str:
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
     if isinstance(value, (list, tuple)):
         return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, dict):  # インラインテーブル
+        return "{ " + ", ".join(f"{_toml_key(str(k))} = {_toml_value(v)}" for k, v in value.items()) + " }"
     raise TypeError(f"TOML に書けない値です: {value!r}")
 
 
@@ -260,6 +270,8 @@ def _dump_table(c: CharacterConfig, key: str | None, folder: str | None, name: s
     # 空のパーツも書く（素材の tachie.toml の値で補われないように）
     parts = {k: getattr(c.expression, attr) or ([] if attr in ("others", "backs") else "")
              for k, attr in PART_KEYS.items()}
+    if c.expression.layers:
+        parts[LAYERS_KEY] = c.expression.layers
     sections = [("parts", parts)]
     sections += [(f"expressions.{_toml_key(p)}", v) for p, v in c.expressions.items()]
     sections += [("layout", c.layout), ("subtitle", c.subtitle), ("audio", c.audio)]

@@ -39,6 +39,7 @@ class Expression:
     body: str | None = None
     others: list[str] = field(default_factory=list)
     backs: list[str] = field(default_factory=list)
+    layers: dict[str, bool] = field(default_factory=dict)  # PSD 立ち絵: 表示するレイヤーの上書き {パス: 表示するか}
     eye_frame: int | None = None
     mouth_frame: int | None = None
     mouth_vowel: str | None = None
@@ -183,4 +184,43 @@ def render_layers(layers: list[Layer]) -> Image.Image:
 
 
 def compose(character: Character, expr: Expression | None = None) -> Image.Image:
-    return render_layers(build_layers(character, expr or Expression()))
+    expr = expr or Expression()
+    if character.is_psd:
+        return character.psd.render(psd_state(character, expr))
+    return render_layers(build_layers(character, expr))
+
+
+def psd_state(character: Character, expr: Expression) -> dict[str, bool]:
+    """PSD 立ち絵の表示状態: 表情の上書きに、口パク・まばたきの段階（mouth_frame / eye_frame）を当てる。"""
+    from .psd import active_animation, apply_layers, choose
+
+    state = apply_layers(character.psd, expr.layers)
+    for key, frame, vowel in (("mouth", expr.mouth_frame, expr.mouth_vowel), ("eye", expr.eye_frame, None)):
+        anim = active_animation(character.animations.get(key, []), state)
+        if anim is None or (frame is None and vowel is None):
+            continue
+        frames = list(reversed(anim))  # 閉じ → 開き（Part.frames と同じ並び）
+        target = frames[-1] if frame is None else frames[max(-len(frames), min(frame, len(frames) - 1))]
+        for node in anim:  # `*` でない段のレイヤーは choose で消えないので、選ばない段を消しておく
+            if node is not target:
+                state[node.path()] = False
+        choose(state, target)
+    return state
+
+
+class PsdPart(Part):
+    """PSD 立ち絵の口パク・まばたきを、動く立ち絵の連番のパーツと同じ形で表す（frames は段階の数だけ使う）。"""
+
+    @property
+    def levels(self) -> list[Path]:
+        return self.frames
+
+
+def psd_part(character: Character, expr: Expression, key: str) -> Part | None:
+    from .psd import active_animation, apply_layers
+
+    anim = active_animation(character.animations.get(key, []), apply_layers(character.psd, expr.layers))
+    if anim is None:
+        return None
+    frames = [Path(f"n{n.index}") for n in reversed(anim)]
+    return PsdPart(category="口" if key == "mouth" else "目", name=anim[0].label, path=character.path, frames=frames)
