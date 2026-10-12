@@ -141,6 +141,14 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `uv run python -m tachie_studio.pipeline examples/script.txt -c examples/characters.toml -o out/demo --scale 0.5 --idle 5`
 - `uv run python scripts/build_addon.py [--install]` — 拡張機能のビルド（とインストール）
 - `scripts/smoke.sh` — Blender での結合テスト（VOICEVOX と char/ が必要、20 秒ほど）
+- CI（`.github/workflows/ci.yml`、GitHub ホストの ubuntu-latest のみ。セルフホストランナーは使わない。リポジトリは非公開なので Actions の無料枠の分数を使う）:
+  - test: `uv sync --locked` → `uv run pytest`（PR・リリースのタグ・手動。main への push では回さない＝PR で回す運用）。素材と VOICEVOX が無いので、それを使うテストは skip。
+    結合テスト（smoke.sh）は CI では回さない（手元で回す）
+  - build / release: `v*` のタグを push したときだけ。Linux 版 Blender（`BLENDER_VERSION`、actions/cache）で `build_addon.py` →
+    OS ごとの zip で GitHub のリリースを作る（既にあれば zip を差し替える）。タグは `blender_manifest.toml` の version と同じに
+    （違えば build で止める）。手順: manifest（と pyproject.toml）の version を上げてコミット → `git tag v0.2.0` → `git push origin v0.2.0`
+  - `astral-sh/setup-uv` はメジャーバージョンのタグが無いので完全なバージョンで指定する。Linux 版 Blender は画面なしでも
+    libX11 などが要る（apt で入れる）
 
 ## 環境
 - Blender 5.2.2 LTS（`brew install --cask blender`、`/opt/homebrew/bin/blender`）。同梱 Python 3.13.13、numpy 2.3 あり、Pillow なし。

@@ -129,6 +129,9 @@ uv run python -m tachie_studio.tachie.psd_animation <動く立ち絵の素材フ
 
 ## インストール
 
+GitHub のリリースから、使う OS 用の zip（`blender_tachie-<version>-<OS>.zip`）を取ってきて、Blender の
+「Install from Disk」で入れます。手元でビルドするときは:
+
 ```
 uv run python scripts/build_addon.py --install
 ```
