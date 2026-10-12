@@ -102,6 +102,13 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             name = owner.speaker_name if owner and owner.speaker == speaker and owner.speaker_name else f"ID {speaker}"
             row.operator("tachie.pick_speaker", text=name, icon="VIEWZOOM").target = "LINE"
             layout.prop(strip, '["tachie_text"]', text="")
+            if sound is not None and "tachie_kana" in sound:
+                split = layout.split(factor=0.18, align=True)
+                split.label(text="発音")
+                row = split.row(align=True)
+                row.prop(sound, '["tachie_kana"]', text="")
+                row.operator("tachie.preview_line", text="", icon="PLAY")
+                row.operator("tachie.reset_kana", text="", icon="FILE_REFRESH")
             row = layout.row(align=True)
             row.label(text="表情")
             row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "LINE"
@@ -119,6 +126,35 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("tachie.regenerate_all", text="全セリフを再生成").character_only = False
         row.operator("tachie.regenerate_all", text="このキャラだけ").character_only = True
+
+
+class TACHIE_PT_dictionary(_Panel, bpy.types.Panel):
+    bl_label = "ユーザー辞書"
+    bl_parent_id = "TACHIE_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        from . import operators
+
+        layout = self.layout
+        d = context.window_manager.tachie_dict
+        col = layout.column(align=True)
+        col.prop(d, "surface")
+        col.prop(d, "pronunciation")
+        col.prop(d, "accent_type")
+        layout.operator("tachie.dict_add", icon="ADD")
+        row = layout.row()
+        row.label(text="登録済み" if operators._dict_words is not None else "VOICEVOX エンジンの辞書")
+        row.operator("tachie.dict_refresh", text="", icon="FILE_REFRESH")
+        if operators._dict_words:
+            box = layout.box().column(align=True)
+            for uuid, surface, pronunciation, accent in operators._dict_words:
+                row = box.row(align=True)
+                row.label(text=f"{surface}  {pronunciation}（{accent}）")
+                row.operator("tachie.dict_remove", text="", icon="X").uuid = uuid
+        elif operators._dict_words is not None:
+            layout.label(text="登録された単語はありません")
+        layout.label(text="置いてあるセリフには再生成で反映", icon="INFO")
 
 
 class TACHIE_PT_character(_Panel, bpy.types.Panel):
@@ -212,6 +248,7 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
         layout = self.layout
         s = seq_scene(context).tachie
         layout.label(text="1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」")
+        layout.label(text="発音はセリフの最後に {キョ'ウワ/イ'イ/テ'ンキ}")
         layout.prop(s, "line_gap")
         row = layout.row(align=True)
         row.prop(s, "script", text="")
@@ -282,6 +319,7 @@ _classes = (
     TACHIE_PT_main,
     TACHIE_PT_line,
     TACHIE_PT_script,
+    TACHIE_PT_dictionary,
     TACHIE_PT_character,
     TACHIE_PT_voice,
     TACHIE_PT_expression,

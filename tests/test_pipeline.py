@@ -289,3 +289,39 @@ def test_render_line_voice_override(tmp_path: Path, char_dir: Path):
     assert queries[-1][0]["speedScale"] == 2.0 and queries[-1][0]["pauseLengthScale"] == 0.5
     assert clip2.frames < clip.frames
     assert "pause = 0.5" in dump_table(cfg)
+
+
+def test_split_kana():
+    from tachie_studio.pipeline.script import split_kana
+
+    assert split_kana("今日はいい天気{キョ'ウワ/イ'イ/テ'ンキ}") == ("今日はいい天気", "キョ'ウワ/イ'イ/テ'ンキ")
+    assert split_kana("天気 ｛テ'ンキ｝ ") == ("天気", "テ'ンキ")
+    assert split_kana("{だけ}") == ("{だけ}", None)  # セリフが無い
+    assert split_kana("空{ }") == ("空{ }", None)
+    assert split_kana("途中{x}です") == ("途中{x}です", None)
+    lines = parse_script("a: 天気{テ'ンキ}\na(困り): 雨")
+    assert (lines[0].text, lines[0].kana) == ("天気", "テ'ンキ") and lines[1].kana is None
+
+
+def test_render_line_kana(tmp_path: Path, char_dir: Path):
+    from tachie_studio.pipeline.render import FrameCache, render_line
+    from tachie_studio.pipeline.script import Line
+
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path)["テスト"]
+    character = load_character(char_dir)
+    client = FakeClient()
+    base_query = client.audio_query
+    client.audio_query = lambda t, s: {**base_query(t, s), "kana": "カ'ム"}
+    asked = []
+
+    def accent_phrases(text, speaker, is_kana=False):
+        asked.append((text, speaker, is_kana))
+        return [{"moras": [{"text": "ム", "consonant": "m", "consonant_length": 0.1, "vowel": "u", "vowel_length": 0.2}],
+                 "accent": 1, "pause_mora": None, "is_interrogative": False}]
+
+    client.accent_phrases = accent_phrases
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    clip = render_line(client, cfg, character, Line(1, "テスト", "かむ"), tmp_path / "o", fps=10, cache=cache)
+    assert not asked and clip.extra["kana"] == clip.extra["kana_auto"] == "カ'ム"
+    clip = render_line(client, cfg, character, Line(2, "テスト", "かむ", kana="ム'"), tmp_path / "o", fps=10, cache=cache)
+    assert asked == [("ム'", 1, True)] and clip.extra["kana"] == "ム'" and clip.extra["kana_auto"] == "カ'ム"

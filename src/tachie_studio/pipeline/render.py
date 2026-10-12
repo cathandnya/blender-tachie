@@ -123,6 +123,10 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     speaker = line.speaker if line.speaker is not None else config.speaker
     query = config.apply_voice(client.audio_query(line.text, speaker))
     query.update(line.voice)
+    kana_auto = query.get("kana", "")
+    if line.kana:
+        query["accent_phrases"] = client.accent_phrases(line.kana, speaker, is_kana=True)
+        query["kana"] = line.kana
     wav_bytes = client.synthesis(query, speaker)
     wav = read_wav(wav_bytes)
     n = frame_count(wav.duration, fps)
@@ -151,7 +155,7 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     wav_path.write_bytes(wav_bytes)
     _link_frames([cache.get(e, m) for e, m in zip(eyes, mouth_states)], out_dir / stem)
 
-    extra = {"mouth_mode": mode}
+    extra = {"mouth_mode": mode, "kana": query.get("kana", ""), "kana_auto": kana_auto}
     if line.expression:
         extra["expression"] = line.expression
     return RenderedClip(kind="line", index=line.index, character=line.character, text=line.text,

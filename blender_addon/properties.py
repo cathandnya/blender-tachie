@@ -263,16 +263,26 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
         return None
 
 
-_classes = (TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings)
+class TachieDictionary(bpy.types.PropertyGroup):
+    """ユーザー辞書に登録する単語の入力欄（保存しない）。"""
+    surface: StringProperty(name="表記", description="セリフに出てくる書き方（例: 立ち絵）")
+    pronunciation: StringProperty(name="読み", description="カタカナ（ひらがなはカタカナにする）")
+    accent_type: IntProperty(name="アクセント", default=0, min=0, max=50,
+                             description="音が下がる直前のモーラの位置。0 は平板（下がらない）")
+
+
+_classes = (TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary)
 
 
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.types.Scene.tachie = PointerProperty(type=TachieSceneSettings)
+    bpy.types.WindowManager.tachie_dict = PointerProperty(type=TachieDictionary)
 
 
 def unregister():
+    del bpy.types.WindowManager.tachie_dict
     del bpy.types.Scene.tachie
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

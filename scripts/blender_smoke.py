@@ -158,6 +158,57 @@ sound(first_id)["tachie_voice_pitch_scale"] = 0.1
 sed.active_strip = sound(first_id)
 run(bpy.ops.tachie.reset_line_voice)
 assert abs(sound(sed.active_strip["tachie_id"])["tachie_voice_pitch_scale"]) < 1e-6
+# 発音: 自動の読みが入り、編集すると再生成でも保たれ、テキストを変えると自動に戻る
+first_id = sed.active_strip["tachie_id"]
+snd = sound(first_id)
+auto = snd["tachie_kana"]
+assert auto and auto == snd["tachie_kana_auto"], auto
+print("発音:", auto)
+head, sep, rest = auto.partition("、")
+head = head.replace("'", "")
+edited = head[0] + "'" + head[1:] + sep + rest  # 最初の句のアクセントを 1 モーラ目に動かす
+assert edited != auto
+snd["tachie_kana"] = edited
+sed.active_strip = snd
+run(bpy.ops.tachie.preview_line)
+run(bpy.ops.tachie.regenerate)
+snd = sound(sed.active_strip["tachie_id"])
+assert snd["tachie_kana"] == edited and snd["tachie_kana_auto"] == auto
+run(bpy.ops.tachie.reset_kana)
+snd = sound(sed.active_strip["tachie_id"])
+assert snd["tachie_kana"] == auto
+snd["tachie_kana"] = "ア'"
+snd["tachie_text"] = "こんにちは、ずんだもんだよ。"
+sed.active_strip = snd
+run(bpy.ops.tachie.regenerate)  # テキストを変えたので編集した発音は使わない
+snd = sound(sed.active_strip["tachie_id"])
+assert snd["tachie_kana"] == snd["tachie_kana_auto"] != "ア'"
+# 読めない発音はエラーで、置いてあるセリフはそのまま
+snd["tachie_kana"] = "abc"
+sed.active_strip = snd
+try:
+    bpy.ops.tachie.regenerate()
+    raise AssertionError("読めない発音で再生成できた")
+except RuntimeError as e:
+    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
+assert sound(sed.active_strip["tachie_id"])["tachie_kana"] == "abc"
+run(bpy.ops.tachie.reset_kana)
+# テキストの最後の {発音} は再生成でも発音として使い、字幕には残さない
+snd = sound(sed.active_strip["tachie_id"])
+inline = snd["tachie_kana_auto"]
+sed.active_strip["tachie_text"] = snd["tachie_text"] + "{" + inline + "}"
+run(bpy.ops.tachie.preview_line)
+run(bpy.ops.tachie.regenerate)
+assert sed.active_strip["tachie_text"] == "こんにちは、ずんだもんだよ。", sed.active_strip["tachie_text"]
+assert sound(sed.active_strip["tachie_id"])["tachie_kana"] == inline
+# ユーザー辞書（試験用の単語を登録して消す）
+wm = bpy.context.window_manager
+wm.tachie_dict.surface, wm.tachie_dict.pronunciation, wm.tachie_dict.accent_type = "立絵試験語", "たちえしけんご", 1
+run(bpy.ops.tachie.dict_add)
+word = next(w for w in ops._dict_words if w[1] == "立絵試験語")
+assert word[2] == "タチエシケンゴ" and word[3] == 1
+run(bpy.ops.tachie.dict_remove, uuid=word[0])
+assert not any(w[1] == "立絵試験語" for w in ops._dict_words)
 check_idle()
 
 # 書き出したキャラ設定を読み直すと同じになる
@@ -183,6 +234,7 @@ dump("台本を流し込み")
 placed = list(lines().values())
 assert len(placed) == 5
 assert [v[2][0].get("tachie_expression") for v in placed] == ["", "", "困り", "おこ", "ドヤ"]
+assert all(next(x for x in v[2] if x.type == "SOUND")["tachie_kana"] for v in placed)
 assert all(b[0] - a[1] == 6 for a, b in zip(placed, placed[1:])), "セリフの間隔が 0.2 秒（6 フレーム）でない"
 
 

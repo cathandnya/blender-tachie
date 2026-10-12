@@ -1,4 +1,4 @@
-"""VOICEVOX エンジンの API（`/speakers`、`/audio_query`、`/synthesis`）を呼ぶ。
+"""VOICEVOX エンジンの API（`/speakers`、`/audio_query`、`/accent_phrases`、`/synthesis`、`/user_dict*`）を呼ぶ。
 
 Blender 同梱 Python でも動くよう、requests は使わず urllib だけで書く。
 """
@@ -39,6 +39,11 @@ class VoicevoxClient:
                 return res.read()
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
+            try:  # {"detail": {"text": "判別できない読み仮名があります: …"}} なら text だけ
+                parsed = json.loads(detail).get("detail")
+                detail = parsed.get("text", detail) if isinstance(parsed, dict) else (parsed or detail)
+            except (ValueError, AttributeError):
+                pass
             raise VoicevoxError(f"{method} {path} が {e.code} を返しました: {detail}") from e
         except urllib.error.URLError as e:
             raise VoicevoxError(f"VOICEVOX エンジンに接続できません（{self.base_url}）: {e.reason}") from e
@@ -60,6 +65,25 @@ class VoicevoxClient:
 
     def audio_query(self, text: str, speaker: int) -> dict[str, Any]:
         return json.loads(self._request("POST", "/audio_query", {"text": text, "speaker": speaker}))
+
+    def accent_phrases(self, text: str, speaker: int, is_kana: bool = False) -> list[dict[str, Any]]:
+        """`is_kana` なら `text` は AquesTalk 風記法（`キョ'ウワ/イ'イ/テ'ンキ`）。"""
+        params = {"text": text, "speaker": speaker, "is_kana": "true" if is_kana else "false"}
+        return json.loads(self._request("POST", "/accent_phrases", params))
+
+    def user_dict(self) -> dict[str, dict[str, Any]]:
+        """{単語の UUID: {surface, pronunciation, accent_type, priority, …}}"""
+        return json.loads(self._request("GET", "/user_dict"))
+
+    def add_user_dict_word(self, surface: str, pronunciation: str, accent_type: int, priority: int | None = None) -> str:
+        """単語を登録して UUID を返す。`pronunciation` はカタカナ、`accent_type` は音が下がる直前のモーラ位置（0 は平板）。"""
+        params: dict[str, Any] = {"surface": surface, "pronunciation": pronunciation, "accent_type": accent_type}
+        if priority is not None:
+            params["priority"] = priority
+        return json.loads(self._request("POST", "/user_dict_word", params))
+
+    def delete_user_dict_word(self, word_uuid: str) -> None:
+        self._request("DELETE", f"/user_dict_word/{urllib.parse.quote(word_uuid)}")
 
     def synthesis(self, query: dict[str, Any], speaker: int) -> bytes:
         """wav のバイト列を返す。"""

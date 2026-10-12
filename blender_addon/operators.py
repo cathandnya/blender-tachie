@@ -10,6 +10,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
+from .tachie_studio.pipeline.script import split_kana
 from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_table, merge_tables, parse_characters)
 from .tachie_studio.tachie import Expression, load_character
@@ -26,6 +27,8 @@ _font_items = []
 _font_paths = {}
 _expression_items = []
 _character_items = []
+_dict_words = None  # ユーザー辞書の一覧 [(uuid, 表記, 読み, アクセント)]。None は未取得
+_preview = None  # 試聴中の aud のハンドル
 
 NONE = "__none__"
 ERRORS = (VoicevoxError, ValueError, FileNotFoundError, KeyError)
@@ -254,10 +257,11 @@ def character_cache(context, ch, preset: str | None = None) -> FrameCache:
 
 
 def render_clip(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
-                voice: dict | None = None):
+                voice: dict | None = None, kana: str | None = None):
     """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。
 
     `speaker`（スタイル）と `voice`（audio_query の値）はセリフごとの値。None ならキャラクターの既定値。
+    `kana` は発音（AquesTalk 風記法）。None や空なら VOICEVOX が自動で付けた読み。
     """
     cache = character_cache(context, ch, preset)
     config = CharacterConfig(name=ch.name, folder=cache.character.path, speaker=ch.speaker,
@@ -265,7 +269,8 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
     clip_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     lines_dir = output_dir(context) / "lines"
     clip = render_line(client(context), config, cache.character, Line(0, ch.name, text, preset or None, speaker,
-                                                                    voice if voice is not None else character_voice(ch)),
+                                                                    voice if voice is not None else character_voice(ch),
+                                                                    kana or None),
                        lines_dir,
                        fps=scene_fps(seq_scene(context)), cache=cache, stem=clip_id)
     return clip, lines_dir
@@ -330,6 +335,9 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         s["tachie_mouth"] = clip.extra.get("mouth_mode", "")
         s["tachie_expression"] = clip.extra.get("expression", "")
     set_line_voice(sound, voice if voice is not None else character_voice(ch))
+    # 発音は音声ストリップに。自動の読みと違えば「編集した発音」として再生成でも使う
+    sound["tachie_kana"] = clip.extra.get("kana", "")
+    sound["tachie_kana_auto"] = clip.extra.get("kana_auto", "")
     return strips
 
 
@@ -343,6 +351,17 @@ def set_line_voice(sound, voice: dict) -> None:
 
 def line_sound(strips):
     return next((s for s in strips if s.type == "SOUND"), None)
+
+
+def line_kana(strips, text: str) -> str | None:
+    """編集した発音（自動の読みのままなら None）。セリフのテキストが変わっていたら使わない（読みが合わなくなる）。"""
+    sound = line_sound(strips)
+    if sound is None:
+        return None
+    kana = (sound.get("tachie_kana") or "").strip()
+    if not kana or kana == sound.get("tachie_kana_auto") or text != sound.get("tachie_placed_text", text):
+        return None
+    return kana
 
 
 def line_voice(strips, ch) -> dict:
@@ -374,11 +393,13 @@ def line_text(strips) -> str:
 
 
 def regenerate(context, clip_id: str, text: str | None = None, preset: str | None = None,
-               speaker: int | None = None, voice: dict | None = None, character: str | None = None) -> list:
+               speaker: int | None = None, voice: dict | None = None, character: str | None = None,
+               kana: str | None = None) -> list:
     """セリフを作り直して同じ位置に置き直す。新しいストリップを返す。
 
     指定しなかった値は置いてあるセリフから取る（声とスタイルは音声ストリップ）。`character` で別のキャラにすると、
     スタイルと声はそのキャラの既定値になり、そのキャラに無い表情プリセットは基本の表情に戻る。
+    `kana` は "" で自動の読みに戻す。
     """
     settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
@@ -386,6 +407,10 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     if not old:
         raise ValueError("セリフのストリップが見つかりません")
     text = text if text is not None else line_text(old)
+    # セリフ入力欄と同じく、テキストの最後の {発音} は発音として使う（字幕と読み上げに括弧を残さない）
+    text, inline_kana = split_kana(text.strip())
+    if inline_kana and kana is None:
+        kana = inline_kana
     preset = preset if preset is not None else old[0].get("tachie_expression", "")
     sound = line_sound(old) or old[0]
     if character is not None and character != old[0]["tachie_character"]:
@@ -398,10 +423,11 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
         ch = find_character(settings, old[0]["tachie_character"])
         speaker = int(sound.get("tachie_speaker", ch.speaker)) if speaker is None else speaker
         voice = line_voice(old, ch) if voice is None else voice
+    kana = line_kana(old, text) if kana is None else kana
     start = min(s.left_handle for s in old)
     old_end = max(s.right_handle for s in old)
 
-    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice)
+    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice, kana)
     delta = start + clip.frames - old_end
     # 消す前に置けるか確かめる（ずらすストリップは邪魔にならない）
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
@@ -529,7 +555,7 @@ class TACHIE_OT_add_line(bpy.types.Operator):
     def execute(self, context):
         settings = seq_scene(context).tachie
         ch = settings.character()
-        text = settings.text.strip()
+        text, kana = split_kana(settings.text.strip())
         if ch is None:
             self.report({"ERROR"}, "キャラクターを追加してください")
             return {"CANCELLED"}
@@ -539,7 +565,7 @@ class TACHIE_OT_add_line(bpy.types.Operator):
         ensure_sequencer_scene(context)
         start = seq_scene(context).frame_current
         try:
-            clip, lines_dir = render_clip(context, ch, text, settings.expression)
+            clip, lines_dir = render_clip(context, ch, text, settings.expression, kana=kana)
             check_free(context, ch, start, clip.frames)
             if seq_scene(context).sequence_editor:
                 remove_idle(seq_scene(context).sequence_editor)
@@ -716,6 +742,126 @@ class TACHIE_OT_reset_line_voice(bpy.types.Operator):
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         return _regenerate_active(self, context, speaker=ch.speaker, voice=character_voice(ch))
+
+
+class TACHIE_OT_reset_kana(bpy.types.Operator):
+    """選択中のセリフの発音を、セリフから自動で付けた読みに戻して作り直す"""
+
+    bl_idname = "tachie.reset_kana"
+    bl_label = "発音を取り直す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def execute(self, context):
+        return _regenerate_active(self, context, kana="")
+
+
+class TACHIE_OT_preview_line(bpy.types.Operator):
+    """選択中のセリフを、今の発音・声で合成して試聴する（置いてあるセリフは変えない）"""
+
+    bl_idname = "tachie.preview_line"
+    bl_label = "試聴"
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def execute(self, context):
+        global _preview
+        import aud
+
+        sed = seq_scene(context).sequence_editor
+        strips = line_strips(sed, active_line_id(context))
+        sound = line_sound(strips)
+        # 再生成と同じテキストと発音（テキストの最後の {発音} > 編集した発音 > 自動の読み）
+        text, kana = split_kana(sed.active_strip["tachie_text"].strip())
+        try:
+            ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
+            speaker = int((sound or strips[0]).get("tachie_speaker", ch.speaker))
+            c = client(context)
+            query = c.audio_query(text, speaker)
+            query.update(line_voice(strips, ch))
+            kana = kana or line_kana(strips, text)
+            if kana:
+                query["accent_phrases"] = c.accent_phrases(kana, speaker, is_kana=True)
+            wav = c.synthesis(query, speaker)
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        path = output_dir(context) / "preview.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if _preview is not None:
+            _preview.stop()
+        path.write_bytes(wav)
+        _preview = aud.Device().play(aud.Sound(str(path)).cache())
+        return {"FINISHED"}
+
+
+def _katakana(text: str) -> str:
+    return "".join(chr(ord(c) + 0x60) if "ぁ" <= c <= "ゖ" else c for c in text)
+
+
+class TACHIE_OT_dict_refresh(bpy.types.Operator):
+    """VOICEVOX エンジンのユーザー辞書を読み込む"""
+
+    bl_idname = "tachie.dict_refresh"
+    bl_label = "ユーザー辞書を読み込む"
+
+    def execute(self, context):
+        global _dict_words
+        try:
+            words = client(context).user_dict()
+        except VoicevoxError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        _dict_words = sorted(((uuid, w["surface"], w["pronunciation"], w["accent_type"]) for uuid, w in words.items()),
+                             key=lambda w: w[2])
+        return {"FINISHED"}
+
+
+class TACHIE_OT_dict_add(bpy.types.Operator):
+    """入力した単語をユーザー辞書に登録する（置いてあるセリフには再生成で反映）"""
+
+    bl_idname = "tachie.dict_add"
+    bl_label = "辞書に登録"
+
+    def execute(self, context):
+        d = context.window_manager.tachie_dict
+        surface, pronunciation = d.surface.strip(), _katakana(d.pronunciation.strip())
+        if not surface or not pronunciation:
+            self.report({"ERROR"}, "表記と読みを入力してください")
+            return {"CANCELLED"}
+        try:
+            client(context).add_user_dict_word(surface, pronunciation, d.accent_type)
+        except VoicevoxError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        d.surface = d.pronunciation = ""
+        d.accent_type = 0
+        bpy.ops.tachie.dict_refresh()
+        self.report({"INFO"}, f"「{surface}」（{pronunciation}）を登録しました。置いてあるセリフは再生成で反映されます")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_dict_remove(bpy.types.Operator):
+    """ユーザー辞書から単語を消す"""
+
+    bl_idname = "tachie.dict_remove"
+    bl_label = "辞書から消す"
+
+    uuid: bpy.props.StringProperty()
+
+    def execute(self, context):
+        try:
+            client(context).delete_user_dict_word(self.uuid)
+        except VoicevoxError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        bpy.ops.tachie.dict_refresh()
+        return {"FINISHED"}
 
 
 class TACHIE_OT_regenerate_all(bpy.types.Operator):
@@ -1148,7 +1294,7 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
         try:
             for line in lines:
                 ch = find_character(settings, line.character)
-                clip, lines_dir = render_clip(context, ch, line.text, line.expression)
+                clip, lines_dir = render_clip(context, ch, line.text, line.expression, kana=line.kana)
                 check_free(context, ch, cursor, clip.frames)
                 strips = place_strips(context, ch, clip, lines_dir, line.text, cursor)
                 connect(context, strips)
@@ -1301,6 +1447,11 @@ _classes = (
     TACHIE_OT_character_add,
     TACHIE_OT_pick_line_character,
     TACHIE_OT_reset_line_voice,
+    TACHIE_OT_reset_kana,
+    TACHIE_OT_preview_line,
+    TACHIE_OT_dict_refresh,
+    TACHIE_OT_dict_add,
+    TACHIE_OT_dict_remove,
     TACHIE_OT_save_defaults,
     TACHIE_OT_remove_defaults,
     TACHIE_OT_character_remove,

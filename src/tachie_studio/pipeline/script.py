@@ -2,6 +2,7 @@
 
 1 行に「キャラ名: セリフ」（全角の「：」も可）。表情プリセットは「キャラ名(表情): セリフ」
 （（）や [] も可）。空行と # で始まる行は無視する。
+セリフの最後に `{キョ'ウワ/イ'イ/テ'ンキ}` と書くと、その発音（AquesTalk 風記法）で読む。
 """
 
 from __future__ import annotations
@@ -20,6 +21,18 @@ class Line:
     expression: str | None = None  # 表情プリセット名
     speaker: int | None = None  # スタイル ID の上書き（None ならキャラクターの話者）
     voice: dict[str, float] = field(default_factory=dict, hash=False)  # audio_query の値の上書き
+    kana: str | None = None  # 発音（AquesTalk 風記法）。None なら VOICEVOX が自動で付けた読み
+
+
+_KANA_RE = re.compile(r"^(?P<text>.*?)\s*[{｛](?P<kana>[^{}｛｝]*)[}｝]\s*$")
+
+
+def split_kana(text: str) -> tuple[str, str | None]:
+    """「セリフ{発音}」をセリフと発音に分ける。発音が無ければ (text, None)。"""
+    m = _KANA_RE.match(text)
+    if not m or not m["kana"].strip() or not m["text"].strip():
+        return text, None
+    return m["text"], m["kana"].strip()
 
 
 def parse_script(text: str, characters=None) -> list[Line]:
@@ -38,5 +51,6 @@ def parse_script(text: str, characters=None) -> list[Line]:
             raise ValueError(f"{lineno} 行目: キャラクター {name!r} が設定にありません")
         if expr and isinstance(characters, dict) and expr not in characters[name].expressions:
             raise ValueError(f"{lineno} 行目: {name} に表情 {expr!r} がありません")
-        lines.append(Line(len(lines) + 1, name, body, expr))
+        body, kana = split_kana(body)
+        lines.append(Line(len(lines) + 1, name, body, expr, kana=kana))
     return lines

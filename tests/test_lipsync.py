@@ -162,3 +162,26 @@ def test_engine_duration_matches_wav(text, speed):
     q["speedScale"] = speed
     wav = read_wav(client.synthesis(q, 3))
     assert query_duration(q) == pytest.approx(wav.duration, abs=0.011)
+
+
+def test_engine_kana():
+    client = _engine()
+    auto = client.audio_query("今日はいい天気", 3)["kana"]
+    phrases = client.accent_phrases(auto, 3, is_kana=True)
+    assert "".join(m["text"] for p in phrases for m in p["moras"]) == "キョオワイイテンキ"  # エンジンの表記（長音はオ）
+    changed = client.accent_phrases("キョ'ウワ/イ'イ/テンキ'", 3, is_kana=True)
+    assert [p["accent"] for p in changed] == [1, 1, 3]
+    with pytest.raises(VoicevoxError, match="判別できない読み仮名"):
+        client.accent_phrases("abc", 3, is_kana=True)
+
+
+def test_engine_user_dict():
+    client = _engine()
+    surface = "立絵試験語"  # 試験用。必ず消す
+    uuid = client.add_user_dict_word(surface, "タチエシケンゴ", 1)
+    try:
+        assert client.user_dict()[uuid]["pronunciation"] == "タチエシケンゴ"
+        assert client.audio_query(surface, 3)["kana"].translate({ord(c): None for c in "'/_"}) == "タチエシケンゴ"  # _ は無声化
+    finally:
+        client.delete_user_dict_word(uuid)
+    assert uuid not in client.user_dict()
