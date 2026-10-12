@@ -17,8 +17,8 @@ from typing import Callable
 from PIL import Image
 
 from ..lipsync import blink_track, frame_count, phonemes_from_query, read_wav, scale_to
-from ..lipsync.wav import apply_fade
-from ..lipsync.mouth import CLOSED, volume_track, vowel_track, vowels_to_levels
+from ..lipsync.mouth import CLOSED, levels_from_rms, vowel_track, vowels_to_levels
+from ..lipsync.wav import apply_fade, frame_rms
 from ..tachie import Character, Expression, Part, compose, load_character
 from ..voicevox import VoicevoxClient
 from .config import CharacterConfig
@@ -102,7 +102,8 @@ def resolve_mouth_mode(mode: str, mouth: Part | None) -> str:
     return mode
 
 
-def _link_frames(paths: list[Path], frames_dir: Path) -> None:
+def link_frames(paths: list[Path], frames_dir: Path) -> None:
+    """連番をハードリンク（できなければコピー）で並べる。フォルダは作り直す。"""
     if frames_dir.exists():
         shutil.rmtree(frames_dir)
     frames_dir.mkdir(parents=True)
@@ -116,6 +117,84 @@ def _link_frames(paths: list[Path], frames_dir: Path) -> None:
 
 def _seed(*parts: object) -> int:
     return int(_slug(json.dumps(parts, ensure_ascii=False, default=str)), 16)
+
+
+@dataclass
+class LineMotion:
+    """セリフのフレームごとの動き（素材によらない値）。表情を変えて連番を並べ直すときに使う。
+
+    `vowels` はあいうえお式の口の形（None は閉じ）、`rms` は音量式用の音量。どちらも音声の長さ
+    （`voice_frames`）分で、その後ろ `frames - voice_frames` は余韻（口を閉じてまばたきだけ）。
+    """
+
+    frames: int
+    voice_frames: int
+    fps: float
+    seed: int
+    mouth: str  # キャラクター設定の口パク（auto / vowel / volume）
+    vowels: list[str | None]
+    rms: list[float]
+
+    def save(self, path: Path) -> None:
+        data = asdict(self)
+        data["rms"] = [round(r, 5) for r in self.rms]
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: Path) -> "LineMotion":
+        return cls(**json.loads(path.read_text(encoding="utf-8")))
+
+
+def mouth_states(motion: LineMotion, character: Character, expr: Expression) -> tuple[str, list[MouthState]]:
+    """表情（の口のパーツ）に合わせた各フレームの口の状態と、使った口パクの方式。"""
+    mouth = _mouth_part(character, expr)
+    mode = resolve_mouth_mode(motion.mouth, mouth)
+    n = motion.voice_frames
+    if mode == "vowel":
+        if mouth.has_vowels:
+            states: list[MouthState] = [("level", 0) if v is CLOSED else ("vowel", v) for v in motion.vowels[:n]]
+        else:
+            states = [("level", lv) for lv in vowels_to_levels(motion.vowels[:n], len(mouth.levels))]
+    elif mode == "volume":
+        states = [("level", lv) for lv in levels_from_rms(motion.rms[:n], len(mouth.levels))]
+    else:
+        states = [("level", len(mouth.frames) - 1 if mouth else 0)] * n
+    after = motion.frames - n
+    states += [states[-1] if mode not in ("vowel", "volume") and states else ("level", 0)] * after
+    return mode, states
+
+
+def eye_frames(motion_frames: int, fps: float, seed: int, character: Character, expr: Expression) -> list[int]:
+    eye = _eye_part(character, expr)
+    return blink_track(motion_frames, fps, len(eye.frames) if eye else 1, seed=seed)
+
+
+def motion_frames(motion: LineMotion, cache: FrameCache) -> list[Path]:
+    """動きを 1 つの表情で連番にする（キャッシュの画像のパス）。"""
+    return segment_frames(motion, [(0, motion.frames, cache)])
+
+
+def segment_frames(motion: LineMotion, segments: list[tuple[int, int, FrameCache]]) -> list[Path]:
+    """フレームの区間ごとに表情を変えて連番にする。`segments` は [(開始, 終わり, キャッシュ)]（セリフの先頭が 0）。
+
+    先頭の要素はセリフ全体の表情として扱い、区間に入らないフレームはそれで描く。後ろの区間ほど優先。
+    口の状態とまばたきはフレームごとに、そのフレームの表情のパーツで決める（音声やタイミングは変わらない）。
+    """
+    base = segments[0][2]
+    owner = [base] * motion.frames
+    for start, end, cache in segments:
+        for i in range(max(0, start), min(motion.frames, end)):
+            owner[i] = cache
+    per_cache: dict[int, tuple[list[MouthState], list[int]]] = {}
+    out = []
+    for i, cache in enumerate(owner):
+        if id(cache) not in per_cache:
+            _, states = mouth_states(motion, cache.character, cache.expression)
+            eyes = eye_frames(motion.frames, motion.fps, motion.seed, cache.character, cache.expression)
+            per_cache[id(cache)] = (states, eyes)
+        states, eyes = per_cache[id(cache)]
+        out.append(cache.get(eyes[i], states[i]))
+    return out
 
 
 def render_line(client: VoicevoxClient, config: CharacterConfig, character: Character, line: Line,
@@ -141,32 +220,19 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     wav = read_wav(wav_bytes)
     n = frame_count(wav.duration, fps)
     after = frame_count(audio["after"], fps) if audio["after"] > 0 else 0
-
-    expr = cache.expression
-    mouth = _mouth_part(character, expr)
-    eye = _eye_part(character, expr)
-    mode = resolve_mouth_mode(config.mouth, mouth)
-
-    if mode == "vowel":
-        vowels = vowel_track(scale_to(phonemes_from_query(query), wav.duration), fps, n)
-        if mouth.has_vowels:
-            mouth_states: list[MouthState] = [("level", 0) if v is CLOSED else ("vowel", v) for v in vowels]
-        else:
-            mouth_states = [("level", lv) for lv in vowels_to_levels(vowels, len(mouth.levels))]
-    elif mode == "volume":
-        mouth_states = [("level", lv) for lv in volume_track(wav, fps, len(mouth.levels), n)]
-    else:
-        mouth_states = [("level", len(mouth.frames) - 1 if mouth else 0)] * n
-    mouth_states += [mouth_states[-1] if mode not in ("vowel", "volume") and mouth_states else ("level", 0)] * after
-    n += after
-
-    eyes = blink_track(n, fps, len(eye.frames) if eye else 1, seed=_seed(line.index, line.character, line.text))
+    motion = LineMotion(
+        frames=n + after, voice_frames=n, fps=fps, seed=_seed(line.index, line.character, line.text),
+        mouth=config.mouth, vowels=vowel_track(scale_to(phonemes_from_query(query), wav.duration), fps, n),
+        rms=frame_rms(wav, fps, n))
+    mode, _ = mouth_states(motion, character, cache.expression)
+    n = motion.frames
 
     stem = stem or f"line{line.index:03d}"
     out_dir.mkdir(parents=True, exist_ok=True)
     wav_path = out_dir / f"{stem}.wav"
     wav_path.write_bytes(wav_bytes)
-    _link_frames([cache.get(e, m) for e, m in zip(eyes, mouth_states)], out_dir / stem)
+    motion.save(out_dir / f"{stem}.json")  # 表情を変えて並べ直すとき用
+    link_frames(motion_frames(motion, cache), out_dir / stem)
 
     extra = {"mouth_mode": mode, "kana": query.get("kana", ""), "kana_auto": kana_auto}
     if use_accent:
@@ -182,9 +248,25 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
 
 def idle_frames(cache: FrameCache, frames: int, fps: float, seed: object = None) -> list[Path]:
     """喋っていない区間の各フレームの画像（まばたきのみ、口は閉じ）。キャッシュの画像を指す。"""
-    eye = _eye_part(cache.character, cache.expression)
-    eyes = blink_track(frames, fps, len(eye.frames) if eye else 1, seed=_seed("idle", seed))
-    return [cache.get(e, ("level", 0)) for e in eyes]
+    return blink_segment_frames([(0, frames, cache)], frames, fps, seed)
+
+
+def blink_segment_frames(segments: list[tuple[int, int, FrameCache]], frames: int, fps: float,
+                         seed: object = None) -> list[Path]:
+    """まばたきだけの立ち絵を、区間ごとに表情を変えて並べる（`segment_frames` と同じ規則）。"""
+    motion = LineMotion(frames=frames, voice_frames=0, fps=fps, seed=_seed("idle", seed), mouth="static",
+                        vowels=[], rms=[])
+    out = []
+    owner = [segments[0][2]] * frames
+    for start, end, cache in segments:
+        for i in range(max(0, start), min(frames, end)):
+            owner[i] = cache
+    eyes_by: dict[int, list[int]] = {}
+    for i, cache in enumerate(owner):
+        if id(cache) not in eyes_by:
+            eyes_by[id(cache)] = eye_frames(frames, fps, motion.seed, cache.character, cache.expression)
+        out.append(cache.get(eyes_by[id(cache)][i], ("level", 0)))
+    return out
 
 
 def render_idle(config: CharacterConfig, character: Character, out_dir: Path, *, seconds: float, fps: float,
@@ -192,7 +274,7 @@ def render_idle(config: CharacterConfig, character: Character, out_dir: Path, *,
     """喋っていない区間用（まばたきのみ、口は閉じ）。"""
     n = frame_count(seconds, fps)
     stem = f"idle_{_slug(config.name)}"
-    _link_frames(idle_frames(cache, n, fps, seed=config.name), out_dir / stem)
+    link_frames(idle_frames(cache, n, fps, seed=config.name), out_dir / stem)
     return RenderedClip(kind="idle", character=config.name, frames_dir=stem, frames=n, fps=fps, duration=n / fps)
 
 

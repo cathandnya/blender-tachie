@@ -60,12 +60,16 @@ def vowels_to_levels(track: list[str | None], levels: int) -> list[int]:
 
 def volume_track(wav: Wav, fps: float, levels: int, n_frames: int | None = None,
                  silence: float = 0.02, peak_percentile: float = 0.9) -> list[int]:
-    """音量から各フレームの開き具合 0〜levels-1 を決める。
+    """音量から各フレームの開き具合 0〜levels-1 を決める（`levels_from_rms`）。"""
+    return levels_from_rms(frame_rms(wav, fps, n_frames), levels, silence, peak_percentile)
+
+
+def levels_from_rms(rms: list[float], levels: int, silence: float = 0.02, peak_percentile: float = 0.9) -> list[int]:
+    """フレームごとの RMS から開き具合 0〜levels-1 を決める。
 
     RMS を発話部分の `peak_percentile` 分位点で正規化し、`silence` 未満を閉じ、
     残りを 1〜levels-1 に等分する。
     """
-    rms = frame_rms(wav, fps, n_frames)
     if levels <= 1:
         return [0] * len(rms)
     voiced = sorted(r for r in rms if r >= silence)

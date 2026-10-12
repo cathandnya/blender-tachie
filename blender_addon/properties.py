@@ -267,6 +267,8 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     subtitle_channel: IntProperty(name="字幕", default=10, min=1, max=128)
     still_seconds: FloatProperty(name="長さ", default=5.0, min=0.1, max=3600.0, unit="TIME_ABSOLUTE",
                                  description="「立ち絵だけを置く」で置く長さ（秒）")
+    face_seconds: FloatProperty(name="長さ", default=2.0, min=0.1, max=3600.0, unit="TIME_ABSOLUTE",
+                                description="「表情を置く」の長さ（秒）。再生位置にそのキャラのセリフがあれば、その終わりまで")
     advance: BoolProperty(name="追加後に再生位置を進める", default=True)
     ripple: BoolProperty(name="再生成で長さが変わったら後ろをずらす", default=True)
     auto_idle: BoolProperty(name="待機を自動で更新", default=True,

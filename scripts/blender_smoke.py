@@ -289,6 +289,93 @@ assert read_wav(bpy.path.abspath(snd.sound.filepath)).samples[-1] == 0
 check_idle()
 zunda.audio_after = 0.3
 
+# 表情ストリップ: 重なる範囲だけ立ち絵の表情が変わり、音声はそのまま
+import os  # noqa: E402
+
+def image_of(cid):
+    return next(x for x in ops.line_strips(sed, cid) if x.type == "IMAGE")
+
+
+def frame_inode(strip, i):
+    return os.stat(Path(bpy.path.abspath(strip.directory)) / strip.elements[i].filename).st_ino
+
+
+def cache_inodes(ch, preset):
+    return {p.stat().st_ino for p in ops.character_cache(bpy.context, ch, preset).directory.iterdir()}
+
+
+zunda_id = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
+img = image_of(zunda_id)
+orig_dir, wav_before = img.directory, sound(zunda_id).sound.filepath
+l, r = img.left_handle, img.right_handle
+mid = (l + r) // 2
+s.active_character, s.expression = 0, "ドヤ"
+scene.frame_current = mid
+run(bpy.ops.tachie.add_face)
+face = sed.active_strip
+assert face["tachie_face"] == "ずんだもん" and face.mute and (face.left_handle, face.right_handle) == (mid, r)
+assert face.channel > s.subtitle_channel
+img = image_of(zunda_id)
+assert img.directory != orig_dir and img["tachie_faced"]
+doya, base = cache_inodes(zunda, "ドヤ"), cache_inodes(zunda, "")
+assert frame_inode(img, mid - l) in doya and frame_inode(img, r - l - 1) in doya
+assert frame_inode(img, 0) in base and frame_inode(img, mid - l - 1) in base
+assert sound(zunda_id).sound.filepath == wav_before
+# 動かして反映（画面ではハンドラが自動でやる）
+face.content_start = l
+run(bpy.ops.tachie.apply_faces)
+img = image_of(zunda_id)
+assert frame_inode(img, 0) in doya and frame_inode(img, r - l - 1) not in doya
+# チャンネルが上の表情ストリップが優先
+s.expression = "困り"
+scene.frame_current = l
+run(bpy.ops.tachie.add_face)
+face2 = sed.active_strip
+face2.duration = 3
+run(bpy.ops.tachie.apply_faces)
+assert face2.channel > face.channel
+img = image_of(zunda_id)
+komari = cache_inodes(zunda, "困り")
+assert frame_inode(img, 0) in komari and frame_inode(img, 3) in doya
+# 表情ストリップの表情を変える
+sed.active_strip = face2
+ops._expression_items = [("ドヤ", "ドヤ", "")]
+run(bpy.ops.tachie.pick_expression, target="FACE", expression="ドヤ")
+assert face2.name.startswith("表情 ずんだもん: ドヤ") and frame_inode(image_of(zunda_id), 0) in doya
+# 再生成しても表情ストリップに従う
+sed.active_strip = sound(zunda_id)
+run(bpy.ops.tachie.regenerate)
+zunda_id = sed.active_strip["tachie_id"]
+assert frame_inode(image_of(zunda_id), 0) in doya
+# 待機も表情ストリップの境目で分かれる
+metan_id = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "四国めたん")
+ml, mr, _ = lines()[metan_id]
+idle_before = [x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]
+s.expression = "困り"
+scene.frame_current = ml + 2
+run(bpy.ops.tachie.add_face)
+face3 = sed.active_strip
+face3.duration = 5
+run(bpy.ops.tachie.apply_faces)
+idle_after = [x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]
+assert len(idle_after) == len(idle_before) + 2, (len(idle_before), len(idle_after))
+covered = next(x for x in idle_after if x.left_handle == ml + 2)
+assert covered.right_handle == ml + 7 and frame_inode(covered, 0) in komari
+check_idle()
+# キャラに無い表情の表情ストリップは無視する（待機の作り直しが失敗しない）
+face3["tachie_expression"] = "無い表情"
+run(bpy.ops.tachie.apply_faces)
+assert len([x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]) == len(idle_before)
+check_idle()
+# 表情ストリップを消すと元に戻る
+for f in [face, face2, face3]:
+    sed.strips.remove(f)
+run(bpy.ops.tachie.apply_faces)
+img = image_of(zunda_id)
+assert not img["tachie_faced"] and frame_inode(img, 0) in base
+assert len([x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]) == len(idle_before)
+s.expression = ""
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 run(bpy.ops.tachie.export_characters, filepath=str(exported))

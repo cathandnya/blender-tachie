@@ -66,6 +66,10 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         row.enabled = ch is not None
         row.operator("tachie.add_still", text="立ち絵だけを置く", icon="IMAGE_DATA")
         row.prop(s, "still_seconds")
+        row = layout.row(align=True)
+        row.enabled = ch is not None
+        row.operator("tachie.add_face", text="表情を置く", icon="SHADERFX")
+        row.prop(s, "face_seconds")
         layout.prop(s, "advance")
         row = layout.row(align=True)
         row.prop(s, "auto_idle")
@@ -82,7 +86,14 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
         layout = self.layout
         sed = seq_scene(context).sequence_editor
         strip = sed.active_strip if sed else None
-        if strip is not None and strip.get("tachie_still"):
+        if strip is not None and strip.get("tachie_face"):
+            layout.label(text=f"{strip['tachie_face']}の表情ストリップ", icon="SHADERFX")
+            row = layout.row(align=True)
+            row.label(text="表情")
+            row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "FACE"
+            layout.label(text="重なる範囲だけこの表情になります", icon="INFO")
+            layout.operator("tachie.apply_faces", icon="FILE_REFRESH")
+        elif strip is not None and strip.get("tachie_still"):
             layout.label(text=f"{strip['tachie_still']}の立ち絵（セリフなし）", icon="USER")
             row = layout.row(align=True)
             row.label(text="表情")

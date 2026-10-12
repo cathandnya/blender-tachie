@@ -23,6 +23,16 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   待機ストリップ（`tachie_idle` = キャラ名）は各キャラの立ち絵チャンネルの隙間を、シーン開始から最後のセリフの終わりまで埋める。
   セリフの追加・再生成のたびに全部消して作り直す（重なり判定・ずらしの対象外）。画像は `cache/` の合成画像を
   `elements` で直接並べる（同じファイル名を何度並べてもよい。1.8 万フレームで 1.4 秒）。
+  表情ストリップ（`tachie_face` = キャラ名、`tachie_expression`）はミュートしたカラーストリップで、字幕より上の空き
+  チャンネルに置く。重なる範囲だけ立ち絵（セリフ・セリフなし・待機）がその表情になる。重なったらチャンネルが上、
+  同じなら後から始まるものが優先。セリフは書き出し時に保存した動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・
+  まばたきの seed）から `segment_frames` で並べ直し、`lines/<id>_f<hash>/` にリンクして `strip.directory` を差し替える
+  （音声は合成し直さない。元は `tachie_frames_dir`、今の区間は `tachie_faced`）。セリフなしは作り直し、待機は
+  `refresh_idle` が表情ストリップの境目で分ける。json の無い古いセリフは再生成するまで効かない。
+  自動の反映は `depsgraph_update_post` のハンドラで署名（`faces_signature`）の変化を見て、タイマーでモーダル操作の
+  終わりを待ってから `refresh_faces` する（`_applying_faces` で再入防止）。反映では undo の段を積まない（直前の操作の段は反映前の
+  状態で、元に戻すと署名（`tachie_faced` を含む）が変わって描き直されるため）。キャラに無い表情の表情ストリップは無視する。
+  ストリップの位置は `content_start` / `duration` を使う（`frame_start` / `frame_final_duration` は 6.0 で削除予定）。
   「立ち絵だけを置く」はセリフなしの立ち絵（まばたきのみ、`tachie_still` = キャラ名、`tachie_expression`）を
   再生位置に置く。待機の作り直しでは消えず、待機の範囲の終わりにも数える。伸ばしたら「作り直す」で今の長さに合わせる。
   セリフごとの声（読み上げ速度・声の高さ・抑揚・音量・開始/終了無音・間の長さ、`properties.VOICE_PROPS`）は

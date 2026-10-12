@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -7,10 +8,12 @@ import uuid
 from pathlib import Path
 
 import bpy
+from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, system_fonts
 from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
+from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
 from .tachie_studio.pipeline.script import split_kana
 from .tachie_studio.pipeline.config import (MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
@@ -361,6 +364,8 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         s["tachie_expression"] = clip.extra.get("expression", "")
     set_line_voice(sound, voice if voice is not None else character_voice(ch))
     set_line_audio(sound, audio if audio is not None else character_audio(ch))
+    image["tachie_frames_dir"] = image.directory  # 表情ストリップが無いときの連番
+    apply_faces(context, [image])
     # 発音は音声ストリップに。自動の読みと違えば「編集した発音」として再生成でも使う
     sound["tachie_kana"] = clip.extra.get("kana", "")
     sound["tachie_kana_auto"] = clip.extra.get("kana_auto", "")
@@ -529,6 +534,206 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     return place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio)
 
 
+# ---- 表情ストリップ（セリフの途中で表情を変える） ----
+
+def face_strips(sed, character: str | None = None) -> list:
+    """表情ストリップ（優先の低い順: チャンネルが下、同じなら先に始まるもの）。"""
+    faces = [s for s in sed.strips if s.get("tachie_face") and (character is None or s["tachie_face"] == character)]
+    return sorted(faces, key=lambda s: (s.channel, s.left_handle))
+
+
+def face_segments(sed, ch, start: int, end: int) -> list[tuple[int, int, str]]:
+    """[start, end) に重なる表情ストリップの区間（start からの相対、優先の低い順）。
+
+    キャラクターに無い表情（プリセットを消した・名前を変えたなど）の表情ストリップは無視する。
+    """
+    names = {e.name for e in ch.expressions}
+    out = []
+    for f in face_strips(sed, ch.name) if sed else []:
+        preset = f.get("tachie_expression", "")
+        if preset and preset not in names:
+            continue
+        a, b = max(start, f.left_handle), min(end, f.right_handle)
+        if a < b:
+            out.append((a - start, b - start, preset))
+    return out
+
+
+def _split_by_faces(sed, ch, start: int, end: int) -> list[tuple[int, int, str]]:
+    """[start, end) を表情ストリップの境目で分け、各区間の表情（基本は ""）を付ける。"""
+    owner = [""] * (end - start)
+    for a, b, preset in face_segments(sed, ch, start, end):
+        owner[a:b] = [preset] * (b - a)
+    out = []
+    for i, preset in enumerate(owner):
+        if out and out[-1][2] == preset:
+            out[-1] = (out[-1][0], start + i + 1, preset)
+        else:
+            out.append((start + i, start + i + 1, preset))
+    return out
+
+
+def _segments_key(segments, base: str) -> str:
+    return json.dumps([base, segments], ensure_ascii=False)
+
+
+def _strip_from_paths(context, sed, ch, name: str, start: int, paths: list, folder: str, key: str):
+    """画像のパスの列をハードリンクで 1 つのフォルダに並べ、立ち絵ストリップにする。"""
+    directory = output_dir(context) / folder / hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    link_frames(paths, directory)
+    files = sorted(os.listdir(directory))
+    strip = sed.strips.new_image(name=name, filepath=_path_for_blend(directory / files[0]),
+                                 channel=ch.channel, frame_start=start, fit_method="ORIGINAL")
+    for f in files[1:]:
+        strip.elements.append(f)
+    strip.blend_type = "ALPHA_OVER"
+    apply_placement(strip, ch)
+    return strip
+
+
+def apply_faces(context, strips=None, problems: list | None = None) -> int:
+    """表情ストリップに合わせて立ち絵（セリフ・セリフなし）を描き直す。描き直した本数を返す。
+
+    セリフは保存した動き（lines/<id>.json）から連番を並べ直してフォルダを差し替える（音声は合成し直さない）。
+    セリフなしの立ち絵は作り直す。待機は refresh_idle が表情ストリップの境目で分けて置く。
+    描き直せなかったもの（表情ストリップより前に作ったセリフなど）は `problems` に理由を足す。
+    """
+    scene = seq_scene(context)
+    sed = scene.sequence_editor
+    if sed is None:
+        return 0
+    settings = scene.tachie
+    if strips is None:
+        strips = [s for s in sed.strips if s.type == "IMAGE" and (s.get("tachie_id") or s.get("tachie_still"))]
+    count = 0
+    for strip in list(strips):
+        name = strip.get("tachie_still") or strip.get("tachie_character")
+        ch = next((c for c in settings.characters if c.name == name), None)
+        if ch is None:
+            continue
+        preset = strip.get("tachie_expression", "")
+        start = int(strip.content_start)
+        segments = face_segments(sed, ch, start, start + len(strip.elements))
+        key = _segments_key(segments, preset) if segments else ""
+        if strip.get("tachie_faced", "") == key:
+            continue
+        try:
+            if strip.get("tachie_still"):
+                remake_still(context, strip)
+            else:
+                _relayout_line(context, strip, ch, preset, segments, key)
+        except ERRORS as e:
+            if problems is not None:
+                problems.append(str(e))
+            continue
+        count += 1
+    return count
+
+
+def _relayout_line(context, strip, ch, preset: str, segments, key: str) -> None:
+    original = strip.get("tachie_frames_dir", strip.directory)
+    if not segments:
+        strip.directory = original
+        strip["tachie_faced"] = ""
+        return
+    motion_path = output_dir(context) / "lines" / f"{strip['tachie_id']}.json"
+    if not motion_path.is_file():
+        raise ValueError(f"{strip.name} は表情ストリップに対応する前に作ったセリフです（再生成すると使えます）")
+    motion = LineMotion.load(motion_path)
+    if motion.frames != len(strip.elements):
+        raise ValueError(f"{strip.name} の長さが書き出したときと違います（再生成してください）")
+    base = character_cache(context, ch, preset)
+    caches = {p: character_cache(context, ch, p) for _, _, p in segments}
+    paths = segment_frames(motion, [(0, motion.frames, base)] + [(a, b, caches[p]) for a, b, p in segments])
+    directory = output_dir(context) / "lines" / f"{strip['tachie_id']}_f{hashlib.sha1(key.encode()).hexdigest()[:10]}"
+    link_frames(paths, directory)
+    strip.directory = _path_for_blend(directory) + "/"
+    strip["tachie_faced"] = key
+
+
+def refresh_faces(context, problems: list | None = None) -> int:
+    """全体を表情ストリップに合わせる（立ち絵の描き直しと待機の作り直し）。"""
+    count = apply_faces(context, problems=problems)
+    if seq_scene(context).tachie.auto_idle:
+        refresh_idle(context)
+    return count
+
+
+def faces_signature(scene) -> str:
+    """表情ストリップと、それが効く立ち絵の位置・表情。変わったら描き直す（待機は作り直すので含めない）。"""
+    sed = scene.sequence_editor
+    if sed is None:
+        return ""
+    items = []
+    for s in sed.strips:
+        if s.get("tachie_face"):
+            items.append(("face", s.name, s.channel, s.left_handle, s.right_handle, s["tachie_face"],
+                          s.get("tachie_expression", "")))
+        elif s.type == "IMAGE" and (s.get("tachie_id") or s.get("tachie_still")):
+            items.append(("image", s.name, s.channel, int(s.content_start), len(s.elements),
+                          s.get("tachie_faced", "")))
+    if not any(i[0] == "face" for i in items) and not any(
+            s.get("tachie_faced") for s in sed.strips if s.type == "IMAGE"):
+        return ""  # 表情ストリップが無く、描き直した立ち絵も無い
+    return json.dumps(sorted(items), ensure_ascii=False)
+
+
+_applied_signatures: dict[str, str] = {}
+_face_timer_running = False
+_applying_faces = False
+
+
+@persistent
+def _on_depsgraph_update(scene, depsgraph):
+    global _face_timer_running
+    if _applying_faces or _face_timer_running:
+        return
+    # 引数はウィンドウのシーン。シーケンサーが別のシーンを映していればそちらも見る
+    scenes = {scene, getattr(bpy.context, "sequencer_scene", None) or scene}
+    if any(faces_signature(sc) != _applied_signatures.get(sc.name, "") for sc in scenes):
+        _face_timer_running = True
+        bpy.app.timers.register(_apply_faces_later, first_interval=0.3)
+
+
+def _apply_faces_later():
+    """ドラッグなどが終わってから描き直す（自動の反映）。"""
+    global _face_timer_running, _applying_faces
+    wm = bpy.context.window_manager
+    if wm and any(getattr(w, "modal_operators", None) for w in wm.windows):
+        return 0.3  # まだ動かしている
+    _face_timer_running = False
+    window = wm.windows[0] if wm and wm.windows else None
+    with bpy.context.temp_override(window=window) if window else _nullcontext():
+        # refresh_faces は seq_scene(context) を描き直すので、そのシーンだけを見る（他のシーンは
+        # シーケンサーに映ったときに反映する）
+        scene = seq_scene(bpy.context)
+        if faces_signature(scene) == _applied_signatures.get(scene.name, ""):
+            return None
+        _applying_faces = True
+        try:
+            problems = []
+            refresh_faces(bpy.context, problems)
+            for p in dict.fromkeys(problems):
+                print("表情を反映できません:", p)
+            # undo_push はしない: 直前の操作（ドラッグなど）の段は反映前の状態なので、元に戻すと署名が
+            # 変わってまた描き直される。ここで段を積むと 1 回目の取り消しが反映だけを戻し、表情ストリップは
+            # 動かしたまま立ち絵だけ古い表情になる
+        except ERRORS as e:
+            print("表情の反映に失敗しました:", e)
+        finally:
+            _applying_faces = False
+            _applied_signatures[scene.name] = faces_signature(scene)
+    return None
+
+
+class _nullcontext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
 def remove_idle(sed) -> None:
     for s in [s for s in sed.strips if s.get("tachie_idle")]:
         sed.strips.remove(s)
@@ -562,11 +767,15 @@ def refresh_idle(context) -> int:
         gaps = [(a, b) for a, b in gaps if b > a]
         if not gaps:
             continue
-        cache = character_cache(context, ch)
-        for a, b in gaps:
-            strip = _blink_strip(sed, ch, cache, f"待機 {ch.name}", a, b - a, fps)
-            strip["tachie_idle"] = ch.name
-            count += 1
+        caches = {}
+        for gap_a, gap_b in gaps:
+            # 表情ストリップの境目でも分け、その区間の表情で置く
+            for a, b, preset in _split_by_faces(sed, ch, gap_a, gap_b):
+                if preset not in caches:
+                    caches[preset] = character_cache(context, ch, preset)
+                strip = _blink_strip(sed, ch, caches[preset], f"待機 {ch.name}", a, b - a, fps)
+                strip["tachie_idle"] = ch.name
+                count += 1
     return count
 
 
@@ -589,8 +798,20 @@ def place_still(context, ch, preset: str, start: int, frames: int):
     if scene.view_settings.view_transform != "Standard":
         scene.view_settings.view_transform = "Standard"
     cache = character_cache(context, ch, preset)
-    strip = _blink_strip(sed, ch, cache, f"立ち絵 {ch.name}" + (f"({preset})" if preset else ""),
-                         start, frames, scene_fps(scene))
+    name = f"立ち絵 {ch.name}" + (f"({preset})" if preset else "")
+    segments = face_segments(sed, ch, start, start + frames)
+    if segments:
+        # 表情ストリップと重なる: 区間ごとに表情を変えた連番を faces/ に並べる
+        caches = {p: character_cache(context, ch, p) for _, _, p in segments}
+        paths = blink_segment_frames([(0, frames, cache)] + [(a, b, caches[p]) for a, b, p in segments],
+                                     frames, scene_fps(scene), seed=(ch.name, start))
+        # フォルダはキャラ・位置・長さごと（同じ区間の別の立ち絵と連番を取り合わないように）
+        strip = _strip_from_paths(context, sed, ch, name, start, paths, "faces",
+                                  json.dumps([ch.name, start, frames, _segments_key(segments, preset)],
+                                             ensure_ascii=False))
+    else:
+        strip = _blink_strip(sed, ch, cache, name, start, frames, scene_fps(scene))
+    strip["tachie_faced"] = _segments_key(segments, preset) if segments else ""
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
     strip["tachie_expression"] = preset or ""
@@ -1132,6 +1353,89 @@ class TACHIE_OT_dict_remove(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _free_face_channel(sed, settings, start: int, end: int) -> int:
+    channel = settings.subtitle_channel + 1
+    while channel < 128 and any(s.channel == channel and s.left_handle < end and start < s.right_handle
+                                for s in sed.strips):
+        channel += 1
+    return channel
+
+
+def _face_name(character: str, preset: str) -> str:
+    return f"表情 {character}: {preset or '基本'}"
+
+
+class TACHIE_OT_add_face(bpy.types.Operator):
+    """選択中のキャラクターの表情ストリップを再生位置に置く（重なる範囲だけ立ち絵がその表情になる）"""
+
+    bl_idname = "tachie.add_face"
+    bl_label = "表情を置く"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return seq_scene(context).tachie.character() is not None
+
+    def execute(self, context):
+        global _applying_faces
+        scene = seq_scene(context)
+        settings = scene.tachie
+        ch = settings.character()
+        ensure_sequencer_scene(context)
+        sed = scene.sequence_editor or scene.sequence_editor_create()
+        start = scene.frame_current
+        # 再生位置にこのキャラのセリフがあれば、その終わりまで
+        line = next((s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_id")
+                     and s.get("tachie_character") == ch.name and s.left_handle <= start < s.right_handle), None)
+        end = line.right_handle if line else start + max(1, round(settings.face_seconds * scene_fps(scene)))
+        preset = settings.expression
+        face = sed.strips.new_effect(name=_face_name(ch.name, preset), type="COLOR",
+                                     channel=_free_face_channel(sed, settings, start, end),
+                                     frame_start=start, length=end - start)
+        face.color = (0.95, 0.6, 0.25)
+        face.color_tag = "COLOR_02"
+        face.mute = True  # 画面には出さない（立ち絵の表情を変える印）
+        face["tachie_face"] = ch.name
+        face["tachie_expression"] = preset
+        problems = []
+        _applying_faces = True
+        try:
+            refresh_faces(context, problems)
+        finally:
+            _applying_faces = False
+            _applied_signatures[scene.name] = faces_signature(scene)
+        for s in sed.strips_all:
+            s.select = False
+        face.select = True
+        sed.active_strip = face
+        if problems:
+            self.report({"WARNING"}, problems[0])
+        return {"FINISHED"}
+
+
+class TACHIE_OT_apply_faces(bpy.types.Operator):
+    """表情ストリップに合わせて立ち絵を描き直す（音声は合成し直さない）"""
+
+    bl_idname = "tachie.apply_faces"
+    bl_label = "表情を反映"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        global _applying_faces
+        problems = []
+        _applying_faces = True
+        try:
+            count = refresh_faces(context, problems)
+        finally:
+            _applying_faces = False
+            _applied_signatures[seq_scene(context).name] = faces_signature(seq_scene(context))
+        if problems:
+            self.report({"WARNING"}, f"{len(problems)} 本は描き直せませんでした: {problems[0]}")
+        else:
+            self.report({"INFO"}, f"{count} 本の立ち絵を描き直しました")
+        return {"FINISHED"}
+
+
 class TACHIE_OT_regenerate_all(bpy.types.Operator):
     """すべてのセリフを、今のキャラクター設定で作り直す（表情を変えたとき。声とスタイルはセリフごとの値のまま）"""
 
@@ -1646,14 +1950,15 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     target: bpy.props.EnumProperty(items=[("ADD", "追加するセリフ", ""), ("LINE", "選択中のセリフ", ""),
-                                          ("STILL", "選択中の立ち絵", "")])
+                                          ("STILL", "選択中の立ち絵", ""), ("FACE", "選択中の表情ストリップ", "")])
     expression: bpy.props.EnumProperty(items=_expressions)
 
     def _character(self, context):
         settings = seq_scene(context).tachie
-        if self.target in ("LINE", "STILL"):
+        if self.target in ("LINE", "STILL", "FACE"):
             sed = seq_scene(context).sequence_editor
-            return find_character(settings, sed.active_strip["tachie_character"])
+            key = "tachie_face" if self.target == "FACE" else "tachie_character"
+            return find_character(settings, sed.active_strip[key])
         return settings.character()
 
     def invoke(self, context, event):
@@ -1675,6 +1980,11 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
             seq_scene(context).tachie.expression = value
             return {"FINISHED"}
         sed = seq_scene(context).sequence_editor
+        if self.target == "FACE":
+            face = sed.active_strip
+            face["tachie_expression"] = value
+            face.name = _face_name(face["tachie_face"], value)
+            return bpy.ops.tachie.apply_faces()
         if self.target == "STILL":
             try:
                 strip = remake_still(context, sed.active_strip, value)
@@ -1767,6 +2077,8 @@ _classes = (
     TACHIE_OT_pick_line_character,
     TACHIE_OT_reset_line_voice,
     TACHIE_OT_reset_kana,
+    TACHIE_OT_add_face,
+    TACHIE_OT_apply_faces,
     TACHIE_OT_preview_line,
     TACHIE_OT_edit_accent,
     TACHIE_OT_preview_accent,
@@ -1791,8 +2103,11 @@ _classes = (
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
+    bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
 
 
 def unregister():
+    if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

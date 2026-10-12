@@ -401,3 +401,39 @@ def test_material_presets_fill(tmp_path: Path, char_dir: Path):
     (char_dir / "tachie.toml").write_text('speaker = 2\n\n[expressions."困り"]\n"口" = "口"\n', encoding="utf-8")
     cfg = parse_characters({"テスト": {"folder": str(char_dir)}}, tmp_path)["テスト"]
     assert cfg.expressions == {"眠い": {"目": "目"}, "困り": {"口": "口"}}  # 同じ名前は tachie.toml
+
+
+def test_line_motion_relayout(tmp_path: Path, char_dir: Path):
+    from tachie_studio.pipeline.render import FrameCache, LineMotion, motion_frames, render_line, segment_frames
+    from tachie_studio.pipeline.script import Line
+    from tachie_studio.tachie import Expression
+
+    _png(char_dir / "口" / "む.png", (0, 0, 90, 255), (0, 5, 8, 6))  # 連番の無い口（動かない）
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1, "audio": {"after": 0.3}}},
+                           tmp_path)["テスト"]
+    character = load_character(char_dir)
+    base = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    other = FrameCache(character, Expression(mouth="む"), tmp_path / "cache", 1.0)
+    out = tmp_path / "o"
+    clip = render_line(FakeClient(), cfg, character, Line(1, "テスト", "かむ"), out, fps=10, cache=base, stem="x")
+    motion = LineMotion.load(out / "x.json")
+    assert motion.frames == clip.frames == motion.voice_frames + 3
+    assert len(motion.vowels) == len(motion.rms) == motion.voice_frames
+    # 保存した動きから並べ直すと、書き出した連番と同じ画像になる
+    written = [p.stat().st_ino for p in sorted((out / "x").iterdir())]
+    assert [p.stat().st_ino for p in motion_frames(motion, base)] == written
+    # 区間だけ別の表情に
+    frames = segment_frames(motion, [(0, motion.frames, base), (4, 7, other)])
+    assert len(frames) == motion.frames
+    assert [f.parent for f in frames] == [base.directory] * 4 + [other.directory] * 3 + \
+        [base.directory] * (motion.frames - 7)
+    assert all(f.name.endswith("_l0.png") for f in frames[4:7])  # 連番の無い口は開き = 0 番
+
+
+def test_levels_from_rms_matches_volume_track():
+    from tachie_studio.lipsync import read_wav
+    from tachie_studio.lipsync.mouth import levels_from_rms, volume_track
+    from tachie_studio.lipsync.wav import frame_rms
+
+    wav = read_wav(FakeClient().synthesis({"speedScale": 1.0}, 1))
+    assert levels_from_rms(frame_rms(wav, 10), 4) == volume_track(wav, 10, 4)
