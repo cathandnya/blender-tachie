@@ -483,6 +483,30 @@ class TACHIE_PT_headline(_Panel, bpy.types.Panel):
         layout.label(text="スタイルは置いてある見出しにもすぐ反映します", icon="INFO")
 
 
+class TACHIE_PT_bgm(_Panel, bpy.types.Panel):
+    bl_label = "BGM"
+    bl_parent_id = "TACHIE_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        from .ducking import bgm_strips
+
+        layout = self.layout
+        scene = seq_scene(context)
+        s = scene.tachie
+        layout.operator("tachie.set_bgm", icon="SOUND")
+        col = layout.column(align=True)
+        col.prop(s, "duck_volume")
+        col.prop(s, "duck_fade")
+        bgms = bgm_strips(scene.sequence_editor)
+        for strip in bgms:
+            row = layout.row(align=True)
+            row.prop(strip, '["tachie_bgm_volume"]', text=strip.name)
+            row.operator("tachie.unset_bgm", text="", icon="X").strip = strip.name
+        if bgms:
+            layout.label(text="BGM の音量はここで変えます", icon="INFO")
+
+
 class TACHIE_PT_export(_Panel, bpy.types.Panel):
     bl_label = "書き出し"
     bl_parent_id = "TACHIE_PT_main"
@@ -538,6 +562,7 @@ _classes = (
     TACHIE_PT_placement,
     TACHIE_PT_subtitle,
     TACHIE_PT_headline,
+    TACHIE_PT_bgm,
     TACHIE_PT_export,
     TACHIE_PT_channels,
 )

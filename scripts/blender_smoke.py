@@ -503,6 +503,39 @@ ops.refresh_motion_now(scene)
 assert abs(zsub.blend_alpha - 0.5) < 1e-6 and not any(x.get("tachie_fade_keyed") for x in sed.strips)
 zsub.blend_alpha = 1.0
 
+# BGM のダッキング: セリフの音声が鳴っている間だけ BGM の音量を下げる
+import wave  # noqa: E402
+
+bgm_path = out / "bgm.wav"
+with wave.open(str(bgm_path), "wb") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(8000)
+    w.writeframes(b"\0\0" * 8000 * 120)
+bgm = sed.strips.new_sound(name="BGM", filepath=str(bgm_path), channel=30, frame_start=1)
+for x in sed.strips_all:
+    x.select = False
+bgm.select, bgm.volume = True, 0.8
+run(bpy.ops.tachie.set_bgm)
+assert bgm["tachie_bgm"] and abs(bgm["tachie_bgm_volume"] - 0.8) < 1e-6
+from bl_ext.user_default.blender_tachie import ducking  # noqa: E402
+
+voice = ducking.voice_spans(sed, 0)
+keys = keyed(bgm, "volume")
+low = 0.8 * s.duck_volume
+assert voice and keys
+assert any(f == voice[0][0] and abs(v - low) < 1e-4 for f, v in keys)  # 喋り始めで下がっている
+assert all(abs(v - 0.8) < 1e-4 or abs(v - low) < 1e-4 for _, v in keys)
+s.duck_volume = 0.5  # 設定を変えるとすぐ作り直す
+assert all(abs(v - 0.8) < 1e-4 or abs(v - 0.4) < 1e-4 for _, v in keyed(bgm, "volume"))
+bgm["tachie_bgm_volume"] = 0.6
+ducking.refresh_ducking(scene)
+assert abs(max(v for _, v in keyed(bgm, "volume")) - 0.6) < 1e-4
+run(bpy.ops.tachie.unset_bgm, strip=bgm.name)
+assert not keyed(bgm, "volume") and abs(bgm.volume - 0.6) < 1e-6 and "tachie_bgm" not in bgm
+sed.strips.remove(bgm)
+s.duck_volume = 0.3
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 zunda.talk_period = 0.5  # 動きの設定も書き出す（既定値のものは書かない）

@@ -759,21 +759,28 @@ def refresh_faces(context, problems: list | None = None) -> int:
     """全体を表情ストリップに合わせる（立ち絵の描き直しと待機の作り直し）。"""
     count = apply_faces(context, problems=problems)
     if seq_scene(context).tachie.auto_idle:
-        refresh_idle(context)
+        refresh_idle(context)  # 最後に動きとダッキングも作り直す
+    else:
+        # 呼び出し側は反映済みとして署名を記録するので、待機を作らないときも動きとダッキングは作り直す
+        # （まとめて変えるで読み上げ速度を変えるなど、セリフの長さが変わったとき）
+        refresh_motion_now(seq_scene(context))
     return count
 
 
-def auto_signature(scene) -> tuple[str, str]:
-    """自動で描き直すきっかけ: （表情ストリップに関わる値, 立ち絵の動きに関わる値）。"""
+def auto_signature(scene) -> tuple[str, str, str]:
+    """自動で描き直すきっかけ: （表情ストリップに関わる値, 立ち絵の動きに関わる値, BGM のダッキングに関わる値）。"""
+    from .ducking import ducking_signature
     from .motion import motion_signature
 
-    return faces_signature(scene), motion_signature(scene)
+    return faces_signature(scene), motion_signature(scene), ducking_signature(scene)
 
 
 def refresh_motion_now(scene) -> int:
-    """立ち絵の動き（跳ねる・揺れる・登場・退場、セリフごとの位置・大きさ）のキーフレームを作り直す。"""
+    """立ち絵の動き（跳ねる・揺れる・登場・退場、セリフごとの位置・大きさ）と BGM のダッキングのキーフレームを作り直す。"""
+    from .ducking import refresh_ducking
     from .motion import refresh_motion
 
+    refresh_ducking(scene)
     return refresh_motion(scene, output_dir(bpy.context) / "lines")
 
 
@@ -796,7 +803,7 @@ def faces_signature(scene) -> str:
     return json.dumps(sorted(items), ensure_ascii=False)
 
 
-_applied_signatures: dict[str, tuple[str, str]] = {}
+_applied_signatures: dict[str, tuple[str, str, str]] = {}
 _face_timer_running = False
 _applying_faces = False
 
@@ -808,7 +815,7 @@ def _on_depsgraph_update(scene, depsgraph):
         return
     # 引数はウィンドウのシーン。シーケンサーが別のシーンを映していればそちらも見る
     scenes = {scene, getattr(bpy.context, "sequencer_scene", None) or scene}
-    if any(auto_signature(sc) != _applied_signatures.get(sc.name, ("", "")) for sc in scenes):
+    if any(auto_signature(sc) != _applied_signatures.get(sc.name, ("", "", "")) for sc in scenes):
         _face_timer_running = True
         bpy.app.timers.register(_apply_faces_later, first_interval=0.3)
 
@@ -826,7 +833,7 @@ def _apply_faces_later():
         # シーケンサーに映ったときに反映する）
         scene = seq_scene(bpy.context)
         signature = auto_signature(scene)
-        applied = _applied_signatures.get(scene.name, ("", ""))
+        applied = _applied_signatures.get(scene.name, ("", "", ""))
         if signature == applied:
             return None
         _applying_faces = True
@@ -834,9 +841,14 @@ def _apply_faces_later():
             problems = []
             # 動きだけが変わったとき（セリフごとの位置を変えた・動きのあるセリフを動かしたなど）は、
             # 立ち絵の描き直しと待機の作り直しをせずにキーフレームだけ作り直す
-            if signature[0] != applied[0]:
-                refresh_faces(bpy.context, problems)  # 待機を作り直すときに動きも作り直す
-            refresh_motion_now(scene)
+            if signature[:2] != applied[:2]:
+                if signature[0] != applied[0]:
+                    refresh_faces(bpy.context, problems)  # 待機を作り直すときに動きも作り直す
+                refresh_motion_now(scene)  # ダッキングも作り直す
+            else:  # BGM のダッキングだけ（BGM を動かした・音量を変えたなど）
+                from .ducking import refresh_ducking
+
+                refresh_ducking(scene)
             for p in dict.fromkeys(problems):
                 print("表情を反映できません:", p)
             # undo_push はしない: 直前の操作（ドラッグなど）の段は反映前の状態なので、元に戻すと署名が
@@ -2453,6 +2465,62 @@ class TACHIE_OT_add_headline(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _mark_ducking_applied(scene) -> None:
+    """ダッキングだけを反映済みにする（表情・動きの反映待ちは残す）。"""
+    from .ducking import ducking_signature
+
+    faces, motion, _ = _applied_signatures.get(scene.name, ("", "", ""))
+    _applied_signatures[scene.name] = (faces, motion, ducking_signature(scene))
+
+
+class TACHIE_OT_set_bgm(bpy.types.Operator):
+    """選択中の音声ストリップを BGM にする（セリフの音声が鳴っている間だけ音量を下げる）。今の音量が BGM の音量になる"""
+
+    bl_idname = "tachie.set_bgm"
+    bl_label = "選択中の音声を BGM にする"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        from .ducking import refresh_ducking, set_bgm
+
+        scene = seq_scene(context)
+        sed = scene.sequence_editor
+        sounds = [s for s in sed.strips if s.select and s.type == "SOUND" and not s.get("tachie_id")] \
+            if sed else []
+        if not sounds:
+            self.report({"ERROR"}, "BGM にする音声ストリップを選んでください（セリフの音声は除く）")
+            return {"CANCELLED"}
+        for s in sounds:
+            set_bgm(s, True)
+        refresh_ducking(scene)
+        _mark_ducking_applied(scene)
+        self.report({"INFO"}, f"{len(sounds)} 本を BGM にしました")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_unset_bgm(bpy.types.Operator):
+    """BGM から外す（音量を BGM の音量に戻し、キーフレームを消す）"""
+
+    bl_idname = "tachie.unset_bgm"
+    bl_label = "BGM から外す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    strip: bpy.props.StringProperty(name="ストリップ")
+
+    def execute(self, context):
+        from .ducking import set_bgm
+
+        scene = seq_scene(context)
+        sed = scene.sequence_editor
+        strip = sed.strips.get(self.strip) if sed else None
+        if strip is None or not strip.get("tachie_bgm"):
+            self.report({"ERROR"}, f"BGM「{self.strip}」が見つかりません")
+            return {"CANCELLED"}
+        set_bgm(strip, False)
+        _mark_ducking_applied(scene)
+        return {"FINISHED"}
+
+
 class TACHIE_OT_export_subtitles(bpy.types.Operator, ExportHelper):
     """置いてあるセリフの字幕を SRT / WebVTT で書き出す（YouTube などの字幕用）"""
 
@@ -2775,6 +2843,8 @@ _classes = (
     TACHIE_OT_import_presets,
     TACHIE_OT_export_subtitles,
     TACHIE_OT_add_headline,
+    TACHIE_OT_set_bgm,
+    TACHIE_OT_unset_bgm,
     TACHIE_OT_render_preset,
     TACHIE_OT_export_characters,
 )

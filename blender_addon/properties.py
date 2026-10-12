@@ -264,6 +264,12 @@ def _update_motion(self, context):
     refresh_motion_now(self.id_data)
 
 
+def _update_ducking(self, context):
+    from .ducking import refresh_ducking
+
+    refresh_ducking(self.id_data)
+
+
 def _update_placement(self, context):
     # 置いてあるストリップにもすぐ反映する（作り直さなくてよい）。登場・退場のスライドも位置に合わせて作り直す
     for strip in character_image_strips(self):
@@ -410,6 +416,11 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
                                             default=(0.15, 0.3, 0.7, 0.85), update=_update_headlines)
     headline_y: FloatProperty(name="高さ", default=0.85, min=0.0, max=1.0, subtype="FACTOR", update=_update_headlines)
     subtitle_channel: IntProperty(name="字幕", default=10, min=1, max=128)
+    duck_volume: FloatProperty(name="セリフ中の音量", default=0.3, min=0.0, max=1.0, subtype="FACTOR",
+                               update=_update_ducking,
+                               description="セリフの音声が鳴っている間の BGM の音量（BGM の音量に対する割合）。1 なら下げない")
+    duck_fade: FloatProperty(name="下げる・戻す時間", default=0.3, min=0.0, max=5.0, unit="TIME_ABSOLUTE",
+                             update=_update_ducking, description="BGM の音量を下げる・戻すのにかける時間（秒）")
     still_seconds: FloatProperty(name="長さ", default=5.0, min=0.1, max=3600.0, unit="TIME_ABSOLUTE",
                                  description="「立ち絵だけを置く」で置く長さ（秒）")
     face_seconds: FloatProperty(name="長さ", default=2.0, min=0.1, max=3600.0, unit="TIME_ABSOLUTE",
