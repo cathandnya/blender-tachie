@@ -204,9 +204,12 @@ def segment_frames(motion: LineMotion, segments: list[tuple[int, int, FrameCache
     return out
 
 
-def render_line(client: VoicevoxClient, config: CharacterConfig, character: Character, line: Line,
-                out_dir: Path, *, fps: float, cache: FrameCache, stem: str | None = None) -> RenderedClip:
-    """`out_dir` に `<stem>.wav` と `<stem>/000000.png…` を書く。stem の既定は lineNNN。"""
+def render_line(client: VoicevoxClient, config: CharacterConfig, character: Character | None, line: Line,
+                out_dir: Path, *, fps: float, cache: FrameCache | None, stem: str | None = None) -> RenderedClip:
+    """`out_dir` に `<stem>.wav` と `<stem>/000000.png…` を書く。stem の既定は lineNNN。
+
+    `cache` が None なら立ち絵の連番は書かない（立ち絵を出さないセリフ。wav・json・長さは同じ）。
+    """
     speaker = line.speaker if line.speaker is not None else config.speaker
     query = config.apply_voice(client.audio_query(line.text, speaker))
     query.update(line.voice)
@@ -235,7 +238,7 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
         frames=n + after, voice_frames=n, fps=fps, seed=_seed(line.index, line.character, line.text),
         mouth=mouth_mode, vowels=vowel_track(scale_to(phonemes_from_query(query), wav.duration), fps, n),
         rms=frame_rms(wav, fps, n))
-    mode, _ = mouth_states(motion, character, cache.expression)
+    mode = mouth_states(motion, character, cache.expression)[0] if cache is not None else ""
     n = motion.frames
 
     stem = stem or f"line{line.index:03d}"
@@ -243,7 +246,8 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
     wav_path = out_dir / f"{stem}.wav"
     wav_path.write_bytes(wav_bytes)
     motion.save(out_dir / f"{stem}.json")  # 表情を変えて並べ直すとき用
-    link_frames(motion_frames(motion, cache), out_dir / stem)
+    if cache is not None:
+        link_frames(motion_frames(motion, cache), out_dir / stem)
 
     extra = {"mouth_mode": mode, "kana": query.get("kana", ""), "kana_auto": kana_auto}
     if use_accent:
@@ -300,6 +304,8 @@ def render_script(lines: list[Line], configs: dict[str, CharacterConfig], out_di
     caches: dict[tuple[str, str | None], FrameCache] = {}
 
     def setup(name: str, preset: str | None = None) -> tuple[Character, FrameCache]:
+        if configs[name].folder is None:
+            raise ValueError(f"{name} は立ち絵の無いキャラクターです（Blender のアドオンで使ってください）")
         if name not in characters:
             characters[name] = load_character(configs[name].folder)
         if (name, preset) not in caches:

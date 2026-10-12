@@ -1,7 +1,7 @@
 """キャラクター設定（TOML）。
 
     ["ずんだもん"]
-    folder = "../char/ずんだもん"   # 設定ファイルからの相対パスでもよい
+    folder = "../char/ずんだもん"   # 設定ファイルからの相対パスでもよい。省略すると立ち絵の無いキャラ（Blender アドオンのみ）
     speaker = 3                     # VOICEVOX のスタイル ID
     mouth = "auto"                  # auto / vowel（あいうえお）/ volume（音量）
     engine = "http://127.0.0.1:10101"  # 省略可: 声のエンジン（AivisSpeech など VOICEVOX 互換）。省略すると既定
@@ -25,6 +25,7 @@
     bounce = 0.02                   # 喋っている間に跳ねる高さ（画面の高さに対する割合）、sway は揺れる角度（度）
     period = 0.3                    # 跳ねる・揺れる 1 往復の秒数
     enter = "FADE"                  # 登場・退場（exit）の効果 NONE / FADE / SLIDE、effect_seconds はその長さ
+    lines = "SUBTITLE"             # セリフの形の既定 FULL（立ち絵あり）/ SUBTITLE（音声と字幕）/ AUDIO（音声だけ）
 
     ["ずんだもん".audio]               # 省略可（fade_in / fade_out / after は秒。volume / pan は Blender アドオンのみ）
     volume = 1.0
@@ -97,7 +98,7 @@ PART_KEYS = {
 @dataclass
 class CharacterConfig:
     name: str
-    folder: Path
+    folder: Path | None  # None は立ち絵の無いキャラクター（声と字幕だけ）
     speaker: int
     expression: Expression = field(default_factory=Expression)
     mouth: str = "auto"
@@ -205,10 +206,9 @@ def parse_characters(data: dict[str, Any], base: Path, use_material: bool = True
     for name, table in data.items():
         if not isinstance(table, dict):
             raise ValueError(f"{name!r} はテーブル（[{name}]）で書いてください")
-        if "folder" not in table:
-            raise ValueError(f"[{name}] に folder がありません")
-        folder = (base / table["folder"]).resolve()
-        if use_material:
+        # folder が無い・空なら立ち絵の無いキャラクター
+        folder = (base / table["folder"]).resolve() if table.get("folder") else None
+        if use_material and folder is not None:
             table = merge_tables(load_material_defaults(folder), table)
         try:
             speaker = int(table["speaker"])
@@ -297,6 +297,9 @@ def dump_characters(configs: dict[str, CharacterConfig], base: Path | None = Non
     """`load_characters` で読める TOML を返す。`base` を渡すと folder をそこからの相対パスで書く。"""
     out: list[str] = []
     for name, c in configs.items():
+        if c.folder is None:  # 立ち絵の無いキャラクターは folder を書かない
+            out += _dump_table(c, _toml_key(name), None)
+            continue
         folder = Path(c.folder)
         if base is not None:
             try:

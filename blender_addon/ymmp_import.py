@@ -16,9 +16,10 @@ import bpy
 from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
-    ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, auto_signature,
-    character_voice, client, connect, ensure_sequencer_scene, line_channels, load_material, place_strips,
-    refresh_faces, remove_idle, render_clip, scene_fps, seq_scene, subtitle_clashes,
+    ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
+    auto_signature, character_voice, client, connect, ensure_sequencer_scene, line_channels, line_end, line_layout,
+    line_texts, load_material, place_strips, refresh_faces, remove_idle, render_clip, scene_fps, seq_scene,
+    subtitle_clashes,
 )
 from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
@@ -265,8 +266,14 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             if existing is not None:
                 characters[name] = existing
                 continue
-            if c is None or not c.has_tachie:
-                problems.append(f"{name}: 立ち絵（動く立ち絵）が無いので読み込みません")
+            if c is None:
+                problems.append(f"{name}: キャラクターの設定がプロジェクトにありません")
+                continue
+            if not c.has_tachie:  # 立ち絵の無いキャラは声と字幕だけ
+                ch = add_voice_character(context, name)
+                ch.line_layout = "SUBTITLE" if c.subtitle_visible else "AUDIO"
+                _setup_character(context, ch, c, project, None, problems)
+                characters[name] = ch
                 continue
             folder = find_material(settings.ymmp_material_root, c.folder_name)
             if folder is None:
@@ -293,8 +300,10 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             return span.parts if span is not None and span.parts else base
 
         def expression(name: str, f: int, face: dict) -> str:
-            parts = overlay(tachie_base(name, f), face)
             ch = characters[name]
+            if not ch.folder:
+                return ""
+            parts = overlay(tachie_base(name, f), face)
             return presets[name].name_for(_valid_parts(ch, parts, problems, _base_parts(ch)))
 
         # セリフ
@@ -332,22 +341,27 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                          # 切り上げると余韻のフレームが 1 つ増えるので切り捨て
                          "fade_out": v.fade_out, "after": math.floor(after * 10000) / 10000}
                 voice = {**character_voice(ch), **{k: x for k, x in v.voice.items() if k in character_voice(ch)}}
+                hide_subtitle = v.subtitle == "Hidden" or (
+                    v.subtitle == "UseCharacterSetting" and c and not c.subtitle_visible)
+                layout = line_layout(ch)
+                if not ch.folder:  # 立ち絵の無いキャラは、字幕を出すセリフは音声と字幕、出さないセリフは音声だけ
+                    layout = "AUDIO" if hide_subtitle else "SUBTITLE"
                 try:
                     preset = expression(v.character, v.frame, v.face)
                     clip, lines_dir = render_clip(context, ch, v.text, preset or None, speaker=v.style_id, voice=voice,
                                                   kana=v.kana or None, accent=v.accent, accent_kana=v.kana or None,
-                                                  audio=audio)
-                    channels = line_channels(context, ch, start, clip.frames)
+                                                  audio=audio, layout=layout)
+                    channels = line_channels(context, ch, start, clip.frames, layout=layout)
                 except ERRORS as e:
                     problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: {e}")
                     skipped["置けなかったセリフ"] += 1
                     continue
                 strips = place_strips(context, ch, clip, lines_dir, v.text, start, voice=voice, accent=v.accent,
-                                      audio=audio, channels=channels)
+                                      audio=audio, channels=channels, layout=layout)
                 sound = strips[0]
                 sound.volume, sound.pan = audio["volume"], max(-1.0, min(1.0, audio["pan"]))
-                if v.subtitle == "Hidden" or (v.subtitle == "UseCharacterSetting" and c and not c.subtitle_visible):
-                    for s in strips[2:]:
+                if hide_subtitle:
+                    for s in line_texts(strips):
                         s.mute = True
                 else:
                     clashes = subtitle_clashes(sed, strips)
@@ -355,7 +369,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                         problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: 字幕が"
                                         f"{'・'.join(clashes)}の字幕と重なっています")
                 connect(context, strips)
-                line_spans.setdefault(v.character, []).append((start, strips[1].right_handle))
+                line_spans.setdefault(v.character, []).append((start, line_end(strips)))
                 placed += 1
         finally:
             wm.progress_end()
@@ -376,7 +390,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             faces += 1
 
         for span in project.tachies:
-            if span.character not in characters or span.hidden:
+            if span.character not in characters or span.hidden or not characters[span.character].folder:
                 continue
             ch = characters[span.character]
             preset = presets[span.character].name_for(
@@ -391,7 +405,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 cursor = max(cursor, b)
             add_face(span.character, cursor, end, preset)
         for span in project.faces:
-            if span.character not in characters or span.hidden:
+            if span.character not in characters or span.hidden or not characters[span.character].folder:
                 continue
             add_face(span.character, frame(span.frame), frame(span.frame + span.length),
                      expression(span.character, span.frame, span.parts))

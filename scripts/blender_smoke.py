@@ -646,6 +646,70 @@ metan.show_name = False
 ops.refresh_idle(bpy.context)
 scene.frame_end = frame_end_before
 
+# セリフの形: 音声と字幕・音声だけ（立ち絵なし）。喋っている間はそのキャラの立ち絵（待機）も消す
+import tomllib  # noqa: E402
+
+from bl_ext.user_default.blender_tachie.tachie_studio.pipeline.config import (  # noqa: E402
+    dump_characters, parse_characters)
+
+frame_end_before = scene.frame_end
+t1 = max(r for _, r, _ in lines().values()) + 30
+by_text = lambda text: next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"] == text)
+span = lambda sts: (min(x.left_handle for x in sts), max(x.right_handle for x in sts))
+cue_has = lambda text: any(text in c.text.replace("\n", "") for c in ops.subtitle_cues(scene))
+zunda.line_layout = "SUBTITLE"
+scene.frame_current = t1
+s.active_character, s.expression, s.text = 0, "", "形を変えるのだ。"
+run(bpy.ops.tachie.add_line)
+fsts = by_text("形を変えるのだ。")
+fl, fr = span(fsts)
+assert sorted(x.type for x in fsts) == ["SOUND", "TEXT"] and all(x["tachie_layout"] == "SUBTITLE" for x in fsts)
+assert not any(x.channel == zunda.channel and x.left_handle < fr and fl < x.right_handle for x in sed.strips)
+assert any(x.get("tachie_idle") == "四国めたん" and x.left_handle < fr and fl < x.right_handle for x in sed.strips)
+assert cue_has("形を変えるのだ")
+sed.active_strip = role(fsts, SOUND)
+run(bpy.ops.tachie.pick_line_layout, line_layout="AUDIO")
+fsts = by_text("形を変えるのだ。")
+assert [x.type for x in fsts] == ["SOUND"] and not cue_has("形を変えるのだ") and span(fsts)[0] == fl
+assert ops.line_end(fsts) == fr  # 音声だけでも余韻を含む長さ（再生成で後ろがずれない）
+sed.active_strip = fsts[0]
+run(bpy.ops.tachie.pick_line_layout, line_layout="FULL")
+fsts = by_text("形を変えるのだ。")
+assert role(fsts, ("IMAGE", None)).channel == zunda.channel and span(fsts) == (fl, fr)
+check_idle()  # 立ち絵が戻れば待機も元どおり
+zunda.line_layout = "FULL"
+# 立ち絵の無いキャラクター: 声と字幕だけ。同じキャラでも重ねて置ける。TOML に folder を書かない
+run(bpy.ops.tachie.character_add_voice, name="ナレーション")
+nar = s.characters[-1]
+assert nar.name == "ナレーション" and nar.folder == "" and nar.line_layout == "SUBTITLE"
+assert nar.channel not in {c.channel for c in s.characters if c != nar}
+s.active_character = len(s.characters) - 1
+for i, text in enumerate(["ナレーションです。", "重ねて話します。"]):
+    scene.frame_current = t1 + 5 * i
+    s.text = text
+    run(bpy.ops.tachie.add_line)
+nsts = by_text("ナレーションです。")
+assert sorted(x.type for x in nsts) == ["SOUND", "TEXT"] and span(nsts)[0] == t1
+sed.active_strip = role(nsts, SOUND)
+run(bpy.ops.tachie.regenerate)
+nsts = by_text("ナレーションです。")
+assert sorted(x.type for x in nsts) == ["SOUND", "TEXT"] and span(nsts)[0] == t1
+again = parse_characters(tomllib.loads(dump_characters({nar.name: ops.config_of(nar)})), out)[nar.name]
+assert again.folder is None and again.layout.get("lines") == "SUBTITLE"
+for x in sed.strips_all:
+    x.select = False
+for x in nsts:
+    x.select = True
+run(bpy.ops.tachie.batch_edit, use_line_layout=True, line_layout="AUDIO")
+assert [x.type for x in by_text("ナレーションです。")] == ["SOUND"]
+for x in [x for x in sed.strips if x.get("tachie_character") == nar.name
+          or x.get("tachie_text", "").startswith("形を変える")]:
+    sed.strips.remove(x)
+s.characters.remove(len(s.characters) - 1)
+s.active_character = 0
+ops.refresh_idle(bpy.context)
+scene.frame_end = frame_end_before
+
 # YMM4 のプロジェクトの読み込み: 今あるキャラ（ずんだもん）はそのまま、無いキャラは素材フォルダから追加する
 import json  # noqa: E402
 
@@ -678,11 +742,16 @@ ymmp.write_text(json.dumps({
         "TachieType": "YukkuriMovieMaker.Plugin.Tachie.AnimationTachie.AnimationTachiePlugin, X",
         "TachieCharacterParameter": {"Directory": metan_dir},
         "TachieDefaultItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png",
-                                       "Mouth": metan_dir + "\\口\\ほほえみ.png"}}],
+                                       "Mouth": metan_dir + "\\口\\ほほえみ.png"}},
+        {"Name": "ナレーター（YMM4）", "Voice": {"API": "voicevox"}, "Volume": 50.0, "AdditionalTime": 0.1,
+         "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
+                            "StyleID": 2}, "FontSize": 50.0, "Y": 400.0, "IsJimakuVisible": True,
+         "TachieType": None}],
     "Timelines": [{"VideoInfo": {"FPS": 60, "Width": 1920, "Height": 1080}, "Length": ymm_base + 700, "Items": [
         ymm_voice("ずんだもん", "読み込んだセリフなのだ", 0, {"Eye": YMM_CHAR + "ずんだもん\\目\\なごみ目.png"}),
         ymm_voice("めたん（YMM4）", "読み込んだセリフですわ", 300),
         ymm_voice("めたん（YMM4）", "読み込んだかぶせるセリフ", 20),  # ずんだもんと同時に喋る
+        ymm_voice("ナレーター（YMM4）", "読み込んだナレーション", 500),  # 立ち絵の無いキャラ
         {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "めたん（YMM4）",
          "TachieItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png",
                                  "Mouth": metan_dir + "\\口\\ほほえみ.png"}, "X": -770.0, "Y": 600.0,
@@ -700,7 +769,7 @@ n_chars = len(s.characters)
 run(bpy.ops.tachie.import_ymmp, filepath=str(ymmp), match_video=False)
 report = bpy.data.texts["YMM4 の読み込み結果"].as_string()
 print(report)
-assert "セリフ 3 / 3 個" in report and "画像: 1" in report and "存在しないフォント" in report, report
+assert "セリフ 4 / 4 個" in report and "画像: 1" in report and "存在しないフォント" in report, report
 ymetan = s.characters[n_chars]
 assert ymetan.name == "めたん（YMM4）" and ymetan.speaker == 2 and abs(ymetan.speed_scale - 1.1) < 1e-6
 assert abs(ymetan.audio_after - 0.2) < 1e-6 and ymetan.font_size == 70 and ymetan.subtitle_y == 0.0
@@ -715,10 +784,16 @@ assert zpreset not in zunda_presets and next(e for e in zunda.expressions if e.n
 yfaces = [x for x in sed.strips if x.get("tachie_face") == "ずんだもん" and x.left_handle == zl + 300]
 assert yfaces and next(e for e in zunda.expressions
                        if e.name == yfaces[0]["tachie_expression"]).part_eyebrow == "怒り眉"
+ynar = s.characters[n_chars + 1]  # 立ち絵の無いキャラは素材を探さずに追加し、声と字幕だけで置く
+assert ynar.name == "ナレーター（YMM4）" and ynar.folder == "" and ynar.line_layout == "SUBTITLE"
+assert ynar.speaker == 2 and ynar.font_size == 50
+_, nsts = ylines["読み込んだナレーション"]
+assert sorted(x.type for x in nsts) == ["SOUND", "TEXT"] and nsts[0]["tachie_layout"] == "SUBTITLE"
 # 片付け（あとのテストに影響しないように）
 for x in [x for x in sed.strips if (x.get("tachie_text", "").startswith("読み込んだ") or x in yfaces
-                                    or x.get("tachie_character") == ymetan.name)]:
+                                    or x.get("tachie_character") in (ymetan.name, ynar.name))]:
     sed.strips.remove(x)
+s.characters.remove(n_chars + 1)
 s.characters.remove(n_chars)
 for i in reversed(range(len(zunda.expressions))):
     if zunda.expressions[i].name not in zunda_presets:

@@ -319,6 +319,14 @@ def _update_placement(self, context):
     _update_motion(self, context)
 
 
+# セリフの形（セリフごとにストリップの tachie_layout に持つ。キャラの line_layout は新しく置くセリフの既定）
+LINE_LAYOUTS = [
+    ("FULL", "立ち絵あり", "音声・口パクする立ち絵・字幕"),
+    ("SUBTITLE", "音声と字幕", "立ち絵を出さない（喋っている間はそのキャラの立ち絵を消す）"),
+    ("AUDIO", "音声だけ", "立ち絵も字幕も出さない（喋っている間はそのキャラの立ち絵を消す）"),
+]
+
+
 class TachieCharacter(bpy.types.PropertyGroup):
     # name は PropertyGroup が持っている
     folder: StringProperty(name="素材フォルダ", subtype="DIR_PATH",
@@ -361,6 +369,9 @@ class TachieCharacter(bpy.types.PropertyGroup):
                                   unit="TIME_ABSOLUTE", update=_update_motion)
     show_idle: BoolProperty(name="待機中も表示", default=True,
                             description="喋っていない間も、まばたきだけする立ち絵を表示する")
+    line_layout: EnumProperty(name="セリフの形", items=LINE_LAYOUTS, default="FULL",
+                              description="新しく置くセリフの形（置いたセリフはセリフごとに変えられる）。"
+                                          "素材フォルダの無いキャラの「立ち絵あり」は「音声と字幕」になる")
 
     font_path: StringProperty(name="フォント", subtype="FILE_PATH", default=default_font(), update=_update_subtitle)
     font_size: FloatProperty(name="文字サイズ", default=64, min=8, max=400, update=_update_subtitle)

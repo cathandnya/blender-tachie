@@ -93,7 +93,7 @@ mouth = "volume"
 
 
 @pytest.mark.parametrize("data,match", [
-    ({"a": {"speaker": 1}}, "folder"),
+    ({"a": {}}, "speaker"),
     ({"a": {"folder": "x", "speaker": 1, "mouth": "lip"}}, "mouth"),
     ({"a": {"folder": "x", "speaker": 1, "parts": {"耳": "x"}}}, "耳"),
 ])
@@ -374,6 +374,39 @@ def test_render_line_after_and_fade(tmp_path: Path, char_dir: Path):
     assert last[2] == 20
     assert read_wav(out / "l.wav").samples[-1] == 0
 
+
+
+def test_render_line_without_tachie(tmp_path: Path, char_dir: Path):
+    """立ち絵を出さないセリフ（cache=None）は wav と json だけ書き、長さは立ち絵ありと同じ。"""
+    from tachie_studio.pipeline.render import FrameCache, render_line
+    from tachie_studio.pipeline.script import Line
+
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path)["テスト"]
+    character = load_character(char_dir)
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    out = tmp_path / "o"
+    full = render_line(FakeClient(), cfg, character, Line(1, "テスト", "あ", after=0.3), out, fps=10, cache=cache,
+                       stem="f")
+    voice = parse_characters({"声": {"speaker": 1}}, tmp_path)["声"]
+    bare = render_line(FakeClient(), voice, None, Line(1, "声", "あ", after=0.3), out, fps=10, cache=None, stem="v")
+    assert voice.folder is None and bare.frames == full.frames and bare.extra["mouth_mode"] == ""
+    assert (out / "v.wav").is_file() and (out / "v.json").is_file() and not (out / "v").exists()
+
+
+def test_characters_without_folder(tmp_path: Path):
+    """folder の無いキャラ（立ち絵なし）は書き出しでも folder を書かず、CLI では使えない。"""
+    import tomllib
+
+    from tachie_studio.pipeline.render import render_script
+    from tachie_studio.pipeline.script import Line
+
+    configs = parse_characters({"ナレーション": {"speaker": 2, "layout": {"lines": "AUDIO"}}}, tmp_path)
+    text = dump_characters(configs, base=tmp_path)
+    assert "folder" not in text
+    again = parse_characters(tomllib.loads(text), tmp_path)["ナレーション"]
+    assert again.folder is None and again.speaker == 2 and again.layout == {"lines": "AUDIO"}
+    with pytest.raises(ValueError, match="立ち絵の無いキャラクター"):
+        render_script([Line(1, "ナレーション", "あ")], configs, tmp_path / "o", client=FakeClient())
 
 
 def test_expression_for_slots(tmp_path: Path):

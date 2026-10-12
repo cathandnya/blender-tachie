@@ -18,7 +18,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は
   Speed/Intonation/PauseLengthScale が %、Pitch は 100 が 0（(Pitch-100)/100）。`Pronounce.AudioQuery` があればその値と
   accent_phrases を優先。ボイスの `Length` = 声 + AdditionalTime。`VoiceCache`（圧縮された音声）は使わない。
-  アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 素材フォルダは `ymmp_material_root` の下（2 階層）から
+  アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 立ち絵の無いキャラは素材を探さずに追加する。素材フォルダは `ymmp_material_root` の下（2 階層）から
   YMM4 と同じ名前で探す（`add_character` を使う）。既にあるキャラは設定を変えない。表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
   立ち絵アイテムの基本がキャラの基本と違う区間は、セリフの区間を除いて表情ストリップにする。余韻は次のセリフに 1 フレーム
@@ -51,6 +51,16 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   字幕をセリフごとにずらす量は字幕ストリップの `tachie_sub_x` / `tachie_sub_y`（`properties.place_text`、再生成で引き継ぐ）。
   自動反映（`motion_signature` に含める）で `refresh_motion` がキャラ名にも写して location を当て直す。
   `subtitle_clashes` で時間も位置も重なる字幕を知らせる。
+  セリフの形（#18、`properties.LINE_LAYOUTS`）: FULL（立ち絵あり）/ SUBTITLE（音声と字幕）/ AUDIO（音声だけ）。全ストリップの
+  `tachie_layout`（無い古いセリフは立ち絵があれば FULL、`line_layout_of`）で、再生成で引き継ぐ。新しく置くセリフはキャラの
+  `line_layout`（TOML は `[キャラ.layout]` の `lines`）。素材フォルダの無いキャラ（`folder = ""`、TOML は folder を省略、
+  `CharacterConfig.folder = None`、CLI では使えない）の FULL は SUBTITLE（`operators.line_layout`）。立ち絵の無い形は
+  `render_line(cache=None)` で連番を書かず（wav・json・長さは同じ）、`line_channels` はキャラのチャンネルを見ない（同じキャラでも
+  重ねてよい）。`refresh_idle` はそのキャラの立ち絵の無いセリフの区間を待機で埋めない（立ち絵を消す）。
+  `place_strips` の戻り値は置いたものだけなので、番号ではなく `line_image` / `line_subtitle` / `line_texts` / `line_end` /
+  `line_focus` で取る。音声だけのセリフは音声ストリップが余韻の分短いので、セリフの長さは全ストリップの
+  `tachie_frames`（`line_end`）。立ち絵の無いキャラのセリフを立ち絵のあるキャラに変えたら形はそのキャラの既定。立ち絵の無いキャラは `add_voice_character`（メニュー「立ち絵なしのキャラクターを追加」）、
+  素材に関わるパネルは `_WithTachie` で隠す。YMM4 の立ち絵の無いキャラ（`has_tachie` が False）もこれで読み込む。
   ストリップの位置は `content_start` / `duration` を使う（`frame_start` / `frame_final_duration` は 6.0 で削除予定）。
   立ち絵の動き（#11、`blender_addon/motion.py`）: 立ち絵ストリップの transform.offset_x / offset_y / rotation と
   blend_alpha にキーフレームを打つ（シーンの Action、Blender 5 はスロットの channelbag。`anim_utils.action_get_channelbag_for_slot`）。

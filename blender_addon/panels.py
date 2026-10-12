@@ -1,7 +1,8 @@
 import bpy
 
-from .operators import line_sound, line_strips, line_subtitle, load_material, output_dir, prefs, selected_targets, seq_scene
-from .properties import AUDIO_PROPS, BAKED_AUDIO, PART_PROPS, VOICE_PROPS
+from .operators import (line_image, line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
+                        prefs, selected_targets, seq_scene)
+from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS
 
 
 class _Panel:
@@ -26,6 +27,8 @@ class TACHIE_MT_characters(bpy.types.Menu):
     bl_label = "キャラクター設定"
 
     def draw(self, context):
+        self.layout.operator("tachie.character_add_voice", icon="SPEAKER")
+        self.layout.separator()
         self.layout.operator("tachie.import_characters", icon="IMPORT")
         self.layout.operator("tachie.export_characters", icon="EXPORT")
         self.layout.operator("tachie.import_presets", icon="SHADERFX")
@@ -54,8 +57,9 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
 
         ch = s.character()
         layout.prop(s, "text", text="")
+        tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
-        row.enabled = ch is not None
+        row.enabled = tachie
         row.label(text="表情")
         row.operator("tachie.pick_expression", text=s.expression or "（基本）").target = "ADD"
         row = layout.row()
@@ -63,11 +67,11 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         row.enabled = ch is not None
         row.operator("tachie.add_line", text=f"{ch.name}のセリフを追加" if ch else "セリフを追加", icon="ADD")
         row = layout.row(align=True)
-        row.enabled = ch is not None
+        row.enabled = tachie
         row.operator("tachie.add_still", text="立ち絵だけを置く", icon="IMAGE_DATA")
         row.prop(s, "still_seconds")
         row = layout.row(align=True)
-        row.enabled = ch is not None
+        row.enabled = tachie
         row.operator("tachie.add_face", text="表情を置く", icon="SHADERFX")
         row.prop(s, "face_seconds")
         layout.prop(s, "advance")
@@ -135,9 +139,16 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                              icon="IPO_EASE_IN_OUT")
                 if edited:
                     row.operator("tachie.clear_accent", text="", icon="X")
+            strips = line_strips(sed, strip["tachie_id"])
+            shape = line_layout_of(strips)
             row = layout.row(align=True)
-            row.label(text="表情")
-            row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "LINE"
+            row.label(text="形")
+            row.operator_menu_enum("tachie.pick_line_layout", "line_layout",
+                                   text=next(n for k, n, _ in LINE_LAYOUTS if k == shape))
+            if shape == "FULL":
+                row = layout.row(align=True)
+                row.label(text="表情")
+                row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "LINE"
             col = layout.column(align=True)
             if sound is not None and "tachie_voice_speed_scale" in sound:
                 for prop, (_, label, *_) in VOICE_PROPS.items():
@@ -152,8 +163,8 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                 col.operator("tachie.reset_line_voice", icon="LOOP_BACK")
             else:
                 col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
-            draw_pose(layout, next((s for s in line_strips(sed, strip["tachie_id"]) if s.type == "IMAGE"), None))
-            draw_text_pose(layout, line_subtitle(line_strips(sed, strip["tachie_id"])))
+            draw_pose(layout, line_image(strips))
+            draw_text_pose(layout, line_subtitle(strips))
             row = layout.row()
             row.scale_y = 1.2
             row.operator("tachie.regenerate", icon="FILE_REFRESH")
@@ -204,17 +215,30 @@ class TACHIE_PT_character(_Panel, bpy.types.Panel):
         layout = self.layout
         ch = seq_scene(context).tachie.character()
         layout.prop(ch, "folder")
+        if not ch.folder:
+            layout.label(text="立ち絵の無いキャラクター（声と字幕だけ）", icon="SPEAKER")
+        layout.prop(ch, "line_layout")
         layout.prop(ch, "engine")
         if ch.engine == "CUSTOM":
             layout.prop(ch, "engine_url")
         row = layout.row(align=True)
         row.prop(ch, "speaker")
         row.operator("tachie.pick_speaker", text=ch.speaker_name or "選ぶ", icon="VIEWZOOM")
-        layout.prop(ch, "mouth")
-        layout.prop(ch, "show_idle")
+        if ch.folder:
+            layout.prop(ch, "mouth")
+            layout.prop(ch, "show_idle")
 
 
-class TACHIE_PT_motion(_Panel, bpy.types.Panel):
+class _WithTachie:
+    """立ち絵のあるキャラクター（素材フォルダがある）のときだけ出すパネル。"""
+
+    @classmethod
+    def poll(cls, context):
+        ch = seq_scene(context).tachie.character()
+        return ch is not None and bool(ch.folder)
+
+
+class TACHIE_PT_motion(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "動き"
     bl_parent_id = "TACHIE_PT_character"
     bl_options = {"DEFAULT_CLOSED"}
@@ -345,7 +369,7 @@ def part_rows(ch):
     return [(c, props, c) for c, props in PART_PROPS.items()]
 
 
-class TACHIE_PT_expression(_Panel, bpy.types.Panel):
+class TACHIE_PT_expression(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "表情"
     bl_parent_id = "TACHIE_PT_character"
 
@@ -370,7 +394,7 @@ class TACHIE_PT_expression(_Panel, bpy.types.Panel):
         layout.label(text="変えたら「全セリフを再生成」で反映", icon="INFO")
 
 
-class TACHIE_PT_presets(_Panel, bpy.types.Panel):
+class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "表情プリセット"
     bl_parent_id = "TACHIE_PT_character"
     bl_options = {"DEFAULT_CLOSED"}
@@ -421,7 +445,7 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
         layout.operator("tachie.import_ymmp", icon="IMPORT")
 
 
-class TACHIE_PT_placement(_Panel, bpy.types.Panel):
+class TACHIE_PT_placement(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "配置"
     bl_parent_id = "TACHIE_PT_character"
     bl_options = {"DEFAULT_CLOSED"}
