@@ -1106,12 +1106,14 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        play_preview(context, wav)
+        problem = play_preview(context, wav)
+        if problem:
+            self.report({"WARNING"}, problem)
         return {"FINISHED"}
 
 
-def play_preview(context, wav: bytes) -> None:
-    """合成した wav を鳴らす（前の試聴は止める）。"""
+def play_preview(context, wav: bytes) -> str | None:
+    """合成した wav を鳴らす（前の試聴は止める）。鳴らせなかったら理由を返す（音声デバイスの無いサーバなど）。"""
     global _preview
     import aud
 
@@ -1120,7 +1122,12 @@ def play_preview(context, wav: bytes) -> None:
     if _preview is not None:
         _preview.stop()
     path.write_bytes(wav)
-    _preview = aud.Device().play(aud.Sound(str(path)).cache())
+    try:
+        _preview = aud.Device().play(aud.Sound(str(path)).cache())
+    except aud.error as e:
+        _preview = None
+        return f"音声デバイスを開けないので試聴できません（{e}）。合成した音声は {path} にあります"
+    return None
 
 
 # ---- 抑揚の編集 ----
@@ -1259,7 +1266,9 @@ class TACHIE_OT_preview_accent(bpy.types.Operator):
         except (*ERRORS, IndexError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        play_preview(context, wav)
+        problem = play_preview(context, wav)
+        if problem:
+            self.report({"WARNING"}, problem)
         return {"FINISHED"}
 
 

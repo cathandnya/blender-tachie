@@ -2,9 +2,12 @@
 # 拡張機能をビルドし、一時的な Blender ユーザーフォルダに入れて結合テストを動かす（普段の設定には触れない）。
 # 使い方: scripts/smoke.sh [出力フォルダ]（既定 out/smoke）。VOICEVOX エンジンと char/ の素材が必要。
 # エンジンが別のマシンなら VOICEVOX_URL=http://host:50021 scripts/smoke.sh
+# 音声デバイスの無いサーバでは、試聴（OpenAL）で警告が出るだけ。ALSOFT_DRIVERS=null を付けると黙る
 set -eu
 cd "$(dirname "$0")/.."
-OUT=$(cd "$(dirname "${1:-out/smoke}")" 2>/dev/null && pwd)/$(basename "${1:-out/smoke}") || OUT="$PWD/out/smoke"
+OUT_ARG=${1:-out/smoke}
+mkdir -p "$(dirname "$OUT_ARG")"
+OUT="$(cd "$(dirname "$OUT_ARG")" && pwd)/$(basename "$OUT_ARG")"
 # Blender は build_addon.py と同じく、環境変数 BLENDER、PATH の blender、OS ごとの標準の場所の順で探す
 # （Windows では Git Bash で動かす）
 BLENDER=$(uv run python -c 'import sys; sys.path.insert(0, "scripts"); from build_addon import find_blender; print(find_blender())')

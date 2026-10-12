@@ -290,7 +290,6 @@ check_idle()
 zunda.audio_after = 0.3
 
 # 表情ストリップ: 重なる範囲だけ立ち絵の表情が変わり、音声はそのまま
-import os  # noqa: E402
 
 def image_of(cid):
     return next(x for x in ops.line_strips(sed, cid) if x.type == "IMAGE")
@@ -488,12 +487,16 @@ subs = lambda name: [x for x in sed.strips if x.type == "TEXT" and x.get("tachie
 assert all(abs(x.outline_color[0] - 0.75) < 1e-3 for x in subs("四国めたん")), "TOML の縁取りの色が入っていない"
 from bl_ext.user_default.blender_tachie.properties import system_fonts  # noqa: E402
 
-maru = next(p for n, p in system_fonts() if "丸ゴ" in n)
+# 別のフォントに変える（Mac はヒラギノ丸ゴ、無ければ今と違う日本語フォント。Linux なら Noto CJK など）
+fonts = system_fonts()
+current = os.path.realpath(bpy.path.abspath(metan.font_path)) if metan.font_path else ""
+maru = next((p for n, p in fonts if "丸ゴ" in n), None) or next(
+    p for n, p in fonts if os.path.realpath(p) != current and any(k in n for k in ("CJK", "JP", "ゴシック", "Gothic")))
 zunda.outline_color = (0.1, 0.45, 0.1, 1.0)
 metan.font_path, metan.font_size = maru, 72
 assert all(abs(x.outline_color[1] - 0.45) < 1e-3 for x in subs("ずんだもん"))
-assert all(x.font_size == 72 and x.font and "Maru" in x.font.name for x in subs("四国めたん")), \
-    [(x.font_size, x.font.name if x.font else None) for x in subs("四国めたん")]
+assert all(x.font_size == 72 and x.font and os.path.realpath(bpy.path.abspath(x.font.filepath)) == os.path.realpath(maru)
+           for x in subs("四国めたん")), [(x.font_size, x.font.filepath if x.font else None) for x in subs("四国めたん")]
 assert all(x.font_size == 64 for x in subs("ずんだもん"))
 print("フォント:", {x.get("tachie_character"): x.font.name for x in sed.strips if x.type == "TEXT"})
 zunda_images = [x for x in sed.strips if x.type == "IMAGE" and "ずんだもん" in (x.get("tachie_character"), x.get("tachie_idle"))]
