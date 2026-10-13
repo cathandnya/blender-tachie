@@ -130,8 +130,9 @@ uv run python -m tachie_studio.tachie.psd_animation <動く立ち絵の素材フ
 | OS | 状態 |
 |---|---|
 | macOS（Apple Silicon） | 確認済み |
+| Windows（x64） | 確認済み（Windows 11。インストール・セリフの追加・台本の流し込み・結合テスト） |
 | Linux（x64） | 確認済み（画面なしの Ubuntu で結合テストが通る） |
-| Windows（x64 / ARM）・macOS（Intel） | zip はビルドするが未確認 |
+| Windows（ARM）・macOS（Intel） | zip はビルドするが未確認 |
 
 ## インストール
 
@@ -145,6 +146,9 @@ uv run python scripts/build_addon.py --install
 OS ごとの zip（`dist/blender_tachie-<version>-<OS>.zip`、その OS 用の Pillow を同梱）を作り、`--install` ではこの OS 用を Blender に入れます。
 他の OS では、その OS 用の zip を Blender の「Install from Disk」で入れてください。
 Blender は環境変数 `BLENDER`、PATH の `blender`、標準のインストール先の順で探します。
+
+Windows で立ち絵素材の zip（ファイル名が Shift_JIS のもの）を展開するときは、エクスプローラーの「すべて展開」か
+Windows PowerShell 5.1 の `Expand-Archive` を使ってください。PowerShell 7 の `Expand-Archive` ではファイル名が化けます。
 
 ## コマンドライン
 
