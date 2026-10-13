@@ -135,6 +135,33 @@ class TachiePreferences(bpy.types.AddonPreferences):
     )
     sound_effects: CollectionProperty(type=TachieSoundEffect)
     templates: CollectionProperty(type=TachieTemplate)
+    # AI で表情を割り当てる（#27、OpenAI 互換のチャット API）
+    llm_url: StringProperty(name="接続先", default="http://127.0.0.1:1234",
+                            description="OpenAI 互換のチャット API。LM Studio は http://127.0.0.1:1234、"
+                                        "Ollama は http://127.0.0.1:11434、"
+                                        "Gemini は https://generativelanguage.googleapis.com/v1beta/openai/")
+    llm_model: StringProperty(name="モデル", default="qwen/qwen3-4b",
+                              description="接続先でのモデル名。空のまま接続テストを押すと一覧の先頭が入る")
+    llm_api_key: StringProperty(name="API キー", subtype="PASSWORD", default="",
+                                description="クラウドの API を使うときだけ。アドオン設定（userpref.blend）に平文で残る。"
+                                            "環境変数 TACHIE_LLM_API_KEY があればそちらを使う")
+    llm_lines_per_request: IntProperty(name="1 回あたりの行数", default=12, min=1, max=100,
+                                       description="多すぎるとモデルが後半を落とす（落とした行は自動で聞き直す）")
+    llm_context_lines: IntProperty(name="文脈の行数", default=4, min=0, max=50,
+                                   description="対象の手前を何行、文脈として送るか。増やすと遅くなる")
+    llm_no_think: BoolProperty(name="/no_think を付ける", default=True, description="Qwen3 系の thinking を抑える")
+    llm_reasoning_effort: StringProperty(name="reasoning_effort", default="low",
+                                         description="gpt-oss 系で効く（medium は low の約 2 倍遅い）。"
+                                                     "Gemini などで断られるなら空にする")
+    llm_include_reason: BoolProperty(name="判断の理由を書かせる", default=False,
+                                     description="結果のテキストに理由が出る。25〜40% 遅くなる")
+    llm_timeout: IntProperty(name="タイムアウト（秒）", default=180, min=10, max=3600)
+    faceassign_policy: StringProperty(name="作品の方針", default="",
+                                      description="LLM に伝える方針（例: 明るいトーンの解説動画。怒りは控えめに）")
+    faceassign_target: EnumProperty(
+        name="書き込み先", default="LINE",
+        items=[("LINE", "セリフの表情", "セリフの表情プリセットを変える（音声は合成し直さない）"),
+               ("FACE_STRIP", "表情ストリップ", "セリフの区間に表情ストリップを置く（後から目で見て直しやすい）")])
 
     def draw(self, context):
         from .operators import character_defaults_path, load_character_defaults
@@ -165,6 +192,22 @@ class TachiePreferences(bpy.types.AddonPreferences):
         box = layout.box()
         box.label(text="テンプレート（シーケンサーの立ち絵タブの「テンプレート」で置く）")
         draw_templates(box, self, editable=True)
+        box = layout.box()
+        box.label(text="表情の割り当て（AI）。セリフを選んで「立ち絵」タブの「AI で表情を割り当てる」")
+        box.prop(self, "llm_url")
+        row = box.row(align=True)
+        row.prop(self, "llm_model")
+        row.operator("tachie.llm_test", text="接続テスト")
+        box.prop(self, "llm_api_key")
+        box.prop(self, "faceassign_policy")
+        box.prop(self, "faceassign_target")
+        col = box.column(heading="調整")
+        col.prop(self, "llm_lines_per_request")
+        col.prop(self, "llm_context_lines")
+        col.prop(self, "llm_reasoning_effort")
+        col.prop(self, "llm_no_think")
+        col.prop(self, "llm_include_reason")
+        col.prop(self, "llm_timeout")
 
 
 def draw_sound_effects(layout, preferences) -> None:

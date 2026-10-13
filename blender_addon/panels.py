@@ -97,6 +97,12 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row = layout.row()
             row.scale_y = 1.2
             row.operator("tachie.batch_edit", text=f"選択中の {n} 個をまとめて変える", icon="MODIFIER")
+        if ids:
+            preferences = context.preferences.addons[__package__].preferences
+            row = layout.row(align=True)
+            row.operator("tachie.assign_faces", text=f"AI で表情を割り当てる（{len(ids)} 行）", icon="SHADERFX")
+            row.prop(preferences, "faceassign_target", text="")
+        if n > 1 or ids:
             layout.separator()
         if strip is not None and strip.get("tachie_face"):
             layout.label(text=f"{strip['tachie_face']}の表情ストリップ", icon="SHADERFX")

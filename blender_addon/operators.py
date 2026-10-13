@@ -899,6 +899,39 @@ def _relayout_line(context, strip, ch, preset: str, segments, key: str) -> None:
     strip["tachie_faced"] = key
 
 
+def set_line_expression(context, clip_id: str, preset: str) -> list:
+    """セリフの表情を変える。保存した動き（lines/<id>.json）から立ち絵の連番を並べ直すので、音声は合成し直さない。
+
+    動きの無い古いセリフ・長さが書き出したときと違うセリフは作り直す（`regenerate`）。表情ストリップは呼び出し側で
+    `refresh_faces` する（ここでは立ち絵の元の連番を差し替えて、表情ストリップの区間を当て直すだけ）。
+    """
+    sed = seq_scene(context).sequence_editor
+    strips = line_strips(sed, clip_id)
+    if not strips:
+        raise ValueError("セリフのストリップが見つかりません")
+    ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
+    if preset and preset not in {e.name for e in ch.expressions}:
+        raise ValueError(f"{ch.name} に表情 {preset!r} がありません")
+    image = line_image(strips)
+    if image is not None:
+        motion_path = output_dir(context) / "lines" / f"{clip_id}.json"
+        motion = LineMotion.load(motion_path) if motion_path.is_file() else None
+        if motion is None or motion.frames != len(image.elements):
+            return regenerate(context, clip_id, preset=preset)
+        paths = segment_frames(motion, [(0, motion.frames, character_cache(context, ch, preset))])
+        key = hashlib.sha1(json.dumps(["expression", preset], ensure_ascii=False).encode()).hexdigest()[:10]
+        directory = output_dir(context) / "lines" / f"{clip_id}_e{key}"
+        link_frames(paths, directory)
+        image.directory = _path_for_blend(directory) + "/"
+        image["tachie_frames_dir"] = image.directory
+        image["tachie_faced"] = ""  # 表情ストリップの区間は新しい連番の上に当て直す
+    for s in strips:
+        s["tachie_expression"] = preset
+    if image is not None:
+        apply_faces(context, [image])
+    return strips
+
+
 def refresh_faces(context, problems: list | None = None) -> int:
     """全体を表情ストリップに合わせる（立ち絵の描き直しと待機の作り直し）。"""
     count = apply_faces(context, problems=problems)
@@ -950,6 +983,8 @@ def faces_signature(scene) -> str:
 _applied_signatures: dict[str, tuple[str, str, str]] = {}
 _face_timer_running = False
 _applying_faces = False
+# 裏で待つだけのモーダル操作（AI で表情を割り当てる。数分かかる）。ドラッグではないので自動の反映を止めない
+_BACKGROUND_MODALS = {"TACHIE_OT_assign_faces"}
 
 
 @persistent
@@ -968,7 +1003,8 @@ def _apply_faces_later():
     """ドラッグなどが終わってから描き直す（自動の反映）。"""
     global _face_timer_running, _applying_faces
     wm = bpy.context.window_manager
-    if wm and any(getattr(w, "modal_operators", None) for w in wm.windows):
+    if wm and any(op.bl_idname not in _BACKGROUND_MODALS for w in wm.windows
+                  for op in getattr(w, "modal_operators", ())):
         return 0.3  # まだ動かしている
     _face_timer_running = False
     window = wm.windows[0] if wm and wm.windows else None
@@ -2010,7 +2046,10 @@ class TACHIE_OT_batch_edit(bpy.types.Operator):
                 if self.use_line_layout:
                     kwargs["layout"] = self.line_layout
                 try:
-                    regenerate(context, cid, **kwargs)
+                    if set(kwargs) == {"preset"}:
+                        set_line_expression(context, cid, preset)  # 表情だけなら音声は合成し直さない
+                    else:
+                        regenerate(context, cid, **kwargs)
                 except ERRORS as e:
                     problems.append(str(e))
                     continue
