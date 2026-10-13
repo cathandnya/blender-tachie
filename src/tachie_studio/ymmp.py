@@ -205,7 +205,7 @@ class Media:
     """画像・動画・音声・テキストのアイテム。X / Y は画面中央からのピクセル（下が正）で、画像・動画は中心、
     テキストは BasePoint の点。Zoom は %（100 で素材の 1 ピクセルが出力の 1 ピクセル）、Rotation は度（時計回り）。"""
 
-    kind: str  # image / video / audio / text
+    kind: str  # image / video / audio / text（テンプレートでは color も）
     frame: int
     length: int
     layer: int
@@ -228,6 +228,7 @@ class Media:
     outline_color: tuple = (0.0, 0.0, 0.0, 1.0)
     bold: bool = False
     base_point: str = "LeftTop"
+    color: tuple = (0.0, 0.0, 0.0, 1.0)  # カラー（kind == "color"、アドオンのテンプレートだけ）
     anim: dict[str, tuple[float, float, str]] = field(default_factory=dict)  # 属性 → (始め, 終わり, 種類)
     effects: list[str] = field(default_factory=list)
     hidden: bool = False
@@ -447,7 +448,7 @@ def load_project(path: str | Path) -> Project:
     return project
 
 
-ITEM_LABELS = {"VideoItem": "動画", "ImageItem": "画像", "AudioItem": "音声", "TextItem": "テキスト",
+ITEM_LABELS = {"TachieItem": "立ち絵アイテム", "VideoItem": "動画", "ImageItem": "画像", "AudioItem": "音声", "TextItem": "テキスト",
                "TransitionItem": "トランジション", "EffectItem": "エフェクト", "ShapeItem": "図形"}
 
 

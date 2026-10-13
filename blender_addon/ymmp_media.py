@@ -34,7 +34,7 @@ from .tachie_studio.ymmp import Media, Project, front_layer
 VOLUME_BASE = 50.0
 # 探す深さ（.ymmp のフォルダ・指定した場所からの階層）
 SEARCH_DEPTH = {"project": 3, "root": 4}
-KIND_LABELS = {"image": "画像", "video": "動画", "audio": "音声", "text": "テキスト"}
+KIND_LABELS = {"image": "画像", "video": "動画", "audio": "音声", "text": "テキスト", "color": "カラー"}
 
 
 def _nfc(name: str) -> str:
@@ -44,9 +44,10 @@ def _nfc(name: str) -> str:
 class MediaFinder:
     """YMM4 のパス（Windows）のファイルを、元のパス → .ymmp と同じフォルダ → その下 → `root` の下 の順で探す。"""
 
-    def __init__(self, ymmp: Path, root: str = ""):
-        self.base = ymmp.parent
-        self.roots = [(self.base, SEARCH_DEPTH["project"])]
+    def __init__(self, ymmp: Path | None, root: str = ""):
+        """`ymmp` が None なら元のパスと `root` の下だけを探す（テンプレートを未保存の .blend に置くとき）。"""
+        self.base = ymmp.parent if ymmp is not None else None
+        self.roots = [(self.base, SEARCH_DEPTH["project"])] if self.base is not None else []
         if root:
             self.roots.append((Path(bpy.path.abspath(root)), SEARCH_DEPTH["root"]))
         self._index: dict[str, Path] | None = None
@@ -71,7 +72,7 @@ class MediaFinder:
         if (os.name == "nt" or not windows) and Path(file).is_file():
             return Path(file)  # 元のパス（Windows のパスは Windows でだけ）
         name = PureWindowsPath(file).name
-        if (self.base / name).is_file():
+        if self.base is not None and (self.base / name).is_file():
             return self.base / name
         if self._index is None:
             self._index = self._build()
@@ -116,8 +117,10 @@ def _linear(scene, strip, attr: str) -> None:
 
 class MediaPlacer:
     def __init__(self, context, project: Project, finder: MediaFinder, frame: Callable[[int], int],
-                 find_font: Callable[[str], str | None]):
+                 find_font: Callable[[str], str | None], behind: bool | None = None):
+        """`behind` は映像を全部立ち絵より奥（True）・手前（False）に置く（テンプレート）。None なら YMM4 のレイヤーで決める。"""
         self.scene = seq_scene(context)
+        self.behind = behind
         self.project = project
         self.finder = finder
         self.frame = frame
@@ -163,7 +166,7 @@ class MediaPlacer:
         """置く画像・動画・テキストと、使うチャンネルの本数（スピードコントロールの分）。"""
         out = []
         for m in items:
-            if m.kind == "text":
+            if m.kind in ("text", "color"):
                 out.append((m, None, 1))
                 continue
             path = self._path(m)
@@ -226,7 +229,10 @@ class MediaPlacer:
         back: dict[int, list] = {}
         fore: dict[int, list] = {}
         for entry in visuals:
-            (back if entry[0].layer < front else fore).setdefault(entry[0].layer, []).append(entry)
+            m = entry[0]
+            # テンプレートの「立ち絵より奥」は画像・動画・カラーだけ（テキストは見出しなどなので手前に置く）
+            behind = m.layer < front if self.behind is None else (self.behind and m.kind != "text")
+            (back if behind else fore).setdefault(m.layer, []).append(entry)
         if back:
             need = sum(max(w for _, _, w in v) for v in back.values())
             settings = self.scene.tachie
@@ -274,6 +280,10 @@ class MediaPlacer:
             strip = sed.strips.new_effect(name=f"YMM4 {name}", type="TEXT", channel=channel, frame_start=start,
                                           length=end - start)
             self._text(strip, m)
+        elif m.kind == "color":
+            strip = sed.strips.new_effect(name="カラー", type="COLOR", channel=channel, frame_start=start,
+                                          length=end - start)
+            strip.color = m.color[:3]
         elif m.kind == "image":
             strip = sed.strips.new_image(name=f"YMM4 {name}", filepath=_path_for_blend(path), channel=channel,
                                          frame_start=start, fit_method="ORIGINAL")
@@ -281,7 +291,7 @@ class MediaPlacer:
         else:
             strip = self._movie(sed, m, path, channel, start, end)
         self._mark(strip, m)
-        if m.kind != "text":
+        if m.kind not in ("text", "color"):
             t = strip.transform
             t.scale_x = t.scale_y = m.zoom / 100 * self.sy
             t.offset_x, t.offset_y = m.x * self.sx, -m.y * self.sy
@@ -316,7 +326,8 @@ class MediaPlacer:
         strip.text = m.text
         size = m.font_size * m.zoom / 100 * self.sy
         strip.font_size = max(1.0, size)
-        font_path = self.find_font(m.font)
+        # フォントは名前（YMM4）か、ファイルのパス（アドオンのテンプレート）
+        font_path = m.font if m.font and os.path.isfile(bpy.path.abspath(m.font)) else self.find_font(m.font)
         if m.font and not font_path:
             self.problems.append(f"テキストのフォント「{m.font}」が見つかりません（字幕の既定のフォント）")
         font_path = font_path or default_font()  # Blender の既定のフォントは日本語と記号（★ など）が小さい

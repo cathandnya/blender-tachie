@@ -866,6 +866,106 @@ for i in reversed(range(len(zunda.expressions))):
 ops.refresh_idle(bpy.context)
 scene.frame_end = frame_end_before
 
+# テンプレート: 選んだストリップ（セリフ・表情・画像・テキスト）を登録して、別の位置に置く。YMM4 のテンプレートも読み込む
+templates = bpy.context.preferences.addons["bl_ext.user_default.blender_tachie"].preferences.templates
+frame_end_before = scene.frame_end
+t_base = max(r for _, r, _ in lines().values()) + 30
+zline = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
+src_sound = next(x for x in zline if x.type == "SOUND")
+tpl_img = sed.strips.new_image(name="テンプレ画像", filepath=str(out / "背景.png"), channel=40, frame_start=t_base + 5,
+                               fit_method="ORIGINAL")
+tpl_img.right_handle = t_base + 65
+tpl_img.transform.offset_x, tpl_img.transform.scale_x, tpl_img.transform.scale_y = 120.0, 2.0, 2.0
+tpl_txt = sed.strips.new_effect(name="テンプレ文字", type="TEXT", channel=41, frame_start=t_base, length=40)
+tpl_txt.text, tpl_txt.location, tpl_txt.anchor_x = "テンプレの見出し", (0.3, 0.8), "LEFT"
+for x in sed.strips_all:
+    x.select = False
+src_sound.select = tpl_img.select = tpl_txt.select = True
+run(bpy.ops.tachie.register_template, name="テスト")
+tpl = next(t for t in templates if t.name == "テスト")
+from bl_ext.user_default.blender_tachie.tachie_studio.templates import loads  # noqa: E402
+
+kinds = sorted(i["kind"] if i["kind"] != "media" else i["media"]["kind"] for i in loads(tpl.data)["items"])
+assert kinds == ["image", "line", "text"], kinds
+for x in (tpl_img, tpl_txt):
+    sed.strips.remove(x)
+t_at = max(r for _, r, _ in lines().values()) + 40
+scene.frame_current = t_at
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tpl))
+placed_line = [sts for _, (l, _, sts) in lines().items() if l >= t_at]
+assert len(placed_line) == 1 and placed_line[0][0]["tachie_text"] == src_sound["tachie_text"]
+assert placed_line[0][0]["tachie_character"] == "ずんだもん"
+p_img = next(x for x in sed.strips if x.get("tachie_ymmp") == "image" and x.left_handle >= t_at)
+p_txt = next(x for x in sed.strips if x.get("tachie_ymmp") == "text" and x.left_handle >= t_at)
+src_left = min(x.left_handle for x in zline)
+offset = min(t_base, src_left)  # テンプレートの頭（いちばん早い開始）
+assert p_img.left_handle == t_at + (t_base + 5 - offset) and p_img.right_handle - p_img.left_handle == 60
+assert abs(p_img.transform.offset_x - 120.0) < 1e-3 and abs(p_img.transform.scale_x - 2.0) < 1e-6
+assert p_txt.text == "テンプレの見出し" and abs(p_txt.location[0] - 0.3) < 1e-6 and p_txt.anchor_x == "LEFT"
+# 立ち絵より奥（背景）にすると、アドオンのチャンネルをずらして下に置く
+channels_before = (s.se_channel, s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel,
+                   *(c.channel for c in s.characters))
+tpl.behind = True
+t_at2 = max(x.right_handle for x in sed.strips) + 20
+scene.frame_current = t_at2
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tpl))
+p_img2 = next(x for x in sed.strips if x.get("tachie_ymmp") == "image" and x.left_handle >= t_at2)
+assert p_img2.channel < min(s.se_channel, s.audio_channel, *(c.channel for c in s.characters))
+tpl_shift = s.se_channel - channels_before[0]
+# YMM4 のテンプレート（ItemSettings.json）を読み込む: セリフと画像は置ける、トランジション・立ち絵アイテムは読まない
+YMM_ITEM2 = "YukkuriMovieMaker.Project.Items."
+item_settings = out / "YukkuriMovieMaker.Settings.ItemSettings.json"
+item_settings.write_text(json.dumps({"Templates": [
+    {"Name": "あいさつ", "Path": ["あいさつ"], "FPS": 60, "Items": [
+        {"$type": YMM_ITEM2 + "VoiceItem, YukkuriMovieMaker", "CharacterName": "ずんだもん", "Serif": "テンプレなのだ",
+         "Hatsuon": "", "VoiceLength": "00:00:01", "Volume": 50.0, "Pan": 0.0,
+         "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
+                            "StyleID": 3},
+         "TachieFaceParameter": {"Eye": "C:\\char\\ずんだもん\\目\\なごみ目.png"},
+         "AdditionalTime": 3.0, "Frame": 100, "Layer": 6, "Length": 90},
+        # 長い余韻（3 秒）のままだと次の同じキャラのセリフに重なるので、縮めて置く
+        {"$type": YMM_ITEM2 + "VoiceItem, YukkuriMovieMaker", "CharacterName": "ずんだもん", "Serif": "続きなのだ",
+         "Hatsuon": "", "VoiceLength": "00:00:00", "Volume": 50.0, "Pan": 0.0,
+         "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
+                            "StyleID": 3}, "Frame": 220, "Layer": 6, "Length": 60},
+        {"$type": YMM_ITEM2 + "TransitionItem, YukkuriMovieMaker", "Frame": 100, "Layer": 2, "Length": 30}]},
+    {"Name": "立ち絵だけ", "Path": [], "Items": [
+        {"$type": YMM_ITEM2 + "TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん", "Frame": 0, "Layer": 1,
+         "Length": 60}]},
+]}, ensure_ascii=False), encoding="utf-8-sig")
+n_templates = len(templates)
+run(bpy.ops.tachie.import_ymm4_templates, filepath=str(item_settings))
+tpl_report = bpy.data.texts["YMM4 のテンプレートの読み込み結果"].as_string()
+assert "2 個のうち 1 個" in tpl_report and "トランジション 1" in tpl_report and "立ち絵アイテム 1" in tpl_report, tpl_report
+assert len(templates) == n_templates + 1
+zunda_presets_t = {e.name for e in zunda.expressions}
+t_at3 = max(x.right_handle for x in sed.strips) + 20
+scene.frame_current = t_at3
+run(bpy.ops.tachie.insert_template, index=list(templates).index(next(t for t in templates if t.name == "あいさつ")))
+greet = [sts for _, (l, _, sts) in lines().items() if l >= t_at3]
+assert [g[0]["tachie_text"] for g in greet] == ["テンプレなのだ", "続きなのだ"]
+assert max(x.right_handle for x in greet[0]) <= min(x.left_handle for x in greet[1])
+gpreset = greet[0][0]["tachie_expression"]
+assert gpreset and next(e for e in zunda.expressions if e.name == gpreset).part_eye == "なごみ目"
+# 片付け
+for x in [x for x in sed.strips if x.left_handle >= t_at and (x.get("tachie_id") or x.get("tachie_ymmp"))]:
+    sed.strips.remove(x)
+for i in reversed(range(len(templates))):
+    if templates[i].name in ("テスト", "あいさつ"):
+        templates.remove(i)
+for i in reversed(range(len(zunda.expressions))):  # 読み込みで作った表情プリセット
+    if zunda.expressions[i].name not in zunda_presets_t:
+        zunda.expressions.remove(i)
+if tpl_shift:
+    for x in sorted(sed.strips, key=lambda x: x.channel):
+        x.channel -= tpl_shift
+    for prop in ("se_channel", "audio_channel", "subtitle_channel", "name_channel", "headline_channel"):
+        setattr(s, prop, getattr(s, prop) - tpl_shift)
+    for c in s.characters:
+        c.channel -= tpl_shift
+ops.refresh_idle(bpy.context)
+scene.frame_end = frame_end_before
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 zunda.talk_period = 0.5  # 動きの設定も書き出す（既定値のものは書かない）

@@ -566,6 +566,21 @@ class TACHIE_PT_sound_effects(_Panel, bpy.types.Panel):
         layout.operator("tachie.register_sound_effect", icon="ADD")
 
 
+class TACHIE_PT_templates(_Panel, bpy.types.Panel):
+    bl_label = "テンプレート"
+    bl_parent_id = "TACHIE_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context):
+        from .templates import draw_templates
+
+        layout = self.layout
+        layout.label(text="再生位置に置きます（名前の変更・削除はアドオン設定）")
+        draw_templates(layout.column(align=True), prefs(context))
+        layout.operator("tachie.register_template", icon="ADD")
+        layout.operator("tachie.import_ymm4_templates", icon="IMPORT")
+
+
 class TACHIE_PT_export(_Panel, bpy.types.Panel):
     bl_label = "書き出し"
     bl_parent_id = "TACHIE_PT_main"
@@ -624,6 +639,7 @@ _classes = (
     TACHIE_PT_headline,
     TACHIE_PT_bgm,
     TACHIE_PT_sound_effects,
+    TACHIE_PT_templates,
     TACHIE_PT_export,
     TACHIE_PT_channels,
 )

@@ -2,9 +2,9 @@
 
 import bpy
 
-from . import operators, panels, properties, ymmp_import
+from . import operators, panels, properties, templates, ymmp_import
 
-_modules = (properties, operators, ymmp_import, panels)
+_modules = (properties, operators, ymmp_import, templates, panels)
 
 
 def register():
