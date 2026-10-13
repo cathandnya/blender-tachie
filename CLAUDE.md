@@ -228,9 +228,14 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   合成は通常・通過・乗算（他はクリッピングも含め通常）。圧縮は無圧縮・RLE・ZIP。
 - PSD の読み込み: `tachie/psd.py` がレイヤーの木（フォルダ・表示・名前、`index` は下から 0 始まりで
   フォルダの終わりの記録も数える）を自前で読む（Pillow はフォルダを読めず、手元の PSD ではレイヤー情報で落ちる）。
-  YMM4 の `<PSD 名>-ymm.json` は `{"Presets": [], "MouthAnimations": [{"Layers": ["n5", "n4"]}], "EyeAnimations": …}`、
-  `Layers` は開き → 閉じの順で `n<index>`。`tachie/psd_animation.py` は動く立ち絵の連番の中身（どのパーツの画像と同じか）
-  から口パク・まばたきの相手を割り出して書く。フォルダ（`*目セット`）をフォルダ本体の記録の番号で指してよいかと、
-  `Presets` の書式は YMM4 で未確認。
+  YMM4 の `<PSD 名>-ymm.json`（YMM4 Lite 4.56 で確認）: BOM 付き UTF-8、キーは Presets / MouthAnimations /
+  MouthVowelAnimations / EyeAnimations の順（`psd.write_animation_config` が他のキーを残して書き換える）。各組は
+  `{"Layers": ["n104", "n81"], "LayerPaths": [...]}` で、`Layers` は開き → 閉じの順の `n<index>`、`LayerPaths` は同じ並びの
+  パス（階層ごとに 0x1c + 名前 + 0x1d + 同じ名前の何番目か、`psd.layer_path`）。**YMM4 はフォルダを指した組を使わない**ので、
+  `tachie/psd_animation.py`（動く立ち絵の連番の中身から口パク・まばたきの相手を割り出す）は `*目セット` の中の部品のレイヤー
+  （`*目セット/!黒目/*普通目`）を指す。表情プリセットは `{"Name", "Layers", "LayerPaths"}` で、自分のチェックが入っている
+  レイヤー全部（フォルダも、親が消えていても。上から）を持つ。読むときは PSD の表示状態との違いにする（`load_ymm_presets`、
+  キャラ追加の初期値と「YMM4 の表情プリセットを読み込む」）、書くときは基本の表情 + プリセットの表示状態（`ymm_preset`、
+  メニュー「YMM4 の表情プリセットとして書き出す（PSD）」、同じ名前は置き換え）。
 - 口の動かし方 `mouth = "auto"`: 母音画像があればあいうえお式、無ければ音量式。`vowel` で母音画像の無い素材は
   母音を開き具合に置き換える（a=最大、i/u=小さめ）。

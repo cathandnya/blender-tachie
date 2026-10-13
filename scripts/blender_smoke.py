@@ -1147,6 +1147,21 @@ else:
     assert img.channel == pch.channel
     inodes = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
     assert len(inodes) >= 3, inodes  # 口パク（3 段）とまばたき
+    # まばたきは目のセット（フォルダ）ではなく中の部品のレイヤーで指す（YMM4 はフォルダの組を使わない）
+    import json  # noqa: E402
+
+    ymm_json = psd.with_name(psd.stem + "-ymm.json")
+    eye_paths = [p for a in json.loads(ymm_json.read_text(encoding="utf-8-sig"))["EyeAnimations"] for p in a["LayerPaths"]]
+    assert eye_paths and not any(p.endswith("*目セット\x1d0") for p in eye_paths)
+    # 表情プリセットを YMM4 の表情プリセットとして書き出し（口パク・まばたきは残る）、読み込み直すと同じ表情
+    run(bpy.ops.tachie.export_ymm_presets)
+    ymm = json.loads(ymm_json.read_text(encoding="utf-8-sig"))
+    written = next(p for p in ymm["Presets"] if p["Name"] == preset.name)
+    assert ymm["MouthAnimations"] and ymm["EyeAnimations"] and len(written["Layers"]) == len(written["LayerPaths"])
+    preset.psd_layers = ""
+    run(bpy.ops.tachie.import_presets, filepath=str(ymm_json))
+    reread = ops.expression_of(pch, preset.name).layers
+    assert reread["!口/*お"] is True and reread.get("!目/*ジト目") is True, reread
     # 書き出して読み直してもレイヤーの上書きが残る
     exported2 = out / "exported_psd.toml"
     run(bpy.ops.tachie.export_characters, filepath=str(exported2))

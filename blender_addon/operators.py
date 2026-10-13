@@ -20,6 +20,8 @@ from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_D
                                             parse_characters)
 from .tachie_studio.tachie import PRESET_FILE, Expression, load_character, load_presets
 from .tachie_studio.tachie.compose import load_image
+from .tachie_studio.tachie.psd import (animation_config_path, apply_layers, load_ymm_presets, read_animation_config,
+                                       write_animation_config, ymm_preset)
 from .tachie_studio.voicevox import VoicevoxClient, VoicevoxError
 
 # 読み込んだ素材と合成キャッシュ（Blender を閉じるまで使い回す）
@@ -2658,16 +2660,19 @@ class TACHIE_OT_import_characters(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
+def _is_psd_character(ch) -> bool:
+    return ch is not None and ch.folder.lower().endswith(".psd")
+
+
 class TACHIE_OT_import_presets(bpy.types.Operator, ImportHelper):
-    """YMM4 の表情プリセット（素材フォルダの preset.ini）を、選択中のキャラクターの表情プリセットに読み込む
-    （同じ名前は上書き）"""
+    """YMM4 の表情プリセット（素材フォルダの preset.ini、PSD 立ち絵は <PSD 名>-ymm.json）を、選択中のキャラクターの
+    表情プリセットに読み込む（同じ名前は上書き）"""
 
     bl_idname = "tachie.import_presets"
     bl_label = "YMM4 の表情プリセットを読み込む"
     bl_options = {"REGISTER", "UNDO"}
 
-    filename_ext = ".ini"
-    filter_glob: bpy.props.StringProperty(default="*.ini", options={"HIDDEN"})
+    filter_glob: bpy.props.StringProperty(default="*.ini;*.json", options={"HIDDEN"})
 
     @classmethod
     def poll(cls, context):
@@ -2676,13 +2681,21 @@ class TACHIE_OT_import_presets(bpy.types.Operator, ImportHelper):
 
     def invoke(self, context, event):
         ch = seq_scene(context).tachie.character()
-        self.filepath = str(Path(bpy.path.abspath(ch.folder)) / PRESET_FILE)
+        folder = bpy.path.abspath(ch.folder)
+        self.filepath = str(animation_config_path(folder) if _is_psd_character(ch) else Path(folder) / PRESET_FILE)
         return ImportHelper.invoke(self, context, event)
 
     def execute(self, context):
         ch = seq_scene(context).tachie.character()
+        folder = bpy.path.abspath(ch.folder)
         try:
-            presets, warnings = load_presets(bpy.path.abspath(ch.folder), self.filepath)
+            if _is_psd_character(ch):
+                # プリセットは基本の表情に重ねるので、基本の表情との違いにする（YMM4 のプリセットは表示全部を持つ）
+                layers, warnings = load_ymm_presets(folder, load_material(ch.folder).psd, self.filepath,
+                                                    base=item_layers(ch))
+                presets = {name: {LAYERS_KEY: value} for name, value in layers.items()}
+            else:
+                presets, warnings = load_presets(folder, self.filepath)
         except (ValueError, OSError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -2695,7 +2708,10 @@ class TACHIE_OT_import_presets(bpy.types.Operator, ImportHelper):
             for props in PART_PROPS.values():
                 for prop in props:
                     setattr(item, prop, "")
+            set_item_layers(item, parts.get(LAYERS_KEY, {}))
             for category, value in parts.items():
+                if category == LAYERS_KEY:
+                    continue
                 for prop, v in zip(PART_PROPS[category], [value] if isinstance(value, str) else value):
                     setattr(item, prop, v)
         message = f"{len(presets)} 個の表情プリセットを読み込みました"
@@ -2703,6 +2719,36 @@ class TACHIE_OT_import_presets(bpy.types.Operator, ImportHelper):
             message += f"（{len(warnings)} 件飛ばしました: {' / '.join(warnings[:3])}{' …' if len(warnings) > 3 else ''}）"
             print("\n".join(warnings))
         self.report({"WARNING"} if warnings else {"INFO"}, message)
+        return {"FINISHED"}
+
+
+class TACHIE_OT_export_ymm_presets(bpy.types.Operator):
+    """PSD 立ち絵の表情プリセットを、YMM4 の表情プリセットとして <PSD 名>-ymm.json に書き出す
+    （同じ名前のプリセットは置き換え、他のプリセットと口パク・まばたきの設定は残す）"""
+
+    bl_idname = "tachie.export_ymm_presets"
+    bl_label = "YMM4 の表情プリセットとして書き出す（PSD）"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        ch = seq_scene(context).tachie.character()
+        return _is_psd_character(ch) and len(ch.expressions) > 0
+
+    def execute(self, context):
+        ch = seq_scene(context).tachie.character()
+        try:
+            doc = load_material(ch.folder).psd
+            folder = bpy.path.abspath(ch.folder)
+            ours = [ymm_preset(doc, e.name, apply_layers(doc, {**item_layers(ch), **item_layers(e)}))
+                    for e in ch.expressions]
+            names = {p["Name"] for p in ours}
+            kept = [p for p in read_animation_config(folder).get("Presets") or [] if p.get("Name") not in names]
+            path = write_animation_config(animation_config_path(folder), {"Presets": kept + ours})
+        except (*ERRORS, OSError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"{len(ours)} 個の表情プリセットを {path.name} に書き出しました")
         return {"FINISHED"}
 
 
@@ -3254,6 +3300,7 @@ _classes = (
     TACHIE_OT_character_add,
     TACHIE_OT_character_add_voice,
     TACHIE_OT_change_material,
+    TACHIE_OT_export_ymm_presets,
     TACHIE_OT_pick_line_layout,
     TACHIE_OT_pick_line_character,
     TACHIE_OT_reset_line_voice,
