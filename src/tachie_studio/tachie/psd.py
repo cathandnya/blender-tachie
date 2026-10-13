@@ -319,18 +319,124 @@ def animation_config_path(psd: str | Path) -> Path:
     return psd.with_name(f"{psd.stem}-ymm.json")
 
 
-def load_animations(psd: str | Path, doc: PsdDocument) -> dict[str, list[list[PsdNode]]]:
-    """PSD の隣の口パク・まばたきの設定（YMM4 の <PSD 名>-ymm.json）。{"mouth": [[開き…閉じ], …], "eye": …}。"""
+# YMM4 の <PSD 名>-ymm.json のキーの並び（YMM4 が保存する順）
+CONFIG_KEYS = ("Presets", "MouthAnimations", "MouthVowelAnimations", "EyeAnimations")
+
+
+def read_animation_config(psd: str | Path, path: str | Path | None = None) -> dict:
+    """PSD の隣の <PSD 名>-ymm.json（`path` で別のファイル。無ければ空の dict）。"""
     import json
 
-    out: dict[str, list[list[PsdNode]]] = {"mouth": [], "eye": []}
-    path = animation_config_path(psd)
+    path = Path(path) if path else animation_config_path(psd)
     if not path.is_file():
-        return out
+        return {}
     try:
         config = json.loads(path.read_text(encoding="utf-8-sig"))
     except ValueError as e:
         raise ValueError(f"{path} を読めません: {e}") from None
+    return config if isinstance(config, dict) else {}
+
+
+def write_animation_config(path: str | Path, updates: dict) -> Path:
+    """<PSD 名>-ymm.json の `updates` のキーだけ書き換える（他のキーは残す）。YMM4 と同じく BOM 付き UTF-8、
+    インデント 2、キーは YMM4 の順。"""
+    import json
+
+    path = Path(path)
+    existing = {}
+    if path.is_file():
+        try:  # 読めないファイルは上書きしない（YMM4 で作った表情プリセットなどを黙って消さない）
+            loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+        except ValueError as e:
+            raise ValueError(f"{path} を読めません: {e}") from None
+        existing = loaded if isinstance(loaded, dict) else {}
+    merged = {**existing, **updates}
+    config = {k: merged.get(k, []) for k in CONFIG_KEYS}
+    config.update({k: v for k, v in merged.items() if k not in config})
+    path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+    return path
+
+
+def layer_path(node: PsdNode) -> str:
+    """YMM4 の LayerPaths の書き方: 根から順に、階層ごとに FS（0x1c）+ 名前 + GS（0x1d）+ 同じフォルダで
+    同じ名前の何番目か（上から 0 始まり）。番号の意味は YMM4 で同じ名前のレイヤーを作って確かめていない（推測）。"""
+    parts = []
+    while node is not None and node.parent is not None:
+        same = [c for c in node.parent.children if c.name == node.name]
+        parts.append(f"\x1c{node.name}\x1d{same.index(node)}")
+        node = node.parent
+    return "".join(reversed(parts))
+
+
+def animation_entry(nodes: list[PsdNode]) -> dict:
+    """口パク・まばたき・プリセットの 1 つ分のレイヤー（`Layers` は `n<番号>`、`LayerPaths` は同じ並びのパス）。"""
+    return {"Layers": [f"n{n.index}" for n in nodes], "LayerPaths": [layer_path(n) for n in nodes]}
+
+
+def shown_layers(doc: PsdDocument, state: dict[str, bool]) -> list[PsdNode]:
+    """YMM4 の表情プリセットに書くレイヤー: 自分のチェックが入っているもの全部（フォルダも、親が消えていても）。上から。"""
+    return sorted((n for n in doc.root.walk() if is_on(n, state)), key=lambda n: -n.index)
+
+
+def preset_layers(doc: PsdDocument, on: set[int], base: dict[str, bool] | None = None) -> dict[str, bool]:
+    """YMM4 の表情プリセット（チェックが入っているレイヤーの番号 `on`）を、基本の表情（上書き `base`、省くと
+    PSD の表示状態）との違い {パス: 表示するか} にする（`*` は選んだものだけ True）。表情プリセットは基本の表情に
+    重ねて使うので、基本の表情が PSD の表示状態と違うときは `base` を渡さないと YMM4 と同じ表示にならない。"""
+    base = apply_layers(doc, base)
+    out: dict[str, bool] = {}
+    for group in radio_groups(doc):
+        radios = [c for c in group.children if c.radio]
+        chosen = next((c for c in radios if c.index in on), None)
+        if chosen is not None and not is_on(chosen, base):
+            out[chosen.path()] = True
+    for node in toggles(doc):
+        value = node.index in on
+        if value != is_on(node, base):
+            out[node.path()] = value
+    return out
+
+
+def load_ymm_presets(psd: str | Path, doc: PsdDocument, path: str | Path | None = None,
+                     base: dict[str, bool] | None = None) -> tuple[dict[str, dict[str, bool]], list[str]]:
+    """<PSD 名>-ymm.json の表情プリセット → ({名前: {パス: 表示するか}}, 警告)。
+
+    YMM4 のプリセットは表示するレイヤーを全部持つ（基本の表情との差分ではない）ので、基本の表情（上書き `base`、
+    省くと PSD の表示状態）との違いにする。
+    レイヤーは `Layers` の番号で探し、無ければ `LayerPaths` で探す。
+    """
+    by_index = {n.index: n for n in doc.root.walk()}
+    by_path = {layer_path(n): n for n in doc.root.walk()}
+    presets: dict[str, dict[str, bool]] = {}
+    warnings: list[str] = []
+    for preset in read_animation_config(psd, path).get("Presets") or []:
+        name = str(preset.get("Name") or "").strip()
+        if not name:
+            continue
+        refs = preset.get("Layers") or []
+        paths = preset.get("LayerPaths") or []
+        on: set[int] = set()
+        for i, ref in enumerate(refs):
+            try:
+                node = by_index[int(str(ref).lstrip("n"))]
+            except (ValueError, KeyError):
+                node = by_path.get(paths[i]) if i < len(paths) else None
+            if node is None:
+                warnings.append(f"[{name}] {ref} が PSD にありません")
+                continue
+            on.add(node.index)
+        presets[name] = preset_layers(doc, on, base)
+    return presets, warnings
+
+
+def ymm_preset(doc: PsdDocument, name: str, state: dict[str, bool]) -> dict:
+    """表示状態 `state` を YMM4 の表情プリセット（表示するレイヤー全部）にする。"""
+    return {"Name": name, **animation_entry(shown_layers(doc, state))}
+
+
+def load_animations(psd: str | Path, doc: PsdDocument) -> dict[str, list[list[PsdNode]]]:
+    """PSD の隣の口パク・まばたきの設定（YMM4 の <PSD 名>-ymm.json）。{"mouth": [[開き…閉じ], …], "eye": …}。"""
+    out: dict[str, list[list[PsdNode]]] = {"mouth": [], "eye": []}
+    config = read_animation_config(psd)
     by_index = {n.index: n for n in doc.root.walk()}
     for key, name in (("MouthAnimations", "mouth"), ("EyeAnimations", "eye")):
         for anim in config.get(key) or []:

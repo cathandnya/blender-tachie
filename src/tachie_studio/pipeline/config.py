@@ -180,9 +180,18 @@ def load_material_table(folder: str | Path) -> dict[str, Any]:
 
 
 def load_material_defaults(folder: str | Path) -> dict[str, Any]:
-    """素材フォルダの初期値: preset.ini の表情プリセットに tachie.toml を重ねたもの（同じ名前は tachie.toml）。"""
+    """素材フォルダの初期値: preset.ini の表情プリセットに tachie.toml を重ねたもの（同じ名前は tachie.toml）。
+    PSD 立ち絵は <PSD 名>-ymm.json の表情プリセット（YMM4 の PSD 立ち絵素材マネージャーで作ったもの）。"""
     table = load_material_table(folder)
-    presets, _ = load_presets(folder) if Path(folder).is_dir() else ({}, [])
+    if Path(folder).is_dir():
+        presets, _ = load_presets(folder)
+    elif str(folder).lower().endswith(".psd") and Path(folder).is_file():
+        from ..tachie.psd import load_ymm_presets, read_psd
+
+        layers, _ = load_ymm_presets(folder, read_psd(folder))
+        presets = {name: {LAYERS_KEY: value} for name, value in layers.items()}
+    else:
+        presets = {}
     return merge_tables({"expressions": presets}, table) if presets else table
 
 

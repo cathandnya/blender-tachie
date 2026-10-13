@@ -85,8 +85,11 @@ def test_animations_from_material(tmp_path: Path):
     doc = read_psd(psd)
     config, warnings = animations_from_material(load_character(m), doc)
     assert not warnings
+    # 目のセット（フォルダ）は YMM4 で使えないので、中の部品のレイヤー（同じ深さなら名前の後の部品）
     assert describe(config, doc) == ["MouthAnimations: !口/*ほあ → !口/*ほー → !口/*むふ",
-                                     "EyeAnimations: !目/*目セット → !目/*UU"]
+                                     "EyeAnimations: !目/*目セット/*普通目 → !目/*UU"]
+    eye = config["EyeAnimations"][0]
+    assert eye["LayerPaths"] == ["\x1c!目\x1d0\x1c*目セット\x1d0\x1c*普通目\x1d0", "\x1c!目\x1d0\x1c*UU\x1d0"]
     path = write_config(psd, config)
     assert path == config_path(psd) == tmp_path / "キャラ-ymm.json"
     assert path.read_bytes().startswith(b"\xef\xbb\xbf")
@@ -113,10 +116,43 @@ def test_write_config_keeps_presets(tmp_path: Path):
     psd = tmp_path / "キャラ.psd"
     config_path(psd).write_text(json.dumps({"Presets": [{"Name": "笑顔"}], "MouthAnimations": [{"Layers": ["n1"]}]}),
                                 encoding="utf-8-sig")
-    write_config(psd, {"Presets": [], "MouthAnimations": [{"Layers": ["n3", "n2"]}], "EyeAnimations": []})
+    write_config(psd, {"MouthAnimations": [{"Layers": ["n3", "n2"]}], "EyeAnimations": []})
     written = json.loads(config_path(psd).read_text(encoding="utf-8-sig"))
+    # キーは YMM4 が保存する順
+    assert list(written) == ["Presets", "MouthAnimations", "MouthVowelAnimations", "EyeAnimations"]
     assert written == {"Presets": [{"Name": "笑顔"}], "MouthAnimations": [{"Layers": ["n3", "n2"]}],
-                       "EyeAnimations": []}
+                       "MouthVowelAnimations": [], "EyeAnimations": []}
+
+
+def test_ymm_presets(tmp_path: Path):
+    """YMM4 の表情プリセット（表示するレイヤー全部）を読み、PSD の表示状態との違いにする。書き出すと元に戻る。"""
+    from tachie_studio.tachie.psd import apply_layers, load_ymm_presets, ymm_preset
+
+    psd = tmp_path / "キャラ.psd"
+    make_psd(psd, [("!目", [("*目セット", ["*普通目", "*白目"]), "*UU"]), ("!口", ["*お", "*むふ"]), "帽子"])
+    doc = read_psd(psd)
+    smile = ymm_preset(doc, "笑顔", apply_layers(doc, {"!口/*むふ": True, "帽子": False}))
+    assert smile["Layers"] == sorted(smile["Layers"], key=lambda r: -int(r[1:]))  # 上から
+    assert f"n{doc.find('帽子').index}" not in smile["Layers"] and len(smile["LayerPaths"]) == len(smile["Layers"])
+    config_path(psd).write_text(json.dumps({"Presets": [smile, {"Name": "壊れた", "Layers": ["n999"]}]}),
+                                encoding="utf-8-sig")
+    presets, warnings = load_ymm_presets(psd, doc)
+    assert presets["笑顔"] == {"!口/*むふ": True, "帽子": False} and warnings == ["[壊れた] n999 が PSD にありません"]
+    assert ymm_preset(doc, "笑顔", apply_layers(doc, presets["笑顔"]))["Layers"] == smile["Layers"]
+    # 基本の表情が PSD の表示状態と違えば、基本の表情との違いにする（重ねると YMM4 と同じ表示）
+    base = {"!口/*お": True, "帽子": False, "!目/*UU": True}
+    presets, _ = load_ymm_presets(psd, doc, base=base)
+    assert presets["笑顔"] == {"!口/*むふ": True, "!目/*目セット": True}
+    assert ymm_preset(doc, "笑顔", apply_layers(doc, {**base, **presets["笑顔"]}))["Layers"] == smile["Layers"]
+
+
+def test_write_config_keeps_unreadable_file(tmp_path: Path):
+    """読めない <PSD 名>-ymm.json は上書きしない（YMM4 で作った表情プリセットを消さない）。"""
+    psd = tmp_path / "キャラ.psd"
+    config_path(psd).write_text('{"Presets": [{"Name": "笑顔"},]}', encoding="utf-8-sig")
+    with pytest.raises(ValueError):
+        write_config(psd, {"MouthAnimations": [], "EyeAnimations": []})
+    assert "笑顔" in config_path(psd).read_text(encoding="utf-8-sig")
 
 
 def test_read_psd_without_layers(tmp_path: Path):
@@ -137,8 +173,9 @@ def test_not_psd(tmp_path: Path):
 CHAR = ROOT / "char"
 EXPECTED = {
     "ずんだもん": (["!口/*ほあ → !口/*ほー → !口/*むふ", "!口/*お → !口/*むー", "!口/*お → !口/*んー"],
-                 ["!目/*目セット → !目/*UU", "!目/*上向き → !目/*UU"]),
-    "四国めたん": (["!口/*わあー → !口/*ほほえみ"], ["!目/*目セット → !目/*目閉じ", "!目/*見上げ → !目/*目閉じ"]),
+                 ["!目/*目セット/!黒目/*普通目 → !目/*UU", "!目/*上向き → !目/*UU"]),
+    "四国めたん": (["!口/*わあー → !口/*ほほえみ"],
+                ["!目/*目セット/!黒目/*普通目 → !目/*目閉じ", "!目/*見上げ → !目/*目閉じ"]),
 }
 
 

@@ -3,7 +3,9 @@
 動く立ち絵の連番（例: `口/むふ.1.png`）が、どのパーツの画像と同じ中身かで口パク・まばたきの相手を割り出し
 （`むふ.1.png` が `お.png` と同じなら「むふ ↔ お」）、PSD の同じ名前のレイヤーの番号に置き換える。
 `普通白目_カメラ目線` のように「_」でつないだ名前は、PSD の `!目` の中で、その名前の部品をすべて含む
-選択肢（`*目セット` など）に当てる。
+選択肢（`*目セット` など）の中の、いちばん深い部品のレイヤー（`*目セット/!黒目/*カメラ目線`）に当てる。
+YMM4 はフォルダを指した組を使わない（PSD 立ち絵素材マネージャーに出てこず、まばたきしない。YMM4 Lite 4.56 で確認）。
+各組には YMM4 と同じく `LayerPaths`（レイヤーのパス）も書く。
 
 YMM4 の設定ファイルでは 1 つのアニメーションのレイヤーを「開いた状態 → 閉じた状態」の順に並べる。
 連番は公式の決まりでは .0 = 閉じ → … → 数字なし = 開き。手元の素材は数字なしが .0 と同じで、口は .1, .2 … と
@@ -20,7 +22,7 @@ import json
 from pathlib import Path
 
 from .loader import Character, load_character
-from .psd import PsdDocument, PsdNode, read_psd
+from .psd import PsdDocument, PsdNode, animation_entry, animation_config_path, read_psd, write_animation_config
 
 # (素材のフォルダ, 設定ファイルのキー, 数字なしの画像が開いた状態か)
 ANIMATIONS = (("口", "MouthAnimations", False), ("目", "EyeAnimations", True))
@@ -44,9 +46,30 @@ def _option(group: PsdNode, name: str) -> PsdNode | None:
     return None
 
 
+def _depth(node: PsdNode) -> int:
+    depth = 0
+    while node.parent is not None:
+        node, depth = node.parent, depth + 1
+    return depth
+
+
+def _leaf(node: PsdNode, name: str) -> PsdNode:
+    """選択肢がフォルダなら、パーツ名の部品に当たる中のレイヤーのうちいちばん深いもの（同じ深さなら後の部品）。
+    部品に当たるものが無ければ、PSD で表示されているいちばん深いレイヤー。"""
+    if not node.group:
+        return node
+    pieces = name.split("_")
+    leaves = [d for d in node.walk() if not d.group]
+    matched = [d for d in leaves if d.label in pieces]
+    if matched:
+        return max(matched, key=lambda d: (_depth(d), pieces.index(d.label)))
+    shown = [d for d in leaves if not d.hidden or d.required]
+    return max(shown or leaves or [node], key=_depth)
+
+
 def animations_from_material(character: Character, doc: PsdDocument) -> tuple[dict, list[str]]:
     """(設定ファイルの中身, 警告) を返す。"""
-    config: dict = {"Presets": [], "MouthAnimations": [], "EyeAnimations": []}
+    config: dict = {"MouthAnimations": [], "EyeAnimations": []}
     warnings: list[str] = []
     for category, key, base_open in ANIMATIONS:
         group = next((c for c in doc.root.children if c.label == category), None)
@@ -81,30 +104,23 @@ def animations_from_material(character: Character, doc: PsdDocument) -> tuple[di
                 missing = [s for s, n in zip(sequence, nodes) if n is None]
                 warnings.append(f"PSD の「{category}」に {'、'.join(missing)} がありません（{part.name} を飛ばします）")
                 continue
-            layers = [f"n{n.index}" for n in nodes]
-            if tuple(layers) in seen:
+            nodes = [_leaf(n, s) for n, s in zip(nodes, sequence)]
+            entry = animation_entry(nodes)
+            if tuple(entry["Layers"]) in seen or len(set(entry["Layers"])) < 2:
                 continue
-            seen.add(tuple(layers))
-            config[key].append({"Layers": layers})
+            seen.add(tuple(entry["Layers"]))
+            config[key].append(entry)
     return config, warnings
 
 
 def config_path(psd: str | Path) -> Path:
-    psd = Path(psd)
-    return psd.with_name(f"{psd.stem}-ymm.json")
+    return animation_config_path(psd)
 
 
 def write_config(psd: str | Path, config: dict, path: str | Path | None = None) -> Path:
-    path = Path(path) if path else config_path(psd)
-    # 既にあるファイルの口パク・まばたき以外（YMM4 で作った Presets など）は残す
-    if path.exists():
-        existing = json.loads(path.read_text(encoding="utf-8-sig"))
-        if isinstance(existing, dict):
-            config = {**existing, "MouthAnimations": config["MouthAnimations"],
-                      "EyeAnimations": config["EyeAnimations"]}
-    # YMM4 の書き出しと同じく BOM 付き UTF-8、インデント 2
-    path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8-sig")
-    return path
+    """口パク・まばたきだけを書き換える（既にあるファイルの Presets など、YMM4 で作ったものは残す）。"""
+    return write_animation_config(path or config_path(psd), {"MouthAnimations": config["MouthAnimations"],
+                                                             "EyeAnimations": config["EyeAnimations"]})
 
 
 def describe(config: dict, doc: PsdDocument) -> list[str]:
