@@ -330,7 +330,8 @@ LINE_LAYOUTS = [
 class TachieCharacter(bpy.types.PropertyGroup):
     # name は PropertyGroup が持っている
     folder: StringProperty(name="素材フォルダ", subtype="DIR_PATH",
-                           description="動く立ち絵の素材フォルダ（眉・目・口などのフォルダがある所）")
+                           description="立ち絵の素材フォルダ（PSD 立ち絵は PSD ファイル）。別の素材にするときは右のボタン"
+                                       "（素材に無いパーツは既定に戻す）")
     # AivisSpeech のスタイル ID は負の数にもなる（32 bit の符号付き）
     speaker: IntProperty(name="話者 ID", default=3, description="VOICEVOX（互換エンジン）のスタイル ID")
     engine: EnumProperty(name="エンジン", items=ENGINE_ITEMS, default="DEFAULT",

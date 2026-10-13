@@ -113,7 +113,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （`tachie_placed_text`）のときだけ使う（`line_kana`）。発音は `POST /accent_phrases?is_kana=true` で accent_phrases を
   差し替える。エンジンは長音を「オ」、無声化を `_` で表記し、アクセントの無い句はエラーにする。
   台本・セリフ入力欄・置いたセリフのテキスト（再生成時）では最後に `{発音}` と書ける（`script.split_kana`）。
-  試聴は `aud` で出力フォルダの `preview.wav` を鳴らす。
+  試聴は `aud` で出力フォルダの `preview.wav` を鳴らす（画面の無い Blender では鳴らさない。`aud.Device()` は `-noaudio` でも
+  音声デバイスを開くので、smoke.sh の試聴のテストで実際に声が鳴っていた）。
   抑揚の編集（モーラごとの pitch / consonant_length / vowel_length）は音声ストリップの `tachie_accent`（accent_phrases の JSON）と
   `tachie_accent_key`（編集したときの [テキスト, 発音, スタイル]）。どれかが変われば捨てて取り直す（`line_accent`）。
   自動の読みはユーザー辞書で変わるので、再生成では編集したときの読みを `Line.accent_kana` で渡し、`render_line` が今の読みと比べる。
@@ -216,6 +217,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   合成は画像 1 枚（`compose._simple_layers`: mouth_frame 0 なら体、それ以外は口）。口パクは `simple_mouth` が
   閉じ = 体・開き = 口の 2 段階の口パーツを作るので、音量式でそのまま動く。まばたきは無い。GIF / WebP は最初のフレームだけ。
   パネルの表情の欄は 2 つだけ（`panels.part_rows`）。
+- 素材は「素材を選び直す」（`tachie.change_material`、フォルダか PSD）で変えられる。新しい素材に無いパーツ・レイヤーは既定に戻す
+  （`fit_to_material`、表情プリセットも）。声・字幕などの設定はそのまま。
 - PSD 立ち絵（#7）: `load_character(<.psd>)` が `kind == "psd"` の Character（`psd` に PsdDocument、`animations` に
   `-ymm.json` の口パク・まばたき）。表情は `Expression.layers`（{パス: 表示するか}、TOML は `"レイヤー" = { … }`、
   アドオンは `psd_layers` に JSON）で、`*` を True にすると同じフォルダの他の `*` は消える（`psd.apply_layers`）。

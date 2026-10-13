@@ -1433,6 +1433,10 @@ def play_preview(context, wav: bytes) -> str | None:
     if _preview is not None:
         _preview.stop()
     path.write_bytes(wav)
+    if bpy.app.background:
+        # 画面の無い Blender（テストなど）では鳴らさない。aud.Device() は -noaudio でも音声デバイスを開いてしまう
+        _preview = None
+        return f"画面の無い Blender では試聴を鳴らしません。合成した音声は {path} にあります"
     try:
         _preview = aud.Device().play(aud.Sound(str(path)).cache())
     except aud.error as e:
@@ -2129,6 +2133,85 @@ class TACHIE_OT_character_add(bpy.types.Operator):
         if sources:
             self.report({"INFO"}, f"{ch.name} を {'と'.join(sources)} の初期値で追加しました")
         return {"FINISHED"}
+
+
+class TACHIE_OT_change_material(bpy.types.Operator):
+    """選択中のキャラクターの素材（動く立ち絵・シンプル立ち絵のフォルダか PSD）を選び直す（声・字幕などの設定はそのまま）"""
+
+    bl_idname = "tachie.change_material"
+    bl_label = "素材を選び直す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    directory: bpy.props.StringProperty(subtype="DIR_PATH")
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    filter_glob: bpy.props.StringProperty(default="*.psd", options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        return seq_scene(context).tachie.character() is not None
+
+    def invoke(self, context, event):
+        ch = seq_scene(context).tachie.character()
+        if ch.folder:  # 今の素材の場所から選び始める
+            current = os.path.normpath(bpy.path.abspath(ch.folder))
+            if os.path.isdir(current):
+                # filepath に末尾の / が無いフォルダを入れると、親フォルダでファイル名欄にフォルダ名が入る
+                self.directory = os.path.join(current, "")
+            else:
+                self.filepath = current
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        ch = seq_scene(context).tachie.character()
+        # 今の PSD から選び始めてフォルダへ移ると、ファイル名欄に前の PSD の名前が残る。その PSD が無ければフォルダを使う
+        is_psd = self.filepath.lower().endswith(".psd") and os.path.isfile(self.filepath)
+        source = self.filepath if is_psd else self.directory
+        try:
+            removed = change_material(context, ch, source)
+        except (*ERRORS, OSError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        try:  # 素材はもう変えたので、待機を作り直せなくても FINISHED にする（CANCELLED だと元に戻すの段が積まれない）
+            if seq_scene(context).tachie.auto_idle:
+                refresh_idle(context)
+        except ERRORS as e:
+            self.report({"WARNING"}, f"{ch.name}の素材を変えましたが、待機の立ち絵を作り直せません: {e}")
+            return {"FINISHED"}
+        note = f"（素材に無いパーツ・レイヤー {removed} 個を既定に戻しました）" if removed else ""
+        self.report({"WARNING"} if removed else {"INFO"},
+                    f"{ch.name}の素材を変えました{note}。置いてあるセリフは「全セリフを再生成」で反映されます")
+        return {"FINISHED"}
+
+
+def fit_to_material(item, material) -> int:
+    """キャラクターか表情プリセットのパーツ・PSD のレイヤーのうち、素材に無いものを外す（既定に戻す）。外した数を返す。"""
+    removed = 0
+    for category, props in PART_PROPS.items():
+        names = {} if material.is_psd else material.parts.get(category, {})
+        for prop in props:
+            if getattr(item, prop) and getattr(item, prop) not in names:
+                setattr(item, prop, "")
+                removed += 1
+    layers = item_layers(item)
+    if layers:
+        keep = {p: v for p, v in layers.items() if material.is_psd and material.psd.find(p) is not None}
+        removed += len(layers) - len(keep)
+        set_item_layers(item, keep)
+    return removed
+
+
+def change_material(context, ch, source: str) -> int:
+    """キャラクターの素材を `source` に変える。素材に無いパーツ・レイヤーは外し、その数を返す。"""
+    material = load_material(source)
+    had_material = bool(ch.folder)
+    ch.folder = source
+    removed = fit_to_material(ch, material) + sum(fit_to_material(e, material) for e in ch.expressions)
+    if material.is_psd and not item_layers(ch):
+        psd_default_mouth(ch, material)
+    if not had_material and ch.line_layout == "SUBTITLE":
+        ch.line_layout = "FULL"  # 立ち絵の無いキャラに素材を付けたら、新しいセリフは立ち絵ありに
+    return removed
 
 
 def add_voice_character(context, name: str):
@@ -3170,6 +3253,7 @@ _classes = (
     TACHIE_OT_regenerate_all,
     TACHIE_OT_character_add,
     TACHIE_OT_character_add_voice,
+    TACHIE_OT_change_material,
     TACHIE_OT_pick_line_layout,
     TACHIE_OT_pick_line_character,
     TACHIE_OT_reset_line_voice,
