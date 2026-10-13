@@ -116,6 +116,15 @@ class TachieSoundEffect(bpy.types.PropertyGroup):
                           description="置くときの音量")
 
 
+class TachieTemplate(bpy.types.PropertyGroup):
+    """登録したテンプレート（アドオン設定、全 .blend 共通）。中身は `tachie_studio.templates` の JSON。"""
+
+    name: StringProperty(name="名前")
+    data: StringProperty(name="中身", default="", options={"HIDDEN"})
+    behind: BoolProperty(name="立ち絵より奥に置く", default=False,
+                         description="画像・動画・カラーを、アドオンのチャンネル（音声・立ち絵・字幕など）より下に置く（背景など）")
+
+
 class TachiePreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
@@ -125,6 +134,7 @@ class TachiePreferences(bpy.types.AddonPreferences):
         description="音声と連番画像の置き場所。空なら .blend の隣の tachie フォルダ（未保存なら一時フォルダ）",
     )
     sound_effects: CollectionProperty(type=TachieSoundEffect)
+    templates: CollectionProperty(type=TachieTemplate)
 
     def draw(self, context):
         from .operators import character_defaults_path, load_character_defaults
@@ -150,6 +160,11 @@ class TachiePreferences(bpy.types.AddonPreferences):
         box = layout.box()
         box.label(text="効果音（シーケンサーの立ち絵タブの「効果音」で置く）")
         draw_sound_effects(box, self)
+        from .templates import draw_templates
+
+        box = layout.box()
+        box.label(text="テンプレート（シーケンサーの立ち絵タブの「テンプレート」で置く）")
+        draw_templates(box, self, editable=True)
 
 
 def draw_sound_effects(layout, preferences) -> None:
@@ -551,7 +566,7 @@ class TachieAccentEdit(bpy.types.PropertyGroup):
     speaker: IntProperty()
 
 
-_classes = (TachieSoundEffect, TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary,
+_classes = (TachieSoundEffect, TachieTemplate, TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary,
             TachieMora, TachiePhrase, TachieAccentEdit)
 
 

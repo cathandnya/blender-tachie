@@ -93,6 +93,15 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   効果音（#14）: アドオン設定の `sound_effects`（`TachieSoundEffect`: 名前・ファイル・音量）。`tachie.add_sound_effect` は
   再生位置か選んだセリフ（`selected_targets`）の頭に置き、`tachie_se` = 名前を付ける。チャンネルは `se_channel` から上で
   空いていて、音声・字幕・キャラ名・見出し・立ち絵のチャンネルでないところ（`_se_channel`）。
+  テンプレート（#14、`blender_addon/templates.py`、形式は `tachie_studio/templates.py`）: アドオン設定の `templates`
+  （`TachieTemplate`: name / data = JSON / behind）。JSON のアイテムは media（`ymmp.Media` の値、YMM4 と同じ座標）・line・face。
+  登録は選んだストリップから（`template_from_strips`、transform は `MediaPlacer` の逆、スピードコントロールはキーフレームから
+  再生速度を戻す。写せるのはフレーム番号の速度だけ）、置くのは `insert_template`（media は `MediaPlacer(behind=…)`、
+  behind はテキスト以外だけ。セリフは `render_clip` → `place_strips`、同じキャラの次のセリフに重なれば余韻を縮めて合成し直す。
+  表情は `_free_face_channel`）。YMM4 のテンプレートは ItemSettings.json の `Templates`（Items は .ymmp と同じ形、
+  `Path` は名前を含むフォルダの列）を `from_ymm4` で読み、表情は YMM4 のパーツのまま持って置くときにキャラの基本との差分の
+  プリセットにする。YMM4 のテンプレートのボイスは VoiceLength が 0 なので、余韻はアイテムの `AdditionalTime`（無ければキャラの
+  既定値）。中身が空になるテンプレートは登録しない。
   まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・セリフなし・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
   音声ストリップに直接書き、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。
