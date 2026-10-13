@@ -935,12 +935,15 @@ assert (r.resolution_x, r.resolution_y, r.fps, r.image_settings.file_format, r.f
 r.fps, r.resolution_x, r.resolution_y = fps_before  # 以降のテストは元の設定で
 r.image_settings.media_type = "IMAGE"
 # 声のエンジン（VOICEVOX 互換）: キャラごとに URL を指定する（ここでは同じエンジンを別の URL 表記で）
-zunda.engine, zunda.engine_url = "CUSTOM", prefs.voicevox_url.replace("127.0.0.1", "localhost")
-assert ops.engine_url(bpy.context, zunda).startswith("http://localhost")
+# （VOICEVOX_URL で別のマシンを指定したときは、末尾に / を付けた表記にする）
+alt_url = (prefs.voicevox_url.replace("127.0.0.1", "localhost") if "127.0.0.1" in prefs.voicevox_url
+           else prefs.voicevox_url.rstrip("/") + "/")
+zunda.engine, zunda.engine_url = "CUSTOM", alt_url
+assert ops.engine_url(bpy.context, zunda) == alt_url
 first_zunda = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
 sed.active_strip = sound(first_zunda)
 run(bpy.ops.tachie.regenerate)
-assert ops.config_of(zunda).engine.startswith("http://localhost")
+assert ops.config_of(zunda).engine.rstrip("/") == alt_url.rstrip("/")
 cfg_engine = ops.config_of(zunda)
 cfg_engine.engine = "http://127.0.0.1:10101"
 ops.apply_config(zunda, cfg_engine)
