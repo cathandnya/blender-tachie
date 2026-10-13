@@ -15,4 +15,4 @@ ZIP=$(uv run python scripts/build_addon.py | tail -1)
 export BLENDER_USER_RESOURCES="$OUT/blender_user"
 rm -rf "$OUT"; mkdir -p "$OUT"
 "$BLENDER" --command extension install-file -r user_default -e "$ZIP" </dev/null
-"$BLENDER" -b --factory-startup --python-exit-code 1 --python scripts/blender_smoke.py -- "$PWD/examples/characters.toml" "$OUT" </dev/null
+"$BLENDER" -b -noaudio --factory-startup --python-exit-code 1 --python scripts/blender_smoke.py -- "$PWD/examples/characters.toml" "$OUT" </dev/null
