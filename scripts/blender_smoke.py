@@ -1026,7 +1026,10 @@ material = out / "material" / "ずんだもん2"  # 素材を汚さないよう�
 material.mkdir(parents=True)
 for sub in Path(bpy.path.abspath(zunda.folder)).iterdir():
     if sub.is_dir():
-        (material / sub.name).symlink_to(sub)
+        try:
+            (material / sub.name).symlink_to(sub)
+        except OSError:  # Windows は開発者モードか管理者でないとリンクを作れないのでコピーする
+            __import__("shutil").copytree(sub, material / sub.name)
 (material / "tachie.toml").write_text(
     f'name = "ずんだ（素材）"\nspeaker = 1\n\n[parts]\n"他" = ["左腕_基本", "右腕_基本"]\n\n'
     f'[layout]\nposition = -0.1\nchannel = {zunda.channel}\n', encoding="utf-8")
