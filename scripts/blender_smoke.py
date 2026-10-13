@@ -1089,6 +1089,18 @@ cid = list(lines())[-1]
 img = image_of(cid)
 names = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
 assert len(names) == 2, names  # 閉じと開きの 2 枚だけを行き来する
+# 素材を選び直す: 設定はそのままで、新しい素材に無いパーツ（シンプル立ち絵の画像名）は既定に戻す
+simple.speaker, simple.part_body = 8, "00 デフォルト"
+run(bpy.ops.tachie.change_material, directory=str(Path(bpy.path.abspath(zunda.folder))) + "/")
+assert simple.folder.rstrip("/").endswith("ずんだもん") and not ops.load_material(simple.folder).simple
+assert simple.speaker == 8 and simple.part_body == ""
+(out / "空のフォルダ").mkdir()
+try:  # 素材でないフォルダは選べない（素材はそのまま）
+    bpy.ops.tachie.change_material(directory=str(out / "空のフォルダ") + "/")
+    raise AssertionError("素材でないフォルダを選べた")
+except RuntimeError as e:
+    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
+assert simple.folder.rstrip("/").endswith("ずんだもん")
 
 # PSD 立ち絵: 口パク・まばたきの設定は動く立ち絵から作る（素材フォルダの PSD が無ければ飛ばす）
 psd_src = next(iter(sorted(Path(bpy.path.abspath(zunda.folder)).glob("*.psd"))), None)

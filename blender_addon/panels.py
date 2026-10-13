@@ -214,7 +214,9 @@ class TACHIE_PT_character(_Panel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         ch = seq_scene(context).tachie.character()
-        layout.prop(ch, "folder")
+        row = layout.row(align=True)
+        row.prop(ch, "folder")
+        row.operator("tachie.change_material", text="", icon="FILE_REFRESH")
         if not ch.folder:
             layout.label(text="立ち絵の無いキャラクター（声と字幕だけ）", icon="SPEAKER")
         layout.prop(ch, "line_layout")
