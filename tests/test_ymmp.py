@@ -5,7 +5,8 @@ import os
 import pytest
 
 from tachie_studio.ymmp import (
-    color, difference, load_project, other_items_summary, overlay, part_name, parts_of, preset_name, seconds,
+    color, difference, front_layer, load_project, other_items_summary, overlay, part_name, parts_of, preset_name,
+    seconds,
 )
 
 CHAR = "C:\\ymm4\\sozai\\char\\ずんだもん"
@@ -39,7 +40,7 @@ def project_json(old: bool = False) -> dict:
             "VoiceParameter": {"$type": "YukkuriMovieMaker.Voice.VOICEVOXVoiceParameter, YukkuriMovieMaker",
                                "StyleID": 3, "Speed": 110, "Pitch": 100.0, "Intonation": 80.0,
                                "PrePhonemeLength": 0.1, "PostPhonemeLength": 0.1, "PauseLengthScale": 100.0},
-            "Font": "メイリオ", "FontSize": anim(80.0), "FontColor": "#FFFFFFFF", "Style": "Border",
+            "Font": "メイリオ", "FontSize": anim(80.0), "Zoom": anim(150.0), "FontColor": "#FFFFFFFF", "Style": "Border",
             "StyleColor": "#FF33A65E", "Y": anim(540.0), "IsJimakuVisible": True,
             "TachieType": "YukkuriMovieMaker.Plugin.Tachie.AnimationTachie.AnimationTachiePlugin, X",
             "TachieCharacterParameter": {"Directory": CHAR},
@@ -49,6 +50,7 @@ def project_json(old: bool = False) -> dict:
         }, {"Name": "ゆっくり霊夢", "Voice": {"API": "aquestalk", "Arg": ""}, "TachieType": None}],
     } | {"Timeline" if old else "Timelines": (lambda tl: tl if old else [tl])({
         "VideoInfo": {"FPS": 60, "Hz": 48000, "Width": 1920, "Height": 1080}, "Length": 600,
+        "LayerSettings": {"Items": [{"Layer": 10, "IsHidden": True}, {"Layer": 9, "IsHidden": False}]},
         "Items": [
             {**voice, "Frame": 300, "Serif": "あとのセリフ"},
             voice,
@@ -61,7 +63,21 @@ def project_json(old: bool = False) -> dict:
              "CharacterName": "ずんだもん", "TachieFaceParameter": {"Eyebrow": f"{CHAR}\\眉\\困り眉1.png"},
              "Frame": 400, "Layer": 4, "Length": 60},
             {"$type": "YukkuriMovieMaker.Project.Items.ImageItem, YukkuriMovieMaker", "FilePath": "C:\\a.png",
-             "Frame": 0, "Layer": 0, "Length": 600},
+             "Frame": 0, "Layer": 0, "Length": 600, "X": anim(10.0), "Y": anim(-20.0), "Zoom": anim(50.0),
+             "Opacity": anim(100.0, "直線移動", (0.0,)), "Rotation": anim(90.0),
+             "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.OutlineEffect, YukkuriMovieMaker"}]},
+            {"$type": "YukkuriMovieMaker.Project.Items.VideoItem, YukkuriMovieMaker", "FilePath": "C:\\v.mov",
+             "Frame": 10, "Layer": 1, "Length": 100, "PlaybackRate": 400.0, "ContentOffset": "00:00:12.5000000",
+             "Volume": anim(0.0), "Zoom": anim(100.0, "Cubic_InOut", (150.0,))},
+            {"$type": "YukkuriMovieMaker.Project.Items.AudioItem, YukkuriMovieMaker", "FilePath": "C:\\bgm.m4a",
+             "Frame": 0, "Layer": 8, "Length": 600, "Volume": anim(5.0, "直線移動", (0.0,)), "FadeOut": 2.0,
+             "IsLooped": True},
+            {"$type": "YukkuriMovieMaker.Project.Items.TextItem, YukkuriMovieMaker", "Text": "タイトル\r\n2 行目",
+             "Font": "Noto Sans JP", "FontSize": anim(80.0), "FontColor": "#FF1A76FF", "Style": "Border",
+             "StyleColor": "#FFFFFFFF", "Bold": True, "BasePoint": "CenterTop", "X": anim(-100.0),
+             "Y": anim(-500.0), "Zoom": anim(100.0, "直線移動", (200.0,)), "Frame": 0, "Layer": 9, "Length": 120},
+            {"$type": "YukkuriMovieMaker.Project.Items.TextItem, YukkuriMovieMaker", "Text": "隠す",
+             "Frame": 0, "Layer": 10, "Length": 120},
             {"$type": "YukkuriMovieMaker.Project.Items.TransitionItem, YukkuriMovieMaker", "Frame": 0, "Layer": 2,
              "Length": 30},
         ]})}
@@ -80,7 +96,7 @@ def test_load_project(tmp_path, old):
     c = p.characters["ずんだもん"]
     assert c.folder_name == "ずんだもん" and c.style_id == 3 and c.has_tachie and c.after == 0.3
     assert c.voice["speedScale"] == 1.1 and c.voice["intonationScale"] == 0.8 and c.voice["pitchScale"] == 0.0
-    assert c.font == "メイリオ" and c.font_size == 80.0 and c.subtitle_y == 540.0 and c.outline
+    assert c.font == "メイリオ" and c.font_size == 120.0 and c.subtitle_y == 540.0 and c.outline
     assert c.outline_color == pytest.approx((0x33 / 255, 0xA6 / 255, 0x5E / 255, 1.0))
     assert c.parts == {"眉": "普通眉", "目": "普通白目_普通目", "口": "むふ", "髪": "", "顔色": "", "体": "",
                        "他": ["左腕_基本", "右腕_基本"], "後": []}
@@ -93,7 +109,23 @@ def test_load_project(tmp_path, old):
     assert v.face == {"目": "普通白目_カメラ目線", "他": ["", "右腕_指差し"]}
     assert p.tachies[0].parts["目"] == "普通白目_目逸らし" and p.tachies[0].x == 769.0 and p.tachies[0].zoom == 80.0
     assert p.faces[0].parts == {"眉": "困り眉1"} and p.faces[0].frame == 400
-    assert other_items_summary(p) == {"画像": 1, "トランジション": 1}
+    assert other_items_summary(p) == {"トランジション": 1}
+    assert [m.kind for m in p.media] == ["image", "audio", "text", "text", "video"]
+    image, audio, text, hidden, video = p.media
+    assert (image.file, image.x, image.y, image.zoom, image.rotation) == ("C:\\a.png", 10.0, -20.0, 50.0, 90.0)
+    assert image.anim == {"opacity": (100.0, 0.0, "直線移動")} and image.effects == ["OutlineEffect"]
+    assert (video.rate, video.offset, video.volume, video.layer) == (400.0, 12.5, 0.0, 1)
+    assert video.anim["zoom"] == (100.0, 150.0, "Cubic_InOut")
+    assert audio.anim["volume"] == (5.0, 0.0, "直線移動") and audio.fade_out == 2.0
+    assert text.text == "タイトル\n2 行目" and text.font_size == 80.0 and text.bold and text.outline
+    assert text.base_point == "CenterTop" and text.font_color == pytest.approx((0x1A / 255, 0x76 / 255, 1.0, 1.0))
+    assert not text.hidden and hidden.hidden  # 非表示のレイヤー
+    assert front_layer(p) == 1  # 立ち絵アイテムのレイヤー
+    assert p.unsupported["画像のエフェクト OutlineEffect"] == 1
+    assert p.unsupported["VideoItem の Zoom のアニメーション"] == 1  # 直線移動以外
+    assert "ImageItem の Opacity のアニメーション" not in p.unsupported  # 始め → 終わりの直線は写せる
+    assert p.unsupported["TextItem の Zoom のアニメーション"] == 1  # テキストの拡大はキーフレームを打たない
+    assert p.unsupported["音声のループ再生"] == 1
     assert p.unsupported["立ち絵のエフェクト InOutJumpEffect"] == 1
     assert p.unsupported["TachieItem の Y のアニメーション"] == 1
     assert p.unsupported["VOICEVOX 以外の声（ゆっくり霊夢: aquestalk）"] == 1

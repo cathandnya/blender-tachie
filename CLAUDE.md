@@ -23,7 +23,16 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
   立ち絵アイテムの基本がキャラの基本と違う区間は、セリフの区間を除いて表情ストリップにする。余韻は次のセリフに 1 フレーム
   あけて重ならないように縮める（声の終わりより `SIMULTANEOUS_FRAMES` 以上前から始まる別のキャラのセリフは同時に喋るので相手にしない）。YMM4 の音量 50 = 等倍（未確認）、立ち絵の X/Y は画像の中心（`position_x`/`position_y`）、
-  Zoom は素材の高さに対する %（`height`）。画像・動画などのアイテムはまだ読まない（数だけ報告）。実ファイルのテストは `YMMP_DIR`。
+  Zoom は素材の高さに対する %（`height`）。キャラの字幕の大きさは FontSize × Zoom（字幕の拡大率）。実ファイルのテストは `YMMP_DIR`。
+  画像・動画・音声・テキスト（段階 2）: `ymmp.Media`（`Project.media`）を `blender_addon/ymmp_media.py` が置く。座標は画面中央から
+  下向きのピクセル、Zoom 100 = 素材の 1px が出力の 1px なので、`fit_method="ORIGINAL"` の transform（offset・scale・rotation は
+  符号を反転）に写す。テキストは BasePoint → anchor / location。2 値の直線移動はキーフレーム（直線）。`front_layer`（立ち絵
+  アイテムの一番下のレイヤー）より下の画像・動画は、アドオンのチャンネルの下にレイヤーの順で置き、空きが足りなければ
+  `shift_addon_channels` で設定と上のストリップをまとめてずらす。手前は見出しなどより上、音声は効果音と同じ探し方。
+  Blender の動画ストリップは素材の 1 フレーム = シーンの 1 フレーム（フレームレートを合わせない）ので、素材の fps × 再生速度が
+  シーンと違えば SPEED ストリップ（`FRAME_NUMBER` に素材のフレーム番号の直線キー）を重ねる。retiming キーの
+  `timeline_frame` を API で動かすと、他のストリップがあるシーンで Blender 5.2.2 が落ちる。置いたストリップは `tachie_ymmp`。
+  ファイルは `MediaFinder`（元のパス → .ymmp のフォルダ → その下 3 階層 → `ymmp_media_root` の下）。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。

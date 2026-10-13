@@ -25,6 +25,7 @@ from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
 from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, system_fonts
 from .tachie_studio.tachie.loader import _is_placeholder
+from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
 from .tachie_studio.ymmp import Project, difference, load_project, other_items_summary, overlay, preset_name
 
 REPORT_TEXT = "YMM4 の読み込み結果"
@@ -223,12 +224,19 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
     filter_glob: bpy.props.StringProperty(default="*.ymmp", options={"HIDDEN"})
     match_video: bpy.props.BoolProperty(name="解像度・フレームレートを合わせる", default=True,
                                         description="シーンの解像度とフレームレートを YMM4 のプロジェクトに合わせる")
+    import_media: bpy.props.BoolProperty(name="画像・動画・音声・テキストも読み込む", default=True,
+                                         description="YMM4 のレイヤーの順で置く（立ち絵より奥のものは、アドオンの"
+                                                     "チャンネルを上へずらしてその下に置く）")
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(seq_scene(context).tachie, "ymmp_material_root")
-        layout.prop(self, "match_video")
+        settings = seq_scene(context).tachie
+        layout.prop(settings, "ymmp_material_root")
         layout.label(text="無いキャラクターは、この中の同じ名前の素材フォルダから追加します")
+        layout.prop(self, "match_video")
+        layout.prop(self, "import_media")
+        if self.import_media:
+            layout.prop(settings, "ymmp_media_root")
 
     def execute(self, context):
         scene = seq_scene(context)
@@ -291,6 +299,17 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             characters[name] = ch
 
         presets = {name: _Presets(ch, problems) for name, ch in characters.items()}
+
+        # 画像・動画・音声・テキスト（キャラのチャンネルが決まってから、セリフを置く前に。チャンネルをずらすことがある）
+        media = None
+        if self.import_media and project.media:
+            media = MediaPlacer(context, project, MediaFinder(Path(self.filepath), settings.ymmp_media_root), frame,
+                                find_font)
+            try:
+                media.place()
+            except ValueError as e:
+                problems.append(f"画像・動画などを置けません: {e}")
+            problems += media.problems
 
         def tachie_base(name: str, f: int) -> dict:
             """その時刻の立ち絵アイテムの基本の表情（無ければキャラクターの基本）。"""
@@ -422,7 +441,12 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                  f"表情プリセットを {created} 個作りました"]
         if +skipped:
             lines += ["", "置かなかったセリフ:"] + [f"  {k}: {n}" for k, n in (+skipped).items()]
+        media_lines = media.report() if media is not None else []
+        if media_lines:
+            lines += ["", *media_lines]
         others = other_items_summary(project)
+        if not self.import_media:
+            others.update(KIND_LABELS[m.kind] for m in project.media)
         if others:
             lines += ["", "読み込んでいないアイテム:"] + [f"  {k}: {n}" for k, n in others.most_common()]
         if project.unsupported:
