@@ -18,7 +18,7 @@ from bpy_extras.io_utils import ImportHelper
 from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
     auto_signature, character_voice, client, connect, ensure_sequencer_scene, line_channels, line_end, line_layout,
-    line_texts, load_material, place_strips, refresh_faces, remove_idle, render_clip, scene_fps, seq_scene,
+    line_texts, load_material, place_still, place_strips, refresh_faces, remove_idle, render_clip, scene_fps, seq_scene,
     subtitle_clashes,
 )
 from .tachie_studio.lipsync.timing import frame_count
@@ -39,7 +39,9 @@ def find_material(root: str, folder_name: str) -> str | None:
     """`root` の下（2 階層まで）から、名前が `folder_name` の素材フォルダを探す。"""
     if not root or not folder_name:
         return None
-    root = bpy.path.abspath(root)
+    root = bpy.path.abspath(os.path.expanduser(root))
+    if not os.path.isdir(root):
+        return None
     want = unicodedata.normalize("NFC", folder_name)
     for depth_root, dirs, _ in os.walk(root):
         depth = Path(depth_root).relative_to(root).parts
@@ -233,6 +235,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
         settings = seq_scene(context).tachie
         layout.prop(settings, "ymmp_material_root")
         layout.label(text="無いキャラクターは、この中の同じ名前の素材フォルダから追加します")
+        layout.label(text="（空なら下の場所と .ymmp のフォルダの下を探します。パスは入力してください）")
         layout.prop(self, "match_video")
         layout.prop(self, "import_media")
         if self.import_media:
@@ -283,7 +286,9 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 _setup_character(context, ch, c, project, None, problems)
                 characters[name] = ch
                 continue
-            folder = find_material(settings.ymmp_material_root, c.folder_name)
+            # 指定が無い・見つからないときは、画像・動画などを探す場所と .ymmp のフォルダの下も探す
+            roots = (settings.ymmp_material_root, settings.ymmp_media_root, str(Path(self.filepath).parent))
+            folder = next((f for r in dict.fromkeys(roots) if (f := find_material(r, c.folder_name))), None)
             if folder is None:
                 problems.append(f"{name}: 素材フォルダ「{c.folder_name}」が見つかりません"
                                 "（「素材フォルダを探す場所」を指定するか、先にキャラクターを追加してください）")
@@ -393,6 +398,28 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
         finally:
             wm.progress_end()
 
+        # 最後のセリフより後ろの立ち絵アイテムは、セリフなしの立ち絵にする（待機は最後のセリフの終わりまでしか
+        # 埋めないので、セリフの無いプロジェクトやエンディングで立ち絵が消える）。表情は下の表情ストリップで付く
+        stills = 0
+        last_line = max((b for spans in line_spans.values() for _, b in spans), default=scene.frame_start)
+        for name in characters:
+            ch = characters[name]
+            if not ch.folder:
+                continue
+            cursor = last_line
+            for span in sorted((s for s in project.tachies if s.character == name and not s.hidden),
+                               key=lambda s: s.frame):
+                a, b = max(cursor, frame(span.frame)), frame(span.frame + span.length)
+                if b <= a:
+                    continue
+                try:
+                    place_still(context, ch, "", a, b - a)
+                except ERRORS as e:
+                    problems.append(f"{a} フレームの {name} の立ち絵: {e}")
+                    continue
+                stills += 1
+                cursor = b
+
         # 表情: 立ち絵アイテムの基本の表情がキャラの基本と違う区間（セリフの間を除く）と、表情アイテム
         faces = 0
 
@@ -437,8 +464,9 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
 
         # 結果
         created = sum(p.created for p in presets.values())
-        lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、表情ストリップ {faces} 個、"
-                 f"表情プリセットを {created} 個作りました"]
+        lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、"
+                 + (f"セリフなしの立ち絵 {stills} 個、" if stills else "")
+                 + f"表情ストリップ {faces} 個、表情プリセットを {created} 個作りました"]
         if +skipped:
             lines += ["", "置かなかったセリフ:"] + [f"  {k}: {n}" for k, n in (+skipped).items()]
         media_lines = media.report() if media is not None else []
@@ -457,7 +485,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
         for line in lines:
             print(line)
         message = lines[0] + f"（詳しくはテキスト「{REPORT_TEXT}」）"
-        if not placed:
+        if not placed and not stills:
             self.report({"ERROR"}, message)
             return {"CANCELLED"} if not characters else {"FINISHED"}
         self.report({"WARNING"} if problems or +skipped else {"INFO"}, message)

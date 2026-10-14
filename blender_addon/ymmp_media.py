@@ -49,7 +49,7 @@ class MediaFinder:
         self.base = ymmp.parent if ymmp is not None else None
         self.roots = [(self.base, SEARCH_DEPTH["project"])] if self.base is not None else []
         if root:
-            self.roots.append((Path(bpy.path.abspath(root)), SEARCH_DEPTH["root"]))
+            self.roots.append((Path(bpy.path.abspath(os.path.expanduser(root))), SEARCH_DEPTH["root"]))
         self._index: dict[str, Path] | None = None
 
     def _build(self) -> dict[str, Path]:
