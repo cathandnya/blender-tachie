@@ -18,9 +18,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は
   Speed/Intonation/PauseLengthScale が %、Pitch は 100 が 0（(Pitch-100)/100）。`Pronounce.AudioQuery` があればその値と
   accent_phrases を優先。ボイスの `Length` = 声 + AdditionalTime。`VoiceCache`（圧縮された音声）は使わない。
-  アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 立ち絵の無いキャラは素材を探さずに追加する。素材フォルダは `ymmp_material_root` の下（2 階層）から
-  YMM4 と同じ名前で探す（`add_character` を使う）。既にあるキャラは設定を変えない。表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
+  アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 立ち絵の無いキャラは素材を探さずに追加する。素材フォルダは `ymmp_material_root` → `ymmp_media_root` → .ymmp のフォルダの下（2 階層）から
+  YMM4 と同じ名前で探す（`add_character` を使う。`~` も使える）。読み込みのファイル選択の中からはフォルダの選択を
+  開けない（ファイル選択は 1 つだけ）ので、2 つの場所は「台本の流し込み」パネルにも出す。既にあるキャラは設定を変えない。表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
+  最後のセリフより後ろの立ち絵アイテムはセリフなしの立ち絵（`place_still`）にする（待機は最後のセリフの終わりまでなので、
+  セリフの無いサムネなどで立ち絵が消える）。
   立ち絵アイテムの基本がキャラの基本と違う区間は、セリフの区間を除いて表情ストリップにする。余韻は次のセリフに 1 フレーム
   あけて重ならないように縮める（声の終わりより `SIMULTANEOUS_FRAMES` 以上前から始まる別のキャラのセリフは同時に喋るので相手にしない）。YMM4 の音量 50 = 等倍（未確認）、立ち絵の X/Y は画像の中心（`position_x`/`position_y`）、
   Zoom は素材の高さに対する %（`height`）。キャラの字幕の大きさは FontSize × Zoom（字幕の拡大率）。実ファイルのテストは `YMMP_DIR`。

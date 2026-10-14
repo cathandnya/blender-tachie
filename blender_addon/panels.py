@@ -451,7 +451,11 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
         sub.enabled = s.script is not None
         sub.operator("tachie.import_script", text="流し込む", icon="PLAY").use_text = True
         layout.operator("tachie.import_script", text="ファイルから流し込む", icon="FILE_TEXT").use_text = False
-        layout.operator("tachie.import_ymmp", icon="IMPORT")
+        col = layout.column(align=True)
+        col.operator("tachie.import_ymmp", icon="IMPORT")
+        # 読み込みのファイル選択の中からはフォルダを選べない（ファイル選択は 1 つしか開けない）ので、ここでも設定できる
+        col.prop(s, "ymmp_material_root", text="素材")
+        col.prop(s, "ymmp_media_root", text="画像など")
 
 
 class TACHIE_PT_placement(_WithTachie, _Panel, bpy.types.Panel):
