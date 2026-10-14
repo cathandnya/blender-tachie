@@ -966,6 +966,95 @@ if tpl_shift:
 ops.refresh_idle(bpy.context)
 scene.frame_end = frame_end_before
 
+# AI で表情を割り当てる（偽の LLM サーバ。キャラごとの束の最初の行は -1 = 変えない、他は WANT の表情の番号）
+import re  # noqa: E402
+import threading  # noqa: E402
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E402
+
+from bl_ext.user_default.blender_tachie import faceassign as fa_mod  # noqa: E402
+
+WANT = {}
+llm_calls = []
+
+
+class _FakeLlm(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _send(self, payload):
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        self._send({"data": [{"id": "fake"}]})
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode("utf-8"))
+        content = "."
+        if body.get("max_tokens") != 1:
+            system, user = body["messages"][0]["content"], body["messages"][1]["content"]
+            llm_calls.append(user)
+            numbers = {m.group(2): int(m.group(1)) for m in re.finditer(r"^(-?\d+): (.+)$", system, re.M)}
+            targets = re.findall(r"^\[(.+?) #(\d+)\]", user, re.M)
+            content = json.dumps({"a": [{"i": int(i), "p": -1 if k == 0 else numbers[WANT[name]]}
+                                        for k, (name, i) in enumerate(targets)]})
+        self._send({"choices": [{"message": {"content": content}}]})
+
+
+llm_server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeLlm)
+threading.Thread(target=llm_server.serve_forever, daemon=True).start()
+prefs.llm_url, prefs.llm_model = f"http://127.0.0.1:{llm_server.server_port}", "fake"
+run(bpy.ops.tachie.llm_test)
+
+
+def no_faces(cid):
+    sts = ops.line_strips(sed, cid)
+    return not ops.face_segments(sed, ops.find_character(s, sts[0]["tachie_character"]),
+                                 min(x.left_handle for x in sts), ops.line_end(sts))
+
+
+fa_ids = [cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん"
+          and ops.line_layout_of(sts) == "FULL" and no_faces(cid)][:2]
+assert len(fa_ids) == 2, fa_ids
+keep_expr = image_of(fa_ids[0])["tachie_expression"]
+old_expr = image_of(fa_ids[1])["tachie_expression"]
+WANT["ずんだもん"] = next(e.name for e in zunda.expressions if e.name != old_expr)
+wav_before = sound(fa_ids[1]).sound.filepath
+select_only([image_of(fa_ids[0]), sound(fa_ids[1])])
+prefs.faceassign_target = "LINE"
+run(bpy.ops.tachie.assign_faces)
+assert len(llm_calls) == 1 and llm_calls[0].count("#") == 2, llm_calls
+assert all(x["tachie_expression"] == keep_expr for x in ops.line_strips(sed, fa_ids[0]))
+assert all(x["tachie_expression"] == WANT["ずんだもん"] for x in ops.line_strips(sed, fa_ids[1]))
+assert sound(fa_ids[1]).sound.filepath == wav_before  # 音声は合成し直さない
+img = image_of(fa_ids[1])
+assert frame_inode(img, 0) in cache_inodes(zunda, WANT["ずんだもん"])
+fa_report = bpy.data.texts[fa_mod.REPORT_TEXT].as_string()
+assert fa_report.startswith("2 行のうち 1 行の表情を変えました"), fa_report
+print(fa_report)
+# 書き込み先を表情ストリップにすると、セリフの区間に表情ストリップを置く（セリフの表情はそのまま）
+WANT["ずんだもん"] = next(e.name for e in zunda.expressions if e.name not in (WANT["ずんだもん"], keep_expr))
+prefs.faceassign_target = "FACE_STRIP"
+select_only([image_of(fa_ids[0]), image_of(fa_ids[1])])
+faces_before = set(ops.face_strips(sed, "ずんだもん"))
+run(bpy.ops.tachie.assign_faces)
+new_faces = [f for f in ops.face_strips(sed, "ずんだもん") if f not in faces_before]
+sts = ops.line_strips(sed, fa_ids[1])
+assert [(f.left_handle, f.right_handle, f["tachie_expression"]) for f in new_faces] == [
+    (min(x.left_handle for x in sts), ops.line_end(sts), WANT["ずんだもん"])], new_faces
+assert image_of(fa_ids[1])["tachie_expression"] != WANT["ずんだもん"]
+assert frame_inode(image_of(fa_ids[1]), 0) in cache_inodes(zunda, WANT["ずんだもん"])
+# 片付け
+prefs.faceassign_target = "LINE"
+for f in new_faces:
+    sed.strips.remove(f)
+ops.refresh_faces(bpy.context)
+llm_server.shutdown()
+
 # 書き出したキャラ設定を読み直すと同じになる
 exported = out / "exported.toml"
 zunda.talk_period = 0.5  # 動きの設定も書き出す（既定値のものは書かない）

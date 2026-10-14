@@ -102,9 +102,19 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `Path` は名前を含むフォルダの列）を `from_ymm4` で読み、表情は YMM4 のパーツのまま持って置くときにキャラの基本との差分の
   プリセットにする。YMM4 のテンプレートのボイスは VoiceLength が 0 なので、余韻はアイテムの `AdditionalTime`（無ければキャラの
   既定値）。中身が空になるテンプレートは登録しない。
+  AI で表情を割り当てる（#27、`blender_addon/faceassign.py`、LLM 側は `tachie_studio/faceassign.py`。cathandnya/ymm4faceassign を
+  移したもの）: 選んだセリフ（立ち絵のあるセリフで、プリセットのあるキャラ）をキャラごとに、シーンのセリフ全部を台本にして
+  OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。
+  文脈は束の手前 `llm_context_lines` 行と対象の間の直前 1 行。取りこぼしは一度だけ聞き直す。json_schema を断るサーバには
+  スキーマ無しで送り直す。通信は別スレッド + モーダル（タイマー）で、bpy に触るのはメインスレッドだけ（バックグラウンドは
+  execute で待つ）。書き込み先 `faceassign_target`: LINE は `operators.set_line_expression`（lines/<id>.json から
+  `segment_frames` で連番を並べ直して `tachie_frames_dir` を差し替える。音声は合成し直さない。json が無い・長さが違えば
+  `regenerate`）、FACE_STRIP はセリフの区間の表情ストリップ（同じ区間のものがあれば中身を変える）。設定はアドオン設定の
+  `llm_*` / `faceassign_*`、API キーは環境変数 `TACHIE_LLM_API_KEY` が優先。結果はテキスト「表情の割り当て結果」。
+  スモークテストは偽の LLM サーバ（`http.server`）で回す。実機の LLM は未確認。
   まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・セリフなし・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
-  音声ストリップに直接書き、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。
+  音声ストリップに直接書き、表情だけなら `set_line_expression`、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。
   「立ち絵だけを置く」はセリフなしの立ち絵（まばたきのみ、`tachie_still` = キャラ名、`tachie_expression`）を
   再生位置に置く。待機の作り直しでは消えず、待機の範囲の終わりにも数える。伸ばしたら「作り直す」で今の長さに合わせる。
   セリフごとの声（読み上げ速度・声の高さ・抑揚・音量・開始/終了無音・間の長さ、`properties.VOICE_PROPS`）は
