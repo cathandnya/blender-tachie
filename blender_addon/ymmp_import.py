@@ -532,8 +532,12 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             if c is None:
                 problems.append(f"{name}: キャラクターの設定がプロジェクトにありません")
                 continue
-            if not c.has_tachie:  # 立ち絵の無いキャラは声と字幕だけ
-                ch = add_voice_character(context, name)
+            if not c.has_tachie:  # 立ち絵の無いキャラは声と字幕だけ（アドオン設定の初期値に YMM4 の設定を重ねる）
+                try:
+                    ch, _ = add_voice_character(context, name)
+                except ValueError as e:
+                    problems.append(f"{name}: キャラクターを追加できません: {e}")
+                    continue
                 ch.line_layout = "SUBTITLE" if c.subtitle_visible else "AUDIO"
                 _setup_character(context, ch, c, project, None, problems)
                 characters[name] = ch

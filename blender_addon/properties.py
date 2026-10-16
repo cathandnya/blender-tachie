@@ -164,7 +164,7 @@ class TachiePreferences(bpy.types.AddonPreferences):
                ("FACE_STRIP", "表情ストリップ", "セリフの区間に表情ストリップを置く（後から目で見て直しやすい）")])
 
     def draw(self, context):
-        from .operators import character_defaults_path, load_character_defaults
+        from .operators import character_defaults_path, load_character_defaults, load_voice_defaults
 
         layout = self.layout
         layout.prop(self, "voicevox_url")
@@ -172,16 +172,21 @@ class TachiePreferences(bpy.types.AddonPreferences):
         box = layout.box()
         box.label(text="キャラクターを追加するときの初期値（素材の tachie.toml より優先）")
         try:
-            defaults = load_character_defaults()
+            defaults, voices = load_character_defaults(), load_voice_defaults()
         except ValueError as e:
             box.label(text=str(e), icon="ERROR")
-            defaults = {}
+            defaults, voices = {}, {}
         for key, table in defaults.items():
             row = box.row()
             name = table.get("name")
             row.label(text=f"{key}（{name}）" if name else key, icon="USER")
             row.operator("tachie.remove_defaults", text="", icon="X").key = key
-        if not defaults:
+        for name in voices:
+            row = box.row()
+            row.label(text=f"{name}（立ち絵なし）", icon="SPEAKER")
+            op = row.operator("tachie.remove_defaults", text="", icon="X")
+            op.key, op.voice = name, True
+        if not defaults and not voices:
             box.label(text="なし。シーケンサーの立ち絵タブのメニューから保存できます")
         box.label(text=str(character_defaults_path()), icon="FILE")
         box = layout.box()

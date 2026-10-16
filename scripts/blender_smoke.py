@@ -799,7 +799,12 @@ s.ymmp_material_root = str(Path(zunda.folder).parent if Path(zunda.folder).is_ab
                            else Path(bpy.path.abspath(zunda.folder)).parent)
 zunda_presets = {e.name for e in zunda.expressions}
 n_chars = len(s.characters)
+# 立ち絵の無いキャラはアドオン設定の初期値（キャラ名）で始め、YMM4 の設定で上書きする
+ops.character_defaults_path().write_text(
+    '["立ち絵なし"."ナレーター（YMM4）"]\nspeaker = 1\n\n["立ち絵なし"."ナレーター（YMM4）".layout]\nlines = "AUDIO"\n\n'
+    '["立ち絵なし"."ナレーター（YMM4）".subtitle]\nsize = 30\nbox = true\n', encoding="utf-8")
 run(bpy.ops.tachie.import_ymmp, filepath=str(ymmp), match_video=False)
+ops.character_defaults_path().unlink()
 report = bpy.data.texts["YMM4 の読み込み結果"].as_string()
 print(report)
 assert "セリフ 4 / 4 個" in report and "missing.png" in report and "存在しないフォント" in report, report
@@ -841,7 +846,7 @@ assert yfaces and next(e for e in zunda.expressions
                        if e.name == yfaces[0]["tachie_expression"]).part_eyebrow == "怒り眉"
 ynar = s.characters[n_chars + 1]  # 立ち絵の無いキャラは素材を探さずに追加し、声と字幕だけで置く
 assert ynar.name == "ナレーター（YMM4）" and ynar.folder == "" and ynar.line_layout == "SUBTITLE"
-assert ynar.speaker == 2 and ynar.font_size == 50
+assert ynar.speaker == 2 and ynar.font_size == 50 and ynar.subtitle_box  # YMM4 に無い設定は初期値のまま
 _, nsts = ylines["読み込んだナレーション"]
 assert sorted(x.type for x in nsts) == ["SOUND", "TEXT"] and nsts[0]["tachie_layout"] == "SUBTITLE"
 # 片付け（あとのテストに影響しないように）
@@ -1266,6 +1271,31 @@ from bl_ext.user_default.blender_tachie.tachie_studio.pipeline.config import loa
 assert load_material_table(material)["speaker"] == 7
 run(bpy.ops.tachie.remove_defaults, key="ずんだもん2")
 assert ops.load_character_defaults() == {}
+# 立ち絵の無いキャラの初期値: キャラ名で保存し、同じ名前で追加すると使う。素材フォルダ名の初期値とは混ざらない
+ops.character_defaults_path().write_text('["語り手"]\nspeaker = 9\n', encoding="utf-8")
+run(bpy.ops.tachie.character_add_voice, name="語り手")
+narr = s.characters[-1]
+assert narr.speaker == 3 and narr.line_layout == "SUBTITLE"  # 素材フォルダ「語り手」の初期値は使わない
+s.active_character = len(s.characters) - 1
+narr.speaker, narr.speed_scale, narr.font_size, narr.line_layout = 8, 1.2, 40, "AUDIO"
+run(bpy.ops.tachie.save_defaults, target="PREFS")
+assert ops.load_character_defaults() == {"語り手": {"speaker": 9}}
+voice = ops.load_voice_defaults()["語り手"]
+assert voice["speaker"] == 8 and voice["speed"] == 1.2 and voice["subtitle"]["size"] == 40, voice
+assert "parts" not in voice and set(voice["layout"]) == {"channel", "lines"}, voice
+try:
+    bpy.ops.tachie.save_defaults(target="MATERIAL")
+    raise AssertionError("立ち絵の無いキャラの初期値を素材フォルダに書けた")
+except RuntimeError as e:
+    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
+run(bpy.ops.tachie.character_add_voice, name="語り手")  # 同じ名前があれば番号を付け、初期値は元の名前で探す
+narr2 = s.characters[-1]
+assert narr2.name == "語り手 2" and narr2.speaker == 8 and abs(narr2.speed_scale - 1.2) < 1e-6
+assert narr2.font_size == 40 and narr2.line_layout == "AUDIO" and narr2.channel != narr.channel
+run(bpy.ops.tachie.remove_defaults, key="語り手", voice=True)
+assert ops.load_voice_defaults() == {} and ops.load_character_defaults() == {"語り手": {"speaker": 9}}
+run(bpy.ops.tachie.remove_defaults, key="語り手")
+zunda = next(c for c in s.characters if c.name == "ずんだもん")  # 追加でコレクションが作り直されて参照が無効になる
 
 # シンプル立ち絵（画像を入れただけのフォルダ）: 口を閉じた画像と開いた画像を音量で切り替える
 from bl_ext.user_default.blender_tachie.tachie_studio.tachie import Expression, compose, load_character  # noqa: E402
