@@ -204,6 +204,9 @@ class Voice:
     face: dict[str, Any] = field(default_factory=dict)  # セリフ中の表情（変えるパーツだけ）
     subtitle: str = "UseCharacterSetting"  # JimakuVisibility
     hidden: bool = False
+    # 字幕の位置（JimakuVisibility が Custom のときに使う。画面中央からのピクセル、下が正。BasePoint は CenterBottom）
+    sub_x: float = 0.0
+    sub_y: float = 0.0
     cache: str = field(default="", repr=False)  # VoiceCache（YMM4 が合成した音声。Brotli で圧縮した WAV の base64）
 
 
@@ -401,7 +404,7 @@ def _voice(item: dict) -> Voice:
         pan=value(item.get("Pan")), fade_in=float(item.get("VoiceFadeIn") or 0.0),
         fade_out=float(item.get("VoiceFadeOut") or 0.0), face=parts_of(item.get("TachieFaceParameter"), full=False),
         subtitle=item.get("JimakuVisibility") or "UseCharacterSetting", hidden=bool(item.get("IsHidden")),
-        cache=item.get("VoiceCache") or "")
+        sub_x=value(item.get("X")), sub_y=value(item.get("Y")), cache=item.get("VoiceCache") or "")
 
 
 def _effects(item: dict, *keys: str) -> list[str]:
@@ -522,6 +525,16 @@ def _transitions(project: Project, hidden_layers: set[int]) -> None:
     project.others = rest
 
 
+# ボイスごとの字幕（Custom）で、位置のほかに比べる設定（違えば写せなかった設定に出す）
+CUSTOM_SUBTITLE_KEYS = ("FontSize", "Font", "FontColor", "Style", "StyleColor", "BasePoint", "Zoom", "Rotation",
+                        "LineHeight2")
+
+
+def _setting(v):
+    """比べるための設定の値（アニメーションできる値は最初の値）。"""
+    return value(v) if isinstance(v, dict) and "Values" in v else v
+
+
 def _fill_background(m: Media, item: dict) -> None:
     """テキストの映像エフェクト「背景塗りつぶし」（単色）を背景の色・余白にする（写したものはエフェクトの一覧から外す）。"""
     for e in item.get("VideoEffects") or []:
@@ -610,9 +623,11 @@ def load_project(path: str | Path) -> Project:
                       height=int(info.get("Height") or 1080), length=int(timeline.get("Length") or 0))
     if len(timelines) > 1:
         project.unsupported[f"選んでいるタイムライン以外（{len(timelines) - 1} 個）"] += 1
+    raw_characters = {}  # 名前 → .ymmp のキャラの設定（ボイスごとの字幕と比べる）
     for d in data.get("Characters") or []:
         c = _character(d)
         project.characters[c.name] = c
+        raw_characters.setdefault(c.name, d)
         if c.voice_api and c.voice_api != "voicevox":
             project.unsupported[f"VOICEVOX 以外の声（{c.name}: {c.voice_api}）"] += 1
         if d.get("TachieType") and not c.has_tachie:
@@ -636,8 +651,10 @@ def load_project(path: str | Path) -> Project:
         elif kind == "VoiceItem":
             v = _voice(item)
             project.voices.append(v)
-            if v.subtitle == "Custom":
-                project.unsupported["字幕をボイスごとに設定したもの（キャラの設定で出す）"] += 1
+            if v.subtitle == "Custom":  # 位置は写す。文字の設定がキャラと違えば報告する
+                c = raw_characters.get(v.character, {})
+                if any(_setting(item.get(k)) != _setting(c.get(k)) for k in CUSTOM_SUBTITLE_KEYS):
+                    project.unsupported["字幕をボイスごとに変えた文字の設定（位置だけ写す）"] += 1
             if item.get("Decorations"):
                 project.unsupported["字幕の装飾（Decorations）"] += 1
             for e in _effects(item, "TachieFaceEffects"):

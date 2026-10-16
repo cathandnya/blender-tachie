@@ -21,11 +21,11 @@ from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
     auto_signature, character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_end, line_layout,
     line_texts, load_material, place_still, place_strips, refresh_faces, remove_idle, render_clip, scene_fps, seq_scene,
-    subtitle_clashes,
+    set_text_offset, subtitle_clashes,
 )
 from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
-from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, system_fonts
+from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, place_text, system_fonts
 from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
 from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
 from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary, overlay,
@@ -657,6 +657,13 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 for s in line_texts(strips):
                     s.mute = True
             else:
+                if v.subtitle == "Custom":
+                    # ボイスごとの字幕の位置（YMM4 の X / Y は画面中央からの下向きのピクセル、字幕の下端）を、
+                    # キャラの字幕の位置からずらす量（画面に対する割合）にする
+                    offset = (v.sub_x / project.width, 0.5 - v.sub_y / project.height - job.ch.subtitle_y)
+                    for s in line_texts(strips):
+                        set_text_offset(s, offset)
+                        place_text(s, job.ch, v.text)
                 clashes = subtitle_clashes(sed, strips)
                 if clashes:
                     problems.append(f"{where}: 字幕が{'・'.join(clashes)}の字幕と重なっています")

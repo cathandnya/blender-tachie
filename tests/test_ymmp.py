@@ -318,3 +318,20 @@ def test_transitions(tmp_path):
     assert abs(fade.offset - (1.0 + 119 / 60 * 2.0)) < 1e-9 and fade.transition["after"].file.endswith("next.png")
     assert p.unsupported["前の場面が画像・動画でないトランジション"] == 1
     assert sum(1 for i in p.others if "TransitionItem" in i["$type"]) == 1  # 写せない種類は読み込まないアイテムに残す
+
+
+def test_custom_subtitle(tmp_path):
+    """字幕をボイスごとに設定したセリフ（Custom）は位置を読む。文字の設定がキャラと違うときだけ報告する。"""
+    data = project_json(False)
+    items = data["Timelines"][0]["Items"]
+    voice = next(i for i in items if "VoiceItem" in i["$type"])
+    items += [{**voice, "Frame": 400, "JimakuVisibility": "Custom", "X": anim(-20.5), "Y": anim(0.0),
+               "FontSize": anim(80.0), "Zoom": anim(150.0), "Font": "メイリオ", "FontColor": "#FFFFFFFF",
+               "Style": "Border", "StyleColor": "#FF33A65E"}]
+    p = load_project(write(tmp_path, data))
+    v = next(v for v in p.voices if v.frame == 400)
+    assert v.subtitle == "Custom" and (v.sub_x, v.sub_y) == (-20.5, 0.0)
+    assert "字幕をボイスごとに変えた文字の設定（位置だけ写す）" not in p.unsupported
+    items[-1]["FontSize"] = anim(40.0)
+    p = load_project(write(tmp_path, data))
+    assert p.unsupported["字幕をボイスごとに変えた文字の設定（位置だけ写す）"] == 1

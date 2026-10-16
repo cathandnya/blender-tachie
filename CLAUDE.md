@@ -66,6 +66,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （`transition`、動画は再生速度 0 で最後のコマ）を前と新しい場面のすぐ上のレイヤー（+0.5）に作り、`MediaPlacer._transition` がフェードは
   blend_alpha、プッシュは残像と新しい場面の offset にキーを打つ（角度 0 で左へ）。残像は画像だけで、YMM4 のように画面全体
   （黒い余白・下のテキストなど）ではない。
+  ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
+  （キャラの字幕の位置との差、画面に対する割合）。文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
