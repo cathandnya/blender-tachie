@@ -21,7 +21,7 @@ import re
 import unicodedata
 import wave
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -308,6 +308,9 @@ class Media:
     # モザイク（kind == "mosaic"。YMM4 のエフェクトアイテムの四角い範囲のモザイク）。{"size": ブロックの大きさ,
     # "width", "height": 範囲（ピクセル）, "invert": 範囲の外にかける}。X / Y は範囲の中心
     mosaic: dict | None = None
+    # 場面転換（YMM4 のトランジションアイテム）の残像。前の場面の最後のコマを止めて新しい場面の上に置き、動かす。
+    # {"type": fade / push, "easing", "mode", "angle": 度, "after": 新しい場面の Media（無ければ None）}
+    transition: dict | None = None
     color: tuple = (0.0, 0.0, 0.0, 1.0)  # カラー（kind == "color"、アドオンのテンプレートだけ）
     anim: dict[str, tuple[float, float, str]] = field(default_factory=dict)  # 属性 → (始め, 終わり, 種類)
     effects: list[str] = field(default_factory=list)
@@ -477,6 +480,48 @@ def _mosaic_item(item: dict, hidden_layers: set[int]) -> Media | None:
     return m
 
 
+# YMM4 のトランジション → Media.transition の type
+TRANSITION_TYPES = {"FadeTransitionPlugin": "fade", "PushTransitionPlugin": "push"}
+
+
+def _transitions(project: Project, hidden_layers: set[int]) -> None:
+    """トランジションアイテムを、前の場面（区間の始まりで終わる下のレイヤーの画像・動画）の残像の Media にする。
+    YMM4 のトランジションは新しい場面の始まりから置かれ、前の場面の最後のコマから新しい場面へ切り替える。"""
+    rest = []
+    for item in project.others:
+        kind = TRANSITION_TYPES.get(_type({"$type": item.get("TransitionType", "")}))
+        if (_type(item) != "TransitionItem" or kind is None or item.get("IsHidden")
+                or int(item.get("Layer", 0)) in hidden_layers):
+            rest.append(item)
+            continue
+        start, length, layer = int(item.get("Frame", 0)), int(item.get("Length", 0)), int(item.get("Layer", 0))
+        lower = [m for m in project.media if m.kind in ("image", "video") and not m.hidden and m.layer < layer
+                 and m.transition is None]  # 他の場面転換の残像は場面にしない
+        before = max((m for m in lower if abs(m.frame + m.length - start) <= 1), key=lambda m: m.layer, default=None)
+        after = max((m for m in lower if abs(m.frame - start) <= 1), key=lambda m: m.layer, default=None)
+        if before is None:
+            project.unsupported["前の場面が画像・動画でないトランジション"] += 1
+            continue
+        p = item.get("TransitionParameter") or {}
+        end = {attr: v[1] for attr, v in before.anim.items()}  # 動いていた画像は終わりの位置で止める
+        # 残像は前と新しい場面のすぐ上（トランジションのレイヤーが立ち絵より上でも、キャラを隠さない）
+        hold_layer = max(before.layer, after.layer if after is not None else before.layer) + 0.5
+        hold = replace(before, frame=start, length=length, layer=hold_layer, anim={}, fade_in=0.0, fade_out=0.0,
+                       effects=[], slide=None, volume=0.0, x=end.get("x", before.x), y=end.get("y", before.y),
+                       zoom=end.get("zoom", before.zoom), rotation=end.get("rotation", before.rotation),
+                       opacity=end.get("opacity", before.opacity),
+                       transition={"type": kind, "easing": p.get("EasingType") or "Linear",
+                                   "mode": p.get("EasingMode") or "InOut", "angle": value(p.get("Angle")),
+                                   "after": after})
+        if before.kind == "video":  # 最後のコマで止める（再生速度 0）
+            hold.offset = before.offset + max(0, before.length - 1) / project.fps * before.rate / 100
+            hold.rate = 0.0
+        project.media.append(hold)
+        for e in _effects(item, "VideoEffects", "BeforeVideoEffects", "AfterVideoEffects"):
+            project.unsupported[f"トランジションのエフェクト {e}"] += 1
+    project.others = rest
+
+
 def _fill_background(m: Media, item: dict) -> None:
     """テキストの映像エフェクト「背景塗りつぶし」（単色）を背景の色・余白にする（写したものはエフェクトの一覧から外す）。"""
     for e in item.get("VideoEffects") or []:
@@ -615,6 +660,7 @@ def load_project(path: str | Path) -> Project:
             project.others.append(item)
             continue
         _note_unsupported(project, kind, item)
+    _transitions(project, hidden_layers)
     project.voices.sort(key=lambda v: (v.frame, v.layer))
     project.tachies.sort(key=lambda s: (s.frame, s.layer))
     project.faces.sort(key=lambda s: (s.frame, s.layer))

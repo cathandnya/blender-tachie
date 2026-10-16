@@ -37,7 +37,8 @@ VOLUME_BASE = 50.0
 SEARCH_DEPTH = {"project": 3, "root": 4}
 # 名前で探すときに見るフォルダの数の上限（ホームフォルダなど広すぎる場所を指定されても固まらないように）
 SEARCH_MAX_DIRS = 3000
-KIND_LABELS = {"image": "画像", "video": "動画", "audio": "音声", "text": "テキスト", "color": "カラー", "mosaic": "モザイク"}
+KIND_LABELS = {"image": "画像", "video": "動画", "audio": "音声", "text": "テキスト", "color": "カラー", "mosaic": "モザイク",
+               "transition": "場面転換"}
 
 
 def _nfc(name: str) -> str:
@@ -181,6 +182,7 @@ class MediaPlacer:
         self.missing: dict[str, int] = {}
         self.problems: list[str] = []
         self._paths: dict[str, Path | None] = {}
+        self._strips: dict[int, object] = {}  # id(Media) → 置いたストリップ（場面転換で新しい場面も動かす）
         self._movie_fps: dict[Path, float] = {}
 
     # ---- 準備 ----
@@ -189,7 +191,7 @@ class MediaPlacer:
         if m.file not in self._paths:
             self._paths[m.file] = self.finder.find(m.file)
         path = self._paths[m.file]
-        if path is None:
+        if path is None and m.transition is None:  # 場面転換の残像は前の場面と同じファイルなので数えない
             name = PureWindowsPath(m.file).name or "（ファイル名なし）"
             self.missing[name] = self.missing.get(name, 0) + 1
         return path
@@ -304,6 +306,12 @@ class MediaPlacer:
                     except (RuntimeError, ValueError, OSError) as e:
                         self.problems.append(f"{KIND_LABELS[m.kind]} {PureWindowsPath(m.file).name or m.text[:20]}: {e}")
         for m in items:
+            if m.transition is not None and id(m) in self._strips:
+                try:
+                    self._transition(m, self._strips[id(m)])
+                except (RuntimeError, ValueError) as e:
+                    self.problems.append(f"場面転換 {PureWindowsPath(m.file).name}: {e}")
+        for m in items:
             if m.kind == "audio":
                 path = self._path(m)
                 if path is not None:
@@ -361,7 +369,8 @@ class MediaPlacer:
             strip.blend_type = "ALPHA_OVER"
         strip.blend_alpha = max(0.0, min(1.0, m.opacity / 100))
         self._animate(strip, m, start, end)
-        self.placed[m.kind] += 1
+        self._strips[id(m)] = strip
+        self.placed["transition" if m.transition else m.kind] += 1
 
     def _mosaic_tree(self, m: Media):
         """範囲（四角いマスク）の中だけピクセル化するコンポジターのノードグループ。"""
@@ -534,6 +543,37 @@ class MediaPlacer:
             strip.location = inside
         else:
             setattr(target, attr, inside)
+
+    def _transition(self, m: Media, strip) -> None:
+        """場面転換の残像を動かす。フェードは残像を薄くし、プッシュは残像を押し出して新しい場面を反対側から入れる。"""
+        tr = m.transition
+        start, end = self._span(m)
+        last = max(start, end - 1)
+        if tr["type"] == "fade":
+            _key(strip, "blend_alpha", start, strip.blend_alpha)
+            _key(strip, "blend_alpha", last, 0.0)
+            _ease(self.scene, strip, "blend_alpha", start, tr, out=False)
+            return
+        # プッシュ: 角度 0 で左へ押し出す（新しい場面は右から）。画面 1 つ分動かす
+        render = self.scene.render
+        angle = math.radians(tr["angle"])
+        dx, dy = -math.cos(angle) * render.resolution_x, math.sin(angle) * render.resolution_y
+        after = self._strips.get(id(tr["after"])) if tr["after"] is not None else None
+        if after is not None and (tr["after"].slide is not None or any(k in tr["after"].anim for k in ("x", "y"))):
+            self.problems.append("場面転換の新しい場面が動いているので、押し出しは前の場面だけにしました")
+            after = None
+        for target, (frm, to) in ((strip, (0.0, 1.0)), (after, (-1.0, 0.0))):
+            if target is None:
+                continue
+            t = target.transform
+            base_x, base_y = t.offset_x, t.offset_y
+            for attr, base, d in (("offset_x", base_x, dx), ("offset_y", base_y, dy)):
+                if abs(d) < 1e-6:
+                    continue
+                _key(target, f"transform.{attr}", start, base + d * frm)
+                _key(target, f"transform.{attr}", last, base + d * to)
+                _ease(self.scene, t, attr, start, tr, out=False)
+                setattr(t, attr, base)
 
     def _fade(self, strip, attr: str, full: float, m: Media, start: int, last: int) -> None:
         if m.fade_in > 0:

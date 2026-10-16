@@ -285,3 +285,36 @@ def test_outline_image(tmp_path):
     row = [im.getpixel((x, 7)) for x in range(im.width)]
     assert row[0][3] == 0 and row[1] == (255, 255, 255, 255) and row[4] == (255, 0, 0, 255)
     assert outline_image(src, tmp_path / "fx", 3, (1.0, 1.0, 1.0, 1.0)) == out  # 同じ中身なら作り直さない
+
+
+def test_transitions(tmp_path):
+    """トランジションアイテム → 前の場面（区間の始まりで終わる画像・動画）の最後のコマの残像。"""
+    data = project_json(False)
+    items = data["Timelines"][0]["Items"]
+    items[:] = [i for i in items if "TransitionItem" not in i["$type"]]
+    image = lambda f, frame, length, layer=0: {"$type": "YukkuriMovieMaker.Project.Items.ImageItem, Y",
+                                               "FilePath": f, "Frame": frame, "Length": length, "Layer": layer,
+                                               "X": anim(10.0, "直線移動", (50.0,)), "Zoom": anim(40.0)}
+    video = {"$type": "YukkuriMovieMaker.Project.Items.VideoItem, Y", "FilePath": "C:\\x\\v.mp4", "Frame": 300,
+             "Length": 120, "Layer": 20, "PlaybackRate": 200.0, "ContentOffset": "00:00:01"}
+    tr = lambda frame, kind, layer: {"$type": "YukkuriMovieMaker.Project.Items.TransitionItem, Y", "Frame": frame,
+                                     "Length": 48, "Layer": layer,
+                                     "TransitionType": f"YukkuriMovieMaker.Transition.{kind}, YukkuriMovieMaker",
+                                     "TransitionParameter": {"Angle": anim(0.0), "EasingType": "Expo",
+                                                             "EasingMode": "InOut"}}
+    items += [image("C:\\x\\before.png", 100, 200, 20), image("C:\\x\\after.png", 300, 100, 20), video,
+              {**image("C:\\x\\next.png", 420, 60, 20)},
+              tr(300, "PushTransitionPlugin", 21), tr(420, "FadeTransitionPlugin", 21),
+              tr(0, "FadeTransitionPlugin", 22), tr(50, "UnknownTransitionPlugin", 21)]
+    p = load_project(write(tmp_path, data))
+    holds = sorted((m for m in p.media if m.transition), key=lambda m: m.frame)
+    assert len(holds) == 2
+    push, fade = holds
+    assert push.file.endswith("before.png") and push.frame == 300 and push.length == 48 and push.layer == 20.5
+    assert push.x == 50.0 and push.anim == {}  # 動いていた画像は終わりの位置で止める
+    assert push.transition["type"] == "push" and push.transition["after"].file.endswith("after.png")
+    # 動画は最後のコマで止める（1 秒 + 119 フレーム × 2 倍速）
+    assert fade.kind == "video" and fade.rate == 0.0 and fade.volume == 0.0
+    assert abs(fade.offset - (1.0 + 119 / 60 * 2.0)) < 1e-9 and fade.transition["after"].file.endswith("next.png")
+    assert p.unsupported["前の場面が画像・動画でないトランジション"] == 1
+    assert sum(1 for i in p.others if "TransitionItem" in i["$type"]) == 1  # 写せない種類は読み込まないアイテムに残す

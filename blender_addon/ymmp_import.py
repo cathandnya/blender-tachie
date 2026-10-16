@@ -749,7 +749,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 lines += ["", *media_lines]
             others = other_items_summary(project)
             if not self.import_media:
-                others.update(KIND_LABELS[m.kind] for m in project.media)
+                others.update(KIND_LABELS["transition" if m.transition else m.kind] for m in project.media)
             if others:
                 lines += ["", "読み込んでいないアイテム:"] + [f"  {k}: {n}" for k, n in others.most_common()]
             if project.unsupported:
