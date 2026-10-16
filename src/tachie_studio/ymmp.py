@@ -125,6 +125,29 @@ def difference(base: dict[str, Any], parts: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def find_by_tail(original: str, start: Path, levels: int = 3, directory: bool = False) -> Path | None:
+    """YMM4 の元のパス（Windows）の後ろの部分を、`start` とその上 `levels` 階層のフォルダの下で探す。
+    `C:\\ymm4\\sozai\\char\\ずんだもん` を、Windows と同じ並びで持ってきた `~/YouTube/sozai/char/ずんだもん` に見つける。
+    近いフォルダ・長く一致するものが優先。"""
+    if not original:
+        return None
+    parts = [p for p in ntpath.normpath(original).split("\\") if p]
+    if ntpath.splitdrive(original)[0]:  # ドライブ・\\サーバ\共有 は除く
+        parts = parts[1:] if ":" in parts[0] else parts[2:]
+    if not parts:
+        return None
+    base = Path(start)
+    for _ in range(levels + 1):
+        for k in range(len(parts), 0, -1):
+            candidate = base.joinpath(*parts[-k:])
+            if candidate.is_dir() if directory else candidate.is_file():
+                return candidate
+        if base.parent == base:
+            break
+        base = base.parent
+    return None
+
+
 @dataclass
 class Character:
     name: str

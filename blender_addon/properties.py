@@ -501,6 +501,23 @@ def _update_headlines(self, context):
                 pass
 
 
+def _update_ymmp_folder(self, context):
+    from .ymmp_import import fill_pending_folders
+    fill_pending_folders(self.id_data.tachie, self)
+
+
+def _update_ymmp_media(self, context):
+    if self.ymmp_pending:
+        from .ymmp_import import rescan_pending_media
+        rescan_pending_media(self)
+
+
+class TachieYmmpCharacter(bpy.types.PropertyGroup):
+    """YMM4 のプロジェクトの読み込みを待っている間の、キャラクターごとの素材フォルダ。"""
+    folder: StringProperty(name="素材フォルダ", subtype="DIR_PATH", default="", update=_update_ymmp_folder)
+    folder_name: StringProperty()  # YMM4 の素材フォルダの名前
+
+
 class TachieSceneSettings(bpy.types.PropertyGroup):
     characters: CollectionProperty(type=TachieCharacter)
     active_character: IntProperty(name="キャラクター", default=0)
@@ -535,7 +552,16 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
                                                    "（YMM4 と同じ名前）をこの中から探す")
     ymmp_media_root: StringProperty(name="画像・動画などを探す場所", subtype="DIR_PATH", default="",
                                     description="YMM4 のプロジェクトの画像・動画・音声が元の場所と .ymmp のフォルダに"
-                                                "無いとき、この中（下の階層も）から同じ名前のファイルを探す")
+                                                "無いとき、この中（下の階層も）から同じ名前のファイルを探す",
+                                    update=_update_ymmp_media)
+    # 見つからない素材・ファイルがあったときに、パネルで場所を指定してから読み込む（ymmp_pending が空なら待っていない）
+    ymmp_pending: StringProperty(subtype="FILE_PATH", default="")
+    ymmp_pending_chars: CollectionProperty(type=TachieYmmpCharacter)
+    ymmp_pending_files: IntProperty(default=0)  # 画像・動画などのファイルの数
+    ymmp_pending_missing: StringProperty(default="")  # 見つからないファイル名（改行区切り）
+    ymmp_match_video: BoolProperty(name="解像度・フレームレートを合わせる", default=True)
+    ymmp_import_media: BoolProperty(name="画像・動画・音声・テキストも読み込む", default=True,
+                                    update=_update_ymmp_media)
     se_channel: IntProperty(name="効果音", default=1, min=1, max=128,
                             description="効果音を置くチャンネル。他のストリップがあれば、上の空いているチャンネル"
                                         "（音声・字幕・キャラ名・見出し・立ち絵のチャンネルは除く）")
@@ -609,7 +635,8 @@ class TachieAccentEdit(bpy.types.PropertyGroup):
     speaker: IntProperty()
 
 
-_classes = (TachieSoundEffect, TachieTemplate, TachiePreferences, TachieExpression, TachieCharacter, TachieSceneSettings, TachieDictionary,
+_classes = (TachieSoundEffect, TachieTemplate, TachiePreferences, TachieExpression, TachieCharacter, TachieYmmpCharacter,
+            TachieSceneSettings, TachieDictionary,
             TachieMora, TachiePhrase, TachieAccentEdit)
 
 

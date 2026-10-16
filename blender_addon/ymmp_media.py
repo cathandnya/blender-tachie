@@ -28,7 +28,7 @@ import bpy
 from .motion import _channelbag, _key
 from .operators import _overlaps, _path_for_blend, _sound_error, seq_scene
 from .properties import default_font, load_font
-from .tachie_studio.ymmp import Media, Project, front_layer
+from .tachie_studio.ymmp import Media, Project, find_by_tail, front_layer
 
 # YMM4 の音量（50 が等倍）
 VOLUME_BASE = 50.0
@@ -42,7 +42,8 @@ def _nfc(name: str) -> str:
 
 
 class MediaFinder:
-    """YMM4 のパス（Windows）のファイルを、元のパス → .ymmp と同じフォルダ → その下 → `root` の下 の順で探す。"""
+    """YMM4 のパス（Windows）のファイルを、元のパス → 元のパスの後ろの部分（.ymmp のフォルダとその上から）
+    → .ymmp と同じフォルダ → その下 → `root` の下 の順で探す。"""
 
     def __init__(self, ymmp: Path | None, root: str = ""):
         """`ymmp` が None なら元のパスと `root` の下だけを探す（テンプレートを未保存の .blend に置くとき）。"""
@@ -71,6 +72,8 @@ class MediaFinder:
         windows = file.startswith("\\\\") or ":" in file[:3]
         if (os.name == "nt" or not windows) and Path(file).is_file():
             return Path(file)  # 元のパス（Windows のパスは Windows でだけ）
+        if self.base is not None and (found := find_by_tail(file, self.base)) is not None:
+            return found  # Windows と同じ並びで持ってきたとき
         name = PureWindowsPath(file).name
         if self.base is not None and (self.base / name).is_file():
             return self.base / name
