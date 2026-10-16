@@ -975,6 +975,10 @@ from bl_ext.user_default.blender_tachie import faceassign as fa_mod  # noqa: E40
 
 WANT = {}
 llm_calls = []
+# 割り当てで表情を 3 つ使い分ける。素材に preset.ini が無い（サンプルの「困り」「ドヤ」だけの）ときは 1 つ足す
+if len(zunda.expressions) < 3:
+    extra = zunda.expressions.add()
+    extra.name, extra.part_eyebrow = "AI テスト", "怒り眉"
 
 
 class _FakeLlm(BaseHTTPRequestHandler):
