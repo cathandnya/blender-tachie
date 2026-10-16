@@ -356,10 +356,11 @@ def line_layout(ch, layout: str | None = None) -> str:
     return "SUBTITLE" if layout == "FULL" and not ch.folder else layout
 
 
-def render_clip(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
-                voice: dict | None = None, kana: str | None = None, accent: list | None = None,
-                accent_kana: str | None = None, audio: dict | None = None, layout: str = "FULL"):
-    """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。
+def clip_job(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
+             voice: dict | None = None, kana: str | None = None, accent: list | None = None,
+             accent_kana: str | None = None, audio: dict | None = None, layout: str = "FULL"):
+    """セリフの合成の準備（Blender に触る部分）だけをして、合成して書き出す関数を返す。返した関数は
+    (RenderedClip, 書き出し先フォルダ) を返し、Blender に触らないので別スレッドで呼べる（音声合成を待つ間、画面を固めない）。
 
     `speaker`（スタイル）と `voice`（audio_query の値）はセリフごとの値。None ならキャラクターの既定値。
     `kana` は発音（AquesTalk 風記法）。None や空なら VOICEVOX が自動で付けた読み。
@@ -380,16 +381,22 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
                                  expression=expression_of(ch, preset), mouth=ch.mouth)
     clip_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     lines_dir = output_dir(context) / "lines"
-    clip = render_line(client(context, ch), config, cache and cache.character, Line(0, ch.name, text, preset or None, speaker,
-                                                                    voice if voice is not None else character_voice(ch),
-                                                                    kana or None, accent or None,
-                                                                    accent_kana=accent_kana,
-                                                                    fade_in=audio.get("fade_in", 0.0),
-                                                                    fade_out=audio.get("fade_out", 0.0),
-                                                                    after=audio.get("after", 0.0)),
-                       lines_dir,
-                       fps=scene_fps(seq_scene(context)), cache=cache, stem=clip_id)
-    return clip, lines_dir
+    line = Line(0, ch.name, text, preset or None, speaker, voice if voice is not None else character_voice(ch),
+                kana or None, accent or None, accent_kana=accent_kana, fade_in=audio.get("fade_in", 0.0),
+                fade_out=audio.get("fade_out", 0.0), after=audio.get("after", 0.0))
+    engine, fps, character = client(context, ch), scene_fps(seq_scene(context)), cache and cache.character
+
+    def run():
+        clip = render_line(engine, config, character, line, lines_dir, fps=fps, cache=cache, stem=clip_id)
+        return clip, lines_dir
+    return run
+
+
+def render_clip(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
+                voice: dict | None = None, kana: str | None = None, accent: list | None = None,
+                accent_kana: str | None = None, audio: dict | None = None, layout: str = "FULL"):
+    """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。引数は `clip_job` と同じ。"""
+    return clip_job(context, ch, text, preset, speaker, voice, kana, accent, accent_kana, audio, layout)()
 
 
 def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str = "FULL") -> dict:

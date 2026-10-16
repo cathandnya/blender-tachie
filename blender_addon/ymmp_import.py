@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import unicodedata
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
 import bpy
@@ -17,7 +19,7 @@ from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
-    auto_signature, character_voice, client, connect, ensure_sequencer_scene, line_channels, line_end, line_layout,
+    auto_signature, character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_end, line_layout,
     line_texts, load_material, place_still, place_strips, refresh_faces, remove_idle, render_clip, scene_fps, seq_scene,
     subtitle_clashes,
 )
@@ -323,6 +325,30 @@ def _report(text: str) -> None:
     t.write(text)
 
 
+@dataclass
+class _LineJob:
+    """合成を待っているセリフ。`run` は Blender に触らずに合成する関数（`operators.clip_job`）。"""
+    voice_item: object  # ymmp.Voice
+    ch: object  # TachieCharacter
+    start: int
+    audio: dict
+    voice: dict
+    hide_subtitle: bool
+    layout: str
+    run: object
+
+
+def _run_job(job: _LineJob):
+    """合成して (RenderedClip, フォルダ) を返す。失敗したら例外を返す（別スレッドから持ち帰るため）。"""
+    try:
+        return job.run()
+    except Exception as e:  # noqa: BLE001
+        return e
+
+
+_running = False  # 読み込み中（合成を待っている間に、もう 1 つ始めない）
+
+
 class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
     """YMM4 のプロジェクト（.ymmp）のキャラクター・セリフ・表情を読み込む（声は VOICEVOX で合成し直す）"""
 
@@ -342,11 +368,105 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
     # パネルの「読み込む」（待っている読み込みを、指定した素材フォルダで続ける）
     pending: bpy.props.BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
+    _state = None
+    _timer = None
+
+    @classmethod
+    def poll(cls, context):
+        if _running:
+            cls.poll_message_set("YMM4 のプロジェクトを読み込んでいる途中です（Esc でやめる）")
+            return False
+        return True
+
     def invoke(self, context, event):
         if self.pending:
             return self.execute(context)
         self.confirm = True
         return ImportHelper.invoke(self, context, event)
+
+    def _start(self, context, scene_name: str, jobs: list[_LineJob], place, finish):
+        """別スレッドで合成を始める。合成し終わったものはタイマー（modal）で順に置き、最後に finish を呼ぶ。"""
+        global _running
+        state = {"jobs": jobs, "results": [], "next": 0, "cancel": False, "place": place, "finish": finish,
+                 "scene": scene_name, "workspace": context.workspace and context.workspace.name}
+
+        def work():
+            for job in jobs:
+                if state["cancel"]:
+                    return
+                state["results"].append(_run_job(job))  # list.append はスレッドをまたいでも安全
+
+        self._state = state
+        state["thread"] = threading.Thread(target=work, daemon=True)
+        state["thread"].start()
+        self._timer = context.window_manager.event_timer_add(0.2, window=context.window)
+        context.window_manager.modal_handler_add(self)
+        _running = True
+        self._status()
+        return {"RUNNING_MODAL"}
+
+    def _status(self, text: str | None = "") -> None:
+        """ステータスバーに進み具合を出す（None で消す）。始めたときのワークスペースに出し、そこから消す。"""
+        state = self._state
+        workspace = bpy.data.workspaces.get(state["workspace"] or "")
+        if workspace is None:
+            return
+        if text == "":
+            text = (f"YMM4 のプロジェクトを読み込んでいます: セリフを合成中 {state['next']} / {len(state['jobs'])} 本"
+                    "（Esc でやめる。置いたセリフは残ります）")
+        workspace.status_text_set(text)
+
+    def _cleanup(self, context) -> None:
+        global _running
+        _running = False
+        if self._timer is not None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        self._status(None)
+
+    def cancel(self, context):
+        # ファイルを開き直したときなど、modal の途中で外されたとき
+        self._state["cancel"] = True
+        self._cleanup(context)
+
+    def modal(self, context, event):
+        try:
+            return self._modal(context, event)
+        except Exception:
+            self._state["cancel"] = True
+            self._cleanup(context)
+            raise
+
+    def _modal(self, context, event):
+        state = self._state
+        if event.type == "ESC" and event.value == "PRESS":
+            state["cancel"] = True
+        elif event.type != "TIMER":
+            return {"PASS_THROUGH"}
+        if state["cancel"]:
+            if state["thread"].is_alive():
+                # 合成中の 1 本が終わるまで待つ（結果は捨てる）。キャッシュの画像を同時に書かないように、
+                # 終わるまで表情の反映も次の読み込みも始めない
+                self._status("YMM4 のプロジェクトの読み込みをやめています…")
+                return {"RUNNING_MODAL"}
+        elif seq_scene(context).name != state["scene"]:
+            # シーケンサーのシーンが変わったら、元のシーンに戻るまで置かない（置き先がずれる）
+            self._status(f"YMM4 のプロジェクトを読み込んでいます: シーン「{state['scene']}」に戻すと続けます"
+                         "（Esc でやめる）")
+            return {"RUNNING_MODAL"}
+        else:
+            # 合成し終わったものを順に置く（置くのはメインスレッドだけ）
+            while state["next"] < len(state["results"]):
+                state["place"](state["jobs"][state["next"]], state["results"][state["next"]])
+                state["next"] += 1
+            if state["next"] < len(state["jobs"]):
+                self._status()
+                for area in context.screen.areas if context.screen else []:
+                    if area.type == "SEQUENCE_EDITOR":
+                        area.tag_redraw()
+                return {"RUNNING_MODAL"}
+        self._cleanup(context)
+        return state["finish"](cancelled=len(state["jobs"]) - state["next"])
 
     def draw(self, context):
         self.layout.prop(self, "match_video")
@@ -460,168 +580,189 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             parts = overlay(tachie_base(name, f), face)
             return presets[name].name_for(_valid_parts(ch, parts, problems, _base_parts(ch)))
 
-        # セリフ
+        # セリフ: 準備（Blender に触る部分）を全部してから、音声合成（時間がかかる）を順に進め、できたものから置く
         sed = scene.sequence_editor or scene.sequence_editor_create()
         remove_idle(sed)
         voices = [v for v in project.voices if v.character in characters]
         skipped["キャラクターを読み込めなかったセリフ"] += len(project.voices) - len(voices)
         placed = 0
-        wm = context.window_manager
-        wm.progress_begin(0, len(voices))
         line_spans: dict[str, list[tuple[int, int]]] = {}
-        try:
-            for i, v in enumerate(voices):
-                wm.progress_update(i)
-                if v.hidden:
-                    skipped["非表示のセリフ"] += 1
-                    continue
-                if not v.text.strip():
-                    skipped["テキストの無いセリフ"] += 1
-                    continue
-                ch = characters[v.character]
-                c = project.characters.get(v.character)
-                start = frame(v.frame)
-                # 余韻は YMM4 のアイテムの長さから。次のセリフに重ならないように縮める（シーンのフレームで数える。
-                # fps が違うと YMM4 の 1 フレームでは足りない。合成し直した声はフレームの丸めで 1 フレーム長くなる
-                # ことがあるので、その分あける）。声の途中から始まる別のキャラのセリフ（同時に喋る）は相手にしない
-                after = max(0.0, v.length / project.fps - v.voice_seconds)
-                voiced = frame_count(v.voice_seconds, fps)
-                for w in voices[i + 1:]:
-                    room = frame(w.frame) - start - voiced - 1
-                    if w.frame > v.frame and (w.character == v.character or room >= -SIMULTANEOUS_FRAMES):
-                        after = max(0.0, min(after, room / fps))
-                        break
-                audio = {"volume": v.volume / VOLUME_BASE, "pan": v.pan / 100, "fade_in": v.fade_in,
-                         # 切り上げると余韻のフレームが 1 つ増えるので切り捨て
-                         "fade_out": v.fade_out, "after": math.floor(after * 10000) / 10000}
-                voice = {**character_voice(ch), **{k: x for k, x in v.voice.items() if k in character_voice(ch)}}
-                hide_subtitle = v.subtitle == "Hidden" or (
-                    v.subtitle == "UseCharacterSetting" and c and not c.subtitle_visible)
-                layout = line_layout(ch)
-                if not ch.folder:  # 立ち絵の無いキャラは、字幕を出すセリフは音声と字幕、出さないセリフは音声だけ
-                    layout = "AUDIO" if hide_subtitle else "SUBTITLE"
-                try:
-                    preset = expression(v.character, v.frame, v.face)
-                    clip, lines_dir = render_clip(context, ch, v.text, preset or None, speaker=v.style_id, voice=voice,
-                                                  kana=v.kana or None, accent=v.accent, accent_kana=v.kana or None,
-                                                  audio=audio, layout=layout)
-                    channels = line_channels(context, ch, start, clip.frames, layout=layout)
-                except ERRORS as e:
-                    problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: {e}")
-                    skipped["置けなかったセリフ"] += 1
-                    continue
-                strips = place_strips(context, ch, clip, lines_dir, v.text, start, voice=voice, accent=v.accent,
-                                      audio=audio, channels=channels, layout=layout)
-                sound = strips[0]
-                sound.volume, sound.pan = audio["volume"], max(-1.0, min(1.0, audio["pan"]))
-                if hide_subtitle:
-                    for s in line_texts(strips):
-                        s.mute = True
-                else:
-                    clashes = subtitle_clashes(sed, strips)
-                    if clashes:
-                        problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: 字幕が"
-                                        f"{'・'.join(clashes)}の字幕と重なっています")
-                connect(context, strips)
-                line_spans.setdefault(v.character, []).append((start, line_end(strips)))
-                placed += 1
-        finally:
-            wm.progress_end()
-
-        # 最後のセリフより後ろの立ち絵アイテムは、セリフなしの立ち絵にする（待機は最後のセリフの終わりまでしか
-        # 埋めないので、セリフの無いプロジェクトやエンディングで立ち絵が消える）。表情は下の表情ストリップで付く
-        stills = 0
-        last_line = max((b for spans in line_spans.values() for _, b in spans), default=scene.frame_start)
-        for name in characters:
-            ch = characters[name]
-            if not ch.folder:
+        jobs: list[_LineJob] = []
+        for i, v in enumerate(voices):
+            if v.hidden:
+                skipped["非表示のセリフ"] += 1
                 continue
-            cursor = last_line
-            for span in sorted((s for s in project.tachies if s.character == name and not s.hidden),
-                               key=lambda s: s.frame):
-                a, b = max(cursor, frame(span.frame)), frame(span.frame + span.length)
-                if b <= a:
-                    continue
-                try:
-                    place_still(context, ch, "", a, b - a)
-                except ERRORS as e:
-                    problems.append(f"{a} フレームの {name} の立ち絵: {e}")
-                    continue
-                stills += 1
-                cursor = b
+            if not v.text.strip():
+                skipped["テキストの無いセリフ"] += 1
+                continue
+            ch = characters[v.character]
+            c = project.characters.get(v.character)
+            start = frame(v.frame)
+            # 余韻は YMM4 のアイテムの長さから。次のセリフに重ならないように縮める（シーンのフレームで数える。
+            # fps が違うと YMM4 の 1 フレームでは足りない。合成し直した声はフレームの丸めで 1 フレーム長くなる
+            # ことがあるので、その分あける）。声の途中から始まる別のキャラのセリフ（同時に喋る）は相手にしない
+            after = max(0.0, v.length / project.fps - v.voice_seconds)
+            voiced = frame_count(v.voice_seconds, fps)
+            for w in voices[i + 1:]:
+                room = frame(w.frame) - start - voiced - 1
+                if w.frame > v.frame and (w.character == v.character or room >= -SIMULTANEOUS_FRAMES):
+                    after = max(0.0, min(after, room / fps))
+                    break
+            audio = {"volume": v.volume / VOLUME_BASE, "pan": v.pan / 100, "fade_in": v.fade_in,
+                     # 切り上げると余韻のフレームが 1 つ増えるので切り捨て
+                     "fade_out": v.fade_out, "after": math.floor(after * 10000) / 10000}
+            voice = {**character_voice(ch), **{k: x for k, x in v.voice.items() if k in character_voice(ch)}}
+            hide_subtitle = v.subtitle == "Hidden" or (
+                v.subtitle == "UseCharacterSetting" and c and not c.subtitle_visible)
+            layout = line_layout(ch)
+            if not ch.folder:  # 立ち絵の無いキャラは、字幕を出すセリフは音声と字幕、出さないセリフは音声だけ
+                layout = "AUDIO" if hide_subtitle else "SUBTITLE"
+            try:
+                preset = expression(v.character, v.frame, v.face)
+                run = clip_job(context, ch, v.text, preset or None, speaker=v.style_id, voice=voice,
+                               kana=v.kana or None, accent=v.accent, accent_kana=v.kana or None,
+                               audio=audio, layout=layout)
+            except ERRORS as e:
+                problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: {e}")
+                skipped["置けなかったセリフ"] += 1
+                continue
+            jobs.append(_LineJob(v, ch, start, audio, voice, hide_subtitle, layout, run))
 
-        # 表情: 立ち絵アイテムの基本の表情がキャラの基本と違う区間（セリフの間を除く）と、表情アイテム
-        faces = 0
-
-        def add_face(name: str, start: int, end: int, preset: str) -> None:
-            nonlocal faces
-            if end <= start:
+        def place(job: _LineJob, result) -> None:
+            """合成し終わったセリフを置く（result は (RenderedClip, フォルダ) か、合成で出た例外）。"""
+            nonlocal placed
+            v = job.voice_item
+            where = f"{job.start} フレームの {v.character}「{v.text[:20]}」"
+            try:
+                if isinstance(result, Exception):
+                    raise result
+                clip, lines_dir = result
+                channels = line_channels(context, job.ch, job.start, clip.frames, layout=job.layout)
+            except ERRORS as e:
+                problems.append(f"{where}: {e}")
+                skipped["置けなかったセリフ"] += 1
                 return
-            face = sed.strips.new_effect(name=_face_name(name, preset), type="COLOR",
-                                         channel=_free_face_channel(sed, settings, start, end),
-                                         frame_start=start, length=end - start)
-            face.color, face.color_tag, face.mute = (0.95, 0.6, 0.25), "COLOR_02", True
-            face["tachie_face"] = name
-            face["tachie_expression"] = preset
-            faces += 1
+            strips = place_strips(context, job.ch, clip, lines_dir, v.text, job.start, voice=job.voice,
+                                  accent=v.accent, audio=job.audio, channels=channels, layout=job.layout)
+            sound = strips[0]
+            sound.volume, sound.pan = job.audio["volume"], max(-1.0, min(1.0, job.audio["pan"]))
+            if job.hide_subtitle:
+                for s in line_texts(strips):
+                    s.mute = True
+            else:
+                clashes = subtitle_clashes(sed, strips)
+                if clashes:
+                    problems.append(f"{where}: 字幕が{'・'.join(clashes)}の字幕と重なっています")
+            connect(context, strips)
+            line_spans.setdefault(v.character, []).append((job.start, line_end(strips)))
+            placed += 1
 
-        for span in project.tachies:
-            if span.character not in characters or span.hidden or not characters[span.character].folder:
-                continue
-            ch = characters[span.character]
-            preset = presets[span.character].name_for(
-                _valid_parts(ch, span.parts, problems, _base_parts(ch))) if span.parts else ""
-            if not preset:
-                continue
-            cursor, end = frame(span.frame), frame(span.frame + span.length)
-            for a, b in sorted(line_spans.get(span.character, [])):  # セリフは自分の表情を持っている
-                if b <= cursor or a >= end:
+        def finish(cancelled: int = 0):
+            """セリフを置き終わったあと（`cancelled` は途中でやめて置かなかったセリフの数）。"""
+            if cancelled:
+                skipped["途中でやめたので置かなかったセリフ"] += cancelled
+            # 最後のセリフより後ろの立ち絵アイテムは、セリフなしの立ち絵にする（待機は最後のセリフの終わりまでしか
+            # 埋めないので、セリフの無いプロジェクトやエンディングで立ち絵が消える）。表情は下の表情ストリップで付く
+            stills = 0
+            last_line = max((b for spans in line_spans.values() for _, b in spans), default=scene.frame_start)
+            for name in characters:
+                ch = characters[name]
+                if not ch.folder:
                     continue
-                add_face(span.character, cursor, min(a, end), preset)
-                cursor = max(cursor, b)
-            add_face(span.character, cursor, end, preset)
-        for span in project.faces:
-            if span.character not in characters or span.hidden or not characters[span.character].folder:
-                continue
-            add_face(span.character, frame(span.frame), frame(span.frame + span.length),
-                     expression(span.character, span.frame, span.parts))
+                cursor = last_line
+                for span in sorted((s for s in project.tachies if s.character == name and not s.hidden),
+                                   key=lambda s: s.frame):
+                    a, b = max(cursor, frame(span.frame)), frame(span.frame + span.length)
+                    if b <= a:
+                        continue
+                    try:
+                        place_still(context, ch, "", a, b - a)
+                    except ERRORS as e:
+                        problems.append(f"{a} フレームの {name} の立ち絵: {e}")
+                        continue
+                    stills += 1
+                    cursor = b
 
-        if frame(project.length) - 1 > scene.frame_end:
-            scene.frame_end = frame(project.length) - 1
-        problems_faces: list[str] = []
-        refresh_faces(context, problems_faces)  # 待機の作り直しも（auto_idle のとき）
-        _applied_signatures[scene.name] = auto_signature(scene)
+            # 表情: 立ち絵アイテムの基本の表情がキャラの基本と違う区間（セリフの間を除く）と、表情アイテム
+            faces = 0
 
-        # 結果
-        created = sum(p.created for p in presets.values())
-        lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、"
-                 + (f"セリフなしの立ち絵 {stills} 個、" if stills else "")
-                 + f"表情ストリップ {faces} 個、表情プリセットを {created} 個作りました"]
-        if added_folders:
-            lines += ["", "追加したキャラクターの素材フォルダ:"] + [f"  {n}: {f}" for n, f in added_folders.items()]
-        if +skipped:
-            lines += ["", "置かなかったセリフ:"] + [f"  {k}: {n}" for k, n in (+skipped).items()]
-        media_lines = media.report() if media is not None else []
-        if media_lines:
-            lines += ["", *media_lines]
-        others = other_items_summary(project)
-        if not self.import_media:
-            others.update(KIND_LABELS[m.kind] for m in project.media)
-        if others:
-            lines += ["", "読み込んでいないアイテム:"] + [f"  {k}: {n}" for k, n in others.most_common()]
-        if project.unsupported:
-            lines += ["", "写せなかった設定:"] + [f"  {k}: {n}" for k, n in project.unsupported.most_common()]
-        if problems or problems_faces:
-            lines += ["", "問題:"] + [f"  {p}" for p in dict.fromkeys(problems + problems_faces)]
-        _report("\n".join(lines) + "\n")
-        for line in lines:
-            print(line)
-        message = lines[0] + f"（詳しくはテキスト「{REPORT_TEXT}」）"
-        if not placed and not stills:
-            self.report({"ERROR"}, message)
-            return {"CANCELLED"} if not characters else {"FINISHED"}
-        self.report({"WARNING"} if problems or +skipped else {"INFO"}, message)
-        return {"FINISHED"}
+            def add_face(name: str, start: int, end: int, preset: str) -> None:
+                nonlocal faces
+                if end <= start:
+                    return
+                face = sed.strips.new_effect(name=_face_name(name, preset), type="COLOR",
+                                             channel=_free_face_channel(sed, settings, start, end),
+                                             frame_start=start, length=end - start)
+                face.color, face.color_tag, face.mute = (0.95, 0.6, 0.25), "COLOR_02", True
+                face["tachie_face"] = name
+                face["tachie_expression"] = preset
+                faces += 1
+
+            for span in project.tachies:
+                if span.character not in characters or span.hidden or not characters[span.character].folder:
+                    continue
+                ch = characters[span.character]
+                preset = presets[span.character].name_for(
+                    _valid_parts(ch, span.parts, problems, _base_parts(ch))) if span.parts else ""
+                if not preset:
+                    continue
+                cursor, end = frame(span.frame), frame(span.frame + span.length)
+                for a, b in sorted(line_spans.get(span.character, [])):  # セリフは自分の表情を持っている
+                    if b <= cursor or a >= end:
+                        continue
+                    add_face(span.character, cursor, min(a, end), preset)
+                    cursor = max(cursor, b)
+                add_face(span.character, cursor, end, preset)
+            for span in project.faces:
+                if span.character not in characters or span.hidden or not characters[span.character].folder:
+                    continue
+                add_face(span.character, frame(span.frame), frame(span.frame + span.length),
+                         expression(span.character, span.frame, span.parts))
+
+            if frame(project.length) - 1 > scene.frame_end:
+                scene.frame_end = frame(project.length) - 1
+            problems_faces: list[str] = []
+            refresh_faces(context, problems_faces)  # 待機の作り直しも（auto_idle のとき）
+            _applied_signatures[scene.name] = auto_signature(scene)
+
+            # 結果
+            created = sum(p.created for p in presets.values())
+            lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、"
+                     + (f"セリフなしの立ち絵 {stills} 個、" if stills else "")
+                     + f"表情ストリップ {faces} 個、表情プリセットを {created} 個作りました"]
+            if added_folders:
+                lines += ["", "追加したキャラクターの素材フォルダ:"] + [f"  {n}: {f}" for n, f in added_folders.items()]
+            if +skipped:
+                lines += ["", "置かなかったセリフ:"] + [f"  {k}: {n}" for k, n in (+skipped).items()]
+            media_lines = media.report() if media is not None else []
+            if media_lines:
+                lines += ["", *media_lines]
+            others = other_items_summary(project)
+            if not self.import_media:
+                others.update(KIND_LABELS[m.kind] for m in project.media)
+            if others:
+                lines += ["", "読み込んでいないアイテム:"] + [f"  {k}: {n}" for k, n in others.most_common()]
+            if project.unsupported:
+                lines += ["", "写せなかった設定:"] + [f"  {k}: {n}" for k, n in project.unsupported.most_common()]
+            if problems or problems_faces:
+                lines += ["", "問題:"] + [f"  {p}" for p in dict.fromkeys(problems + problems_faces)]
+            _report("\n".join(lines) + "\n")
+            for line in lines:
+                print(line)
+            message = lines[0] + f"（詳しくはテキスト「{REPORT_TEXT}」）"
+            if not placed and not stills:
+                self.report({"ERROR"}, message)
+                return {"CANCELLED"} if not characters else {"FINISHED"}
+            self.report({"WARNING"} if problems or +skipped else {"INFO"}, message)
+            return {"FINISHED"}
+
+        if bpy.app.background or context.window is None or not jobs:
+            # 画面が無い（スモークテストなど）ときは、合成し終わるまで待つ
+            for job in jobs:
+                place(job, _run_job(job))
+            return finish()
+        # 画面があれば別スレッドで合成し、タイマーで進み具合を出しながら置いていく（Esc でやめる）
+        return self._start(context, scene.name, jobs, place, finish)
 
 
 class TACHIE_OT_import_ymmp_cancel(bpy.types.Operator):
