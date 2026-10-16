@@ -37,7 +37,7 @@ def media_to_dict(m: Media) -> dict:
 
 def media_from_dict(d: dict) -> Media:
     values = {k: v for k, v in d.items() if k in _MEDIA_FIELDS}
-    for key in ("font_color", "outline_color", "color"):
+    for key in ("font_color", "outline_color", "color", "background"):
         if key in values and isinstance(values[key], list):
             values[key] = tuple(values[key])
     values["anim"] = {k: tuple(v) for k, v in (values.get("anim") or {}).items()}

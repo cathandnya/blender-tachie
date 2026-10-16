@@ -129,6 +129,11 @@ def _linear(scene, strip, attr: str) -> None:
                 k.interpolation = "LINEAR"
 
 
+def box_height(font_size: float, text: str, margin: float) -> float:
+    """テキストの背景の帯の高さの見積もり（ピクセル。角の丸みを帯の高さに対する割合にするのに使う）。"""
+    return font_size * max(1, text.count("\n") + 1) + 2 * margin
+
+
 class MediaPlacer:
     def __init__(self, context, project: Project, finder: MediaFinder, frame: Callable[[int], int],
                  find_font: Callable[[str], str | None], behind: bool | None = None):
@@ -361,6 +366,14 @@ class MediaPlacer:
         strip.anchor_x = strip.alignment_x = horizontal.upper()
         strip.anchor_y = vertical.upper()
         strip.location = self._location(m.x, m.y)
+        if m.background is not None:
+            # 背景の帯。Blender の余白は出力の幅に対する割合、角の丸みは帯の高さに対する割合
+            margin = m.background_margin * m.zoom / 100 * self.sx
+            height = box_height(size, m.text, margin)
+            strip.use_box = True
+            strip.box_color = m.background
+            strip.box_margin = min(1.0, margin / self.scene.render.resolution_x)
+            strip.box_roundness = min(1.0, m.background_round * m.zoom / 100 * self.sy / height) if height else 0.0
         if m.rotation:
             self.problems.append(f"テキスト「{m.text[:20]}」の回転は写していません")
 

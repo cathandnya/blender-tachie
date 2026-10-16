@@ -293,6 +293,10 @@ class Media:
     outline_color: tuple = (0.0, 0.0, 0.0, 1.0)
     bold: bool = False
     base_point: str = "LeftTop"
+    # テキストの背景（YMM4 の映像エフェクト「背景塗りつぶし」）。色は不透明度を掛けた RGBA、余白と角の丸みはピクセル
+    background: tuple | None = None
+    background_margin: float = 0.0  # 上下左右の余白の平均（Blender の帯の余白は 1 つだけ）
+    background_round: float = 0.0
     color: tuple = (0.0, 0.0, 0.0, 1.0)  # カラー（kind == "color"、アドオンのテンプレートだけ）
     anim: dict[str, tuple[float, float, str]] = field(default_factory=dict)  # 属性 → (始め, 終わり, 種類)
     effects: list[str] = field(default_factory=list)
@@ -397,6 +401,24 @@ def _span(item: dict, parts: dict) -> Span:
                 inverted=bool(item.get("IsInverted")))
 
 
+def _fill_background(m: Media, item: dict) -> None:
+    """テキストの映像エフェクト「背景塗りつぶし」（単色）を背景の色・余白にする（写したものはエフェクトの一覧から外す）。"""
+    for e in item.get("VideoEffects") or []:
+        if _type(e) != "FillBackgroundEffect" or not e.get("IsEnabled", True) or e.get("IsBackgroundOnly"):
+            continue
+        brush = (e.get("Brush") or {}).get("Parameter") or {}
+        if "SolidColorBrush" not in str(brush.get("$type", "")):
+            continue  # グラデーションなどは写せない
+        r, g, b, a = color(brush.get("Color"), (0.0, 0.0, 0.0, 1.0))
+        m.background = (r, g, b, a * value(e.get("Opacity"), 100.0) / 100)
+        m.background_margin = sum(value(e.get(k)) for k in ("Top", "Bottom", "Left", "Right")) / 4
+        m.background_round = value(e.get("Round"))
+        m.effects.remove("FillBackgroundEffect")
+        if any(animated(e.get(k)) for k in ("Opacity", "Round", "Top", "Bottom", "Left", "Right")):
+            m.effects.append("FillBackgroundEffect のアニメーション")  # 最初の値だけ写す
+        return
+
+
 def _media(item: dict, kind: str, hidden_layers: set[int]) -> Media:
     m = Media(kind=kind, frame=int(item.get("Frame", 0)), length=int(item.get("Length", 0)),
               layer=int(item.get("Layer", 0)), file=item.get("FilePath") or "",
@@ -415,6 +437,7 @@ def _media(item: dict, kind: str, hidden_layers: set[int]) -> Media:
         m.outline_color = color(item.get("StyleColor"), (0.0, 0.0, 0.0, 1.0))
         m.bold = bool(item.get("Bold"))
         m.base_point = item.get("BasePoint") or "LeftTop"
+        _fill_background(m, item)
     for key, attr in MEDIA_ANIMATED.items():
         v = item.get(key)
         if animated(v):

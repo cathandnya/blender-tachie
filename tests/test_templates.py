@@ -67,6 +67,7 @@ def test_from_ymm4(tmp_path: Path):
 
 def test_round_trip_and_helpers():
     m = Media(kind="text", frame=5, length=10, layer=3, text="見出し", font_color=(1.0, 0.0, 0.0, 1.0),
+              background=(0.0, 0.5, 1.0, 0.8), background_margin=12.0, background_round=6.0,
               anim={"x": (0.0, 100.0, "直線移動")})
     data = {"fps": 30.0, "width": 1920, "height": 1080,
             "items": normalize([{"kind": "media", "media": media_to_dict(m)},
@@ -76,6 +77,7 @@ def test_round_trip_and_helpers():
     assert again["version"] == 1 and end_frame(again) == 23
     back = media_from_dict(again["items"][0]["media"])
     assert back == Media(kind="text", frame=0, length=10, layer=3, text="見出し", font_color=(1.0, 0.0, 0.0, 1.0),
+                         background=(0.0, 0.5, 1.0, 0.8), background_margin=12.0, background_round=6.0,
                          anim={"x": (0.0, 100.0, "直線移動")})
     assert again["items"][1]["frame"] == 3
     assert template_name({"Name": "x", "Path": []}) == "x"

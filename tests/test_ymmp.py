@@ -75,7 +75,13 @@ def project_json(old: bool = False) -> dict:
             {"$type": "YukkuriMovieMaker.Project.Items.TextItem, YukkuriMovieMaker", "Text": "タイトル\r\n2 行目",
              "Font": "Noto Sans JP", "FontSize": anim(80.0), "FontColor": "#FF1A76FF", "Style": "Border",
              "StyleColor": "#FFFFFFFF", "Bold": True, "BasePoint": "CenterTop", "X": anim(-100.0),
-             "Y": anim(-500.0), "Zoom": anim(100.0, "直線移動", (200.0,)), "Frame": 0, "Layer": 9, "Length": 120},
+             "Y": anim(-500.0), "Zoom": anim(100.0, "直線移動", (200.0,)), "Frame": 0, "Layer": 9, "Length": 120,
+             "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.FillBackgroundEffect, YukkuriMovieMaker",
+                               "Opacity": anim(80.0), "Round": anim(6.0), "IsBackgroundOnly": False,
+                               "Brush": {"Parameter": {"$type": "YukkuriMovieMaker.Plugin.Brush.SolidColorBrushParameter, "
+                                                                "YukkuriMovieMaker", "Color": "#FF2196F3"}},
+                               "Top": anim(15.0), "Bottom": anim(15.0), "Left": anim(20.0), "Right": anim(20.0),
+                               "IsEnabled": True}]},
             {"$type": "YukkuriMovieMaker.Project.Items.TextItem, YukkuriMovieMaker", "Text": "隠す",
              "Frame": 0, "Layer": 10, "Length": 120},
             {"$type": "YukkuriMovieMaker.Project.Items.TransitionItem, YukkuriMovieMaker", "Frame": 0, "Layer": 2,
@@ -120,6 +126,9 @@ def test_load_project(tmp_path, old):
     assert audio.anim["volume"] == (5.0, 0.0, "直線移動") and audio.fade_out == 2.0
     assert text.text == "タイトル\n2 行目" and text.font_size == 80.0 and text.bold and text.outline
     assert text.base_point == "CenterTop" and text.font_color == pytest.approx((0x1A / 255, 0x76 / 255, 1.0, 1.0))
+    # 背景塗りつぶし → 背景（不透明度を掛けた色、余白は上下左右の平均）。写したのでエフェクトの一覧から外す
+    assert text.background == pytest.approx((0x21 / 255, 0x96 / 255, 0xF3 / 255, 0.8))
+    assert text.background_margin == 17.5 and text.background_round == 6.0 and text.effects == []
     assert not text.hidden and hidden.hidden  # 非表示のレイヤー
     assert front_layer(p) == 1  # 立ち絵アイテムのレイヤー
     assert p.unsupported["画像のエフェクト OutlineEffect"] == 1
