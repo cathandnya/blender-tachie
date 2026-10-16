@@ -290,7 +290,8 @@ def _dump_table(c: CharacterConfig, key: str | None, folder: str | None, name: s
              for k, attr in PART_KEYS.items()}
     if c.expression.layers:
         parts[LAYERS_KEY] = c.expression.layers
-    sections = [("parts", parts)]
+    # 立ち絵の無いキャラはパーツが空なら書かない（補う素材が無い）
+    sections = [] if c.folder is None and not any(parts.values()) else [("parts", parts)]
     sections += [(f"expressions.{_toml_key(p)}", v) for p, v in c.expressions.items()]
     sections += [("layout", c.layout), ("subtitle", c.subtitle), ("audio", c.audio)]
     for section, values in sections:
@@ -319,13 +320,19 @@ def dump_characters(configs: dict[str, CharacterConfig], base: Path | None = Non
     return "\n".join(out)
 
 
-def dump_table(c: CharacterConfig, key: str | None = None, name: str | None = None) -> str:
-    """folder を書かない 1 キャラ分。`key` なしなら素材フォルダの tachie.toml、ありならアドオンの既定値用。"""
-    return "\n".join(_dump_table(c, None if key is None else _toml_key(key), None, name))
+def _table_key(key: str, parent: str | None) -> str:
+    return _toml_key(key) if parent is None else f"{_toml_key(parent)}.{_toml_key(key)}"
 
 
-def dump_raw_table(table: dict[str, Any], key: str) -> str:
-    """読んだままのテーブルを `[key]` として書き戻す（解釈しないので、無い項目を足したり検査で落ちたりしない）。"""
+def dump_table(c: CharacterConfig, key: str | None = None, name: str | None = None, parent: str | None = None) -> str:
+    """folder を書かない 1 キャラ分。`key` なしなら素材フォルダの tachie.toml、ありならアドオンの既定値用
+    （`parent` を渡すと `[parent.key]`）。"""
+    return "\n".join(_dump_table(c, None if key is None else _table_key(key, parent), None, name))
+
+
+def dump_raw_table(table: dict[str, Any], key: str, parent: str | None = None) -> str:
+    """読んだままのテーブルを `[key]`（`parent` があれば `[parent.key]`）として書き戻す
+    （解釈しないので、無い項目を足したり検査で落ちたりしない）。"""
     out: list[str] = []
 
     def write(header: str, t: dict[str, Any]) -> None:
@@ -336,6 +343,6 @@ def dump_raw_table(table: dict[str, Any], key: str) -> str:
                 out.append("")
                 write(f"{header}.{_toml_key(k)}", v)
 
-    write(_toml_key(key), table)
+    write(_table_key(key, parent), table)
     out.append("")
     return "\n".join(out)

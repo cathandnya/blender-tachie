@@ -35,8 +35,11 @@ class TACHIE_MT_characters(bpy.types.Menu):
         self.layout.operator("tachie.export_ymm_presets", icon="EXPORT")
         self.layout.separator()
         self.layout.operator("tachie.save_defaults", text="初期値としてアドオン設定に保存", icon="PREFERENCES").target = "PREFS"
-        self.layout.operator("tachie.save_defaults", text="素材フォルダに初期値を書き出す（tachie.toml）",
-                             icon="FILE_FOLDER").target = "MATERIAL"
+        ch = seq_scene(context).tachie.character()
+        col = self.layout.column()
+        col.enabled = ch is None or bool(ch.folder)  # 立ち絵の無いキャラには素材フォルダが無い
+        col.operator("tachie.save_defaults", text="素材フォルダに初期値を書き出す（tachie.toml）",
+                     icon="FILE_FOLDER").target = "MATERIAL"
         self.layout.separator()
         self.layout.operator("tachie.reload_character", icon="FILE_REFRESH")
 

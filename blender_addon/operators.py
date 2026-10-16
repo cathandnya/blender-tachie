@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import json
 import os
@@ -255,12 +256,16 @@ def apply_config(ch, config: CharacterConfig) -> None:
 # ---- キャラクター追加の初期値 ----
 
 def character_defaults_path() -> Path:
-    """アドオン設定のキャラクターごとの既定値（全 .blend 共通）。キーは素材フォルダ名。"""
+    """アドオン設定のキャラクターごとの既定値（全 .blend 共通）。キーは素材フォルダ名、立ち絵の無いキャラは
+    `VOICE_DEFAULTS_TABLE` の下にキャラ名。"""
     return Path(bpy.utils.extension_path_user(__package__, create=True)) / "character_defaults.toml"
 
 
-def load_character_defaults() -> dict:
-    """{素材フォルダ名: テーブル}。テーブルでない値（手で書いた誤り）は無視する。"""
+# 立ち絵の無いキャラの初期値を入れるテーブル（素材フォルダ名のキーとぶつからないように分ける）
+VOICE_DEFAULTS_TABLE = "立ち絵なし"
+
+
+def _load_defaults_file() -> dict:
     import tomllib
 
     path = character_defaults_path()
@@ -268,24 +273,45 @@ def load_character_defaults() -> dict:
         return {}
     with path.open("rb") as f:
         try:
-            data = tomllib.load(f)
+            return tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
             raise ValueError(f"{path} を読めません: {e}") from None
-    return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+
+def load_character_defaults() -> dict:
+    """{素材フォルダ名: テーブル}。テーブルでない値（手で書いた誤り）は無視する。"""
+    return {k: v for k, v in _load_defaults_file().items() if isinstance(v, dict) and k != VOICE_DEFAULTS_TABLE}
+
+
+def load_voice_defaults() -> dict:
+    """立ち絵の無いキャラの初期値 {キャラ名: テーブル}。"""
+    voice = _load_defaults_file().get(VOICE_DEFAULTS_TABLE, {})
+    return {k: v for k, v in voice.items() if isinstance(v, dict)} if isinstance(voice, dict) else {}
 
 
 def save_character_defaults(tables: dict) -> None:
-    """{素材フォルダ名: dump_table の TOML 文字列} を書く。"""
+    """{キー: TOML 文字列} を書く（`_defaults_texts` の形）。"""
     character_defaults_path().write_text("\n".join(tables.values()), encoding="utf-8")
 
 
 def _defaults_texts() -> dict:
-    """今の既定値ファイルを {キー: TOML 文字列} にする（1 キャラ分だけ書き換えるため）。
+    """今の既定値ファイルを {キー: TOML 文字列} にする（1 キャラ分だけ書き換えるため）。キーは素材フォルダ名、
+    立ち絵の無いキャラは (VOICE_DEFAULTS_TABLE, キャラ名)。
 
     他のキャラの分は解釈せずにそのまま書き戻す（speaker や mouth を足すと素材の tachie.toml より優先されてしまい、
     検査で落ちる項目があると消すこともできなくなるため）。
     """
-    return {key: dump_raw_table(table, key) for key, table in load_character_defaults().items()}
+    texts: dict = {key: dump_raw_table(table, key) for key, table in load_character_defaults().items()}
+    for name, table in load_voice_defaults().items():
+        texts[(VOICE_DEFAULTS_TABLE, name)] = dump_raw_table(table, name, parent=VOICE_DEFAULTS_TABLE)
+    return texts
+
+
+def voice_defaults_config(ch) -> CharacterConfig:
+    """立ち絵の無いキャラの初期値として保存する設定（立ち絵に関係する位置・大きさ・表情・動きは持たない）。"""
+    config = config_of(ch)
+    layout = {k: v for k, v in config.layout.items() if k in ("channel", "lines")}
+    return dataclasses.replace(config, folder=None, expression=Expression(), expressions={}, layout=layout)
 
 
 def material_key(folder: str) -> str:
@@ -2266,24 +2292,42 @@ def change_material(context, ch, source: str) -> int:
 
 
 def add_voice_character(context, name: str):
-    """立ち絵の無いキャラクター（素材フォルダなし、声と字幕だけ）を追加する。"""
+    """立ち絵の無いキャラクター（素材フォルダなし、声と字幕だけ）を追加する。(キャラクター, アドオン設定の
+    初期値を使ったか) を返す。初期値は `name`（同じ名前があって番号を付けても、付ける前の名前）で探す。"""
     settings = seq_scene(context).tachie
     names = {c.name for c in settings.characters}
     base, i = name.strip() or "ナレーション", 2
     name = base
     while name in names:
         name, i = f"{base} {i}", i + 1
+    saved = load_voice_defaults().get(base, {})
+    try:
+        config = parse_characters({name: merge_tables({"speaker": 3}, saved, {"folder": ""})}, Path("."),
+                                  use_material=False)[name]
+    except (*ERRORS, OSError) as e:
+        raise ValueError(f"{base} の初期値を読めません: {e}") from None
     ch = settings.characters.add()
-    ch.name = name
-    ch.folder = ""
-    ch.line_layout = "SUBTITLE"
-    ch.channel = _free_channel(settings, ch)
+    try:
+        apply_config(ch, config)
+    except (TypeError, ValueError, KeyError) as e:  # 手で書いた値の型や範囲が合わない
+        settings.characters.remove(len(settings.characters) - 1)
+        raise ValueError(f"{base} の初期値を当てはめられません: {e}") from None
+    if ch.line_layout == "FULL":  # 立ち絵が無いので、保存していなければ「音声と字幕」
+        ch.line_layout = "SUBTITLE"
+    ch.channel = _free_channel(settings, ch, config.layout.get("channel"))
     try:  # エンジンが止まっていても追加は待たせない
         ch.speaker_name = dict(client(context, ch, timeout=3.0).styles()).get(ch.speaker, "")
     except (VoicevoxError, OSError):
         pass
     settings.active_character = len(settings.characters) - 1
-    return ch
+    return ch, bool(saved)
+
+
+def _voice_default_names(self, context, edit_text):
+    try:
+        return [n for n in load_voice_defaults() if edit_text in n]
+    except ValueError:
+        return []
 
 
 class TACHIE_OT_character_add_voice(bpy.types.Operator):
@@ -2293,14 +2337,21 @@ class TACHIE_OT_character_add_voice(bpy.types.Operator):
     bl_label = "立ち絵なしのキャラクターを追加"
     bl_options = {"REGISTER", "UNDO"}
 
-    name: bpy.props.StringProperty(name="名前", default="ナレーション")
+    name: bpy.props.StringProperty(name="名前", default="ナレーション", search=_voice_default_names,
+                                   description="アドオン設定に初期値を保存した名前なら、その設定で始める")
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
-        ch = add_voice_character(context, self.name)
-        self.report({"INFO"}, f"{ch.name} を追加しました（セリフの形は「音声と字幕」）")
+        try:
+            ch, saved = add_voice_character(context, self.name)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        layout = next(label for key, label, *_ in LINE_LAYOUTS if key == ch.line_layout)
+        note = "アドオン設定の初期値を使いました" if saved else f"セリフの形は「{layout}」"
+        self.report({"INFO"}, f"{ch.name} を追加しました（{note}）")
         return {"FINISHED"}
 
 
@@ -2348,7 +2399,7 @@ def add_character(context, source: str):
 
 
 class TACHIE_OT_save_defaults(bpy.types.Operator):
-    """選択中のキャラクターの設定を、次にこの素材を追加するときの初期値として保存する"""
+    """選択中のキャラクターの設定を、次にこの素材（立ち絵の無いキャラは同じ名前）を追加するときの初期値として保存する"""
 
     bl_idname = "tachie.save_defaults"
     bl_label = "初期値として保存"
@@ -2360,11 +2411,24 @@ class TACHIE_OT_save_defaults(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        ch = seq_scene(context).tachie.character()
-        return ch is not None and bool(ch.folder)
+        return seq_scene(context).tachie.character() is not None
 
     def execute(self, context):
         ch = seq_scene(context).tachie.character()
+        if not ch.folder:  # 立ち絵の無いキャラはキャラ名で、アドオン設定にだけ保存できる
+            if self.target != "PREFS":
+                self.report({"ERROR"}, "立ち絵の無いキャラクターには素材フォルダがありません。アドオン設定に保存してください")
+                return {"CANCELLED"}
+            try:
+                texts = _defaults_texts()
+                texts[(VOICE_DEFAULTS_TABLE, ch.name)] = dump_table(voice_defaults_config(ch), key=ch.name,
+                                                                    parent=VOICE_DEFAULTS_TABLE)
+                save_character_defaults(texts)
+            except (ValueError, OSError) as e:
+                self.report({"ERROR"}, str(e))
+                return {"CANCELLED"}
+            self.report({"INFO"}, f"{ch.name} の初期値をアドオン設定に保存しました（同じ名前の立ち絵なしのキャラクターで使います）")
+            return {"FINISHED"}
         config = config_of(ch)
         key = material_key(ch.folder)
         name = ch.name if ch.name != key else None
@@ -2400,11 +2464,13 @@ class TACHIE_OT_remove_defaults(bpy.types.Operator):
     bl_label = "初期値を消す"
 
     key: bpy.props.StringProperty()
+    # SKIP_SAVE: UI のボタンは指定しないプロパティに前回の値を入れるので、素材の初期値の × で voice=True が残らないように
+    voice: bpy.props.BoolProperty(description="立ち絵の無いキャラクターの初期値（key はキャラ名）", options={"SKIP_SAVE"})
 
     def execute(self, context):
         try:
             texts = _defaults_texts()
-            texts.pop(self.key, None)
+            texts.pop((VOICE_DEFAULTS_TABLE, self.key) if self.voice else self.key, None)
             save_character_defaults(texts)
         except (ValueError, OSError) as e:
             self.report({"ERROR"}, str(e))

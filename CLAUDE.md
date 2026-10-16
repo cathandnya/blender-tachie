@@ -179,7 +179,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   キャラクター追加の初期値は アドオン設定（`extension_path_user` の `character_defaults.toml`、キーは素材フォルダ名、
   表示名は `name`）→ 素材フォルダの `tachie.toml`（キャラ名のテーブルなし、`folder` なし）→ 固定値 の順で重ねる（`merge_tables`）。
   立ち位置は指定が無いときだけ左右交互、チャンネルは他と重なるときだけ空き番号へずらす。
-  メニューの「初期値として保存」で両方に書ける（tachie.toml にある声のキーは残す）。CLI の `parse_characters` も tachie.toml で補う。
+  メニューの「初期値として保存」で両方に書ける（tachie.toml にある声のキーは残す）。
+  立ち絵の無いキャラは**キャラ名**で `character_defaults.toml` の `["立ち絵なし"."名前"]`（`VOICE_DEFAULTS_TABLE`、
+  `load_voice_defaults`）に保存する（声・字幕・音量など。layout は channel と lines だけ。tachie.toml には書けない）。
+  `add_voice_character` は番号を付ける前の名前で探し、YMM4 の読み込みはその上に YMM4 の設定を重ねる。CLI の `parse_characters` も tachie.toml で補う。
   書き出し（キャラ設定・初期値）は空のパーツも `"目" = ""` / `"他" = []` と明示し、tachie.toml の値で補われないようにする。
   消した表情プリセットは書けないので、tachie.toml にあるプリセットは戻る（仕様）。
 - `scripts/build_addon.py` — Pillow と Brotli の wheel（cp313、macOS arm64 / x64・Windows x64 / arm64・Linux x64。`PACKAGES`。

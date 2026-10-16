@@ -220,6 +220,19 @@ def test_dump_raw_table_keeps_partial_table():
     assert "speaker" not in text and "mouth" not in text
 
 
+def test_dump_under_parent_table():
+    import tomllib
+
+    # 立ち絵の無いキャラの初期値は [親."キャラ名"] に書く。パーツが空なら parts を書かない
+    table = {"speaker": 8, "subtitle": {"size": 40}}
+    assert tomllib.loads(dump_raw_table(table, "春日部 つむぎ", parent="立ち絵なし")) == {
+        "立ち絵なし": {"春日部 つむぎ": table}}
+    cfg = parse_characters({"語り手": {"speaker": 8, "layout": {"lines": "AUDIO"}}}, Path("."))["語り手"]
+    data = tomllib.loads(dump_table(cfg, key="語り手", parent="立ち絵なし"))
+    assert set(data) == {"立ち絵なし"} and data["立ち絵なし"]["語り手"]["speaker"] == 8
+    assert "parts" not in data["立ち絵なし"]["語り手"] and data["立ち絵なし"]["語り手"]["layout"] == {"lines": "AUDIO"}
+
+
 def test_material_table_fills_missing(tmp_path: Path, char_dir: Path):
     (char_dir / "tachie.toml").write_text(
         'name = "てすと"\nspeaker = 8\nspeed = 1.2\n\n[parts]\n"目" = "目"\n\n[layout]\nposition = -0.2\nchannel = 5\n',
