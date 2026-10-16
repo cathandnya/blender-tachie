@@ -2,7 +2,7 @@
 
 from .config import CharacterConfig, load_characters
 from .render import FrameCache, RenderedClip, idle_frames, render_idle, render_line, render_script
-from .script import Line, parse_script
+from .script import Line, load_script, parse_script
 
 __all__ = [
     "CharacterConfig",
@@ -11,6 +11,7 @@ __all__ = [
     "RenderedClip",
     "idle_frames",
     "load_characters",
+    "load_script",
     "parse_script",
     "render_idle",
     "render_line",

@@ -10,6 +10,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `src/tachie_studio/lipsync/` — audio_query からの音素時刻（`timing.py`）、口の状態（`mouth.py`、あいうえお式・音量式）、まばたき（`blink.py`）、wav 読み込み（`wav.py`）。numpy を使わない。
 - `src/tachie_studio/pipeline/` — 台本（`script.py`）とキャラ設定 TOML（`config.py`）から、セリフごとの wav と透明連番画像、
   `manifest.json` を書き出す（`render.py`）。「目 × 口」の組み合わせを `cache/` に 1 回ずつ合成し、連番はハードリンク。
+- 台本（`pipeline/script.py`）は「キャラ名: セリフ」に加えて YMM4 の台本も読む: テキストの `キャラ名「セリフ」`（括弧は `\「`、
+  「」の中で改行可）と CSV / TSV（`load_script` が拡張子で選ぶ。3 列目以降は無視、UTF-8 で読めなければ cp932）。
+  キャラ名の欄の `(表情)` とセリフ末尾の `{発音}` はどの形でも使える。アドオンのテキストは名前の拡張子で形を選ぶ。
 - `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
 - 書き出し設定のプリセット（`operators.RENDER_PRESETS`、`apply_render_preset`）: Blender 5 は `image_settings.media_type = "VIDEO"`
   にしてから `file_format = "FFMPEG"`。解像度・fps はセリフの連番・立ち位置・大きさに効くので、置いたあとに変えたら全再生成を案内する。

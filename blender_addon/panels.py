@@ -443,6 +443,7 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
         layout = self.layout
         s = seq_scene(context).tachie
         layout.label(text="1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」")
+        layout.label(text="YMM4 の台本（キャラ名「セリフ」、CSV・TSV）も読めます")
         layout.label(text="発音はセリフの最後に {キョ'ウワ/イ'イ/テ'ンキ}")
         layout.prop(s, "line_gap")
         row = layout.row(align=True)
