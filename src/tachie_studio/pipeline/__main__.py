@@ -15,7 +15,7 @@ from ..srt import Cue, to_srt
 from ..voicevox import DEFAULT_URL, VoicevoxClient
 from .config import load_characters
 from .render import render_script
-from .script import parse_script
+from .script import load_script
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -34,8 +34,8 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
 
     configs = load_characters(args.characters)
-    # BOM 付きでも読めるように。表情プリセット名も書き出し前に検査する
-    lines = parse_script(args.script.read_text(encoding="utf-8-sig"), configs)
+    # .csv / .tsv は YMM4 の台本の形。BOM 付き・Shift_JIS でも読める。表情プリセット名も書き出し前に検査する
+    lines = load_script(args.script, configs)
     started = time.monotonic()
     manifest = render_script(lines, configs, args.output, client=VoicevoxClient(args.url), fps=args.fps,
                              scale=args.scale, idle_seconds=args.idle, progress=print)

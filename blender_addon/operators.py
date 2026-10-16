@@ -12,9 +12,10 @@ from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, place_text, system_fonts, text_offset
-from .tachie_studio.pipeline import CharacterConfig, FrameCache, Line, idle_frames, load_characters, parse_script, render_line
+from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
+                                     parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
-from .tachie_studio.pipeline.script import split_kana
+from .tachie_studio.pipeline.script import script_format, split_kana
 from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
                                             parse_characters)
@@ -3129,14 +3130,15 @@ class TACHIE_OT_render_preset(bpy.types.Operator):
 
 
 class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
-    """台本を読み、セリフを再生位置から順に並べる（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」）"""
+    """台本を読み、セリフを再生位置から順に並べる（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」。
+    YMM4 の台本（キャラ名「セリフ」、CSV・TSV）も読める）"""
 
     bl_idname = "tachie.import_script"
     bl_label = "台本を流し込む"
     bl_options = {"REGISTER", "UNDO"}
 
     filename_ext = ".txt"
-    filter_glob: bpy.props.StringProperty(default="*.txt", options={"HIDDEN"})
+    filter_glob: bpy.props.StringProperty(default="*.txt;*.csv;*.tsv", options={"HIDDEN"})
     use_text: bpy.props.BoolProperty(name="テキストエディタの台本を使う", default=False, options={"SKIP_SAVE"})
 
     def invoke(self, context, event):
@@ -3147,19 +3149,19 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
     def execute(self, context):
         scene = seq_scene(context)
         settings = scene.tachie
-        if self.use_text:
-            if settings.script is None:
-                self.report({"ERROR"}, "台本のテキストを選んでください")
-                return {"CANCELLED"}
-            source = settings.script.as_string()
-        else:
-            try:
-                source = Path(self.filepath).read_text(encoding="utf-8-sig")
-            except (OSError, UnicodeDecodeError) as e:
-                self.report({"ERROR"}, f"読み込めませんでした: {e}")
-                return {"CANCELLED"}
+        if self.use_text and settings.script is None:
+            self.report({"ERROR"}, "台本のテキストを選んでください")
+            return {"CANCELLED"}
+        configs = {ch.name: config_of(ch) for ch in settings.characters}
         try:
-            lines = parse_script(source, {ch.name: config_of(ch) for ch in settings.characters})
+            if self.use_text:
+                # テキストの名前が .csv / .tsv なら（ファイルを開いたときなど）その形で読む
+                lines = parse_script(settings.script.as_string(), configs, fmt=script_format(settings.script.name))
+            else:
+                lines = load_script(self.filepath, configs)
+        except OSError as e:
+            self.report({"ERROR"}, f"読み込めませんでした: {e}")
+            return {"CANCELLED"}
         except ValueError as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}

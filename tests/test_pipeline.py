@@ -539,3 +539,64 @@ def test_engine_without_mora_lengths_uses_volume(tmp_path: Path, char_dir: Path)
     motion = LineMotion.load(tmp_path / "o" / "x.json")
     assert motion.mouth == "volume" and clip.extra["mouth_mode"] == "volume" and clip.speaker == -12345
     assert len({Image.open(p).getpixel((0, 5)) for p in (tmp_path / "o" / "x").iterdir()}) > 1  # 口が動く
+
+
+def test_parse_script_ymm4_text():
+    text = ("# YMM4 の台本\n"
+            "ずんだもん「こんにちは、ずんだもんなのだ。」\n"
+            "四国めたん(困り)「時刻は 12:00 よ。\\「括弧\\」も書けるわ」\n"
+            "ずんだもん「1 行目\n"
+            "2 行目なのだ」\n"
+            "四国めたん: 今までの形も使えるわ\n")
+    lines = parse_script(text, {"ずんだもん", "四国めたん"})
+    assert [(x.character, x.expression, x.text) for x in lines] == [
+        ("ずんだもん", None, "こんにちは、ずんだもんなのだ。"),
+        ("四国めたん", "困り", "時刻は 12:00 よ。「括弧」も書けるわ"),
+        ("ずんだもん", None, "1 行目\n2 行目なのだ"),
+        ("四国めたん", None, "今までの形も使えるわ"),
+    ]
+    with pytest.raises(ValueError, match="1 行目: 「」が閉じていません"):
+        parse_script("ずんだもん「閉じない\nまま")
+    with pytest.raises(ValueError, match="後ろに文字"):
+        parse_script("ずんだもん「途中」で閉じる」")
+
+
+def test_parse_script_csv_tsv(tmp_path: Path):
+    from tachie_studio.pipeline import load_script
+
+    csv_text = ('ずんだもん,こんにちは\n'
+                '# コメント\n'
+                '\n'
+                '四国めたん(困り),"カンマ, と ""引用符"" と\n改行"\n'
+                'ずんだもん,天気{テ\'ンキ},使わない列\n')
+    lines = parse_script(csv_text, {"ずんだもん", "四国めたん"}, fmt="csv")
+    assert [(x.character, x.expression, x.text, x.kana) for x in lines] == [
+        ("ずんだもん", None, "こんにちは", None),
+        ("四国めたん", "困り", 'カンマ, と "引用符" と\n改行', None),
+        ("ずんだもん", None, "天気", "テ'ンキ"),
+    ]
+    # 拡張子で形を選び、Shift_JIS（Excel の CSV）も読める
+    (tmp_path / "a.csv").write_bytes("ずんだもん,ずんだ餅\n".encode("cp932"))
+    assert [x.text for x in load_script(tmp_path / "a.csv")] == ["ずんだ餅"]
+    (tmp_path / "a.tsv").write_text("﻿ずんだもん\tタブ, 区切り\n", encoding="utf-8")
+    assert [x.text for x in load_script(tmp_path / "a.tsv")] == ["タブ, 区切り"]
+    (tmp_path / "a.txt").write_text("ずんだもん「テキスト」\n", encoding="utf-8")
+    assert [x.text for x in load_script(tmp_path / "a.txt")] == ["テキスト"]
+    with pytest.raises(ValueError, match="2 行目"):
+        parse_script("ずんだもん,あ\nセリフだけ\n", fmt="csv")
+    with pytest.raises(ValueError, match="キャラクター 'だれか'"):
+        parse_script("だれか,あ\n", {"ずんだもん"}, fmt="csv")
+    with pytest.raises(ValueError, match="3 行目: キャラクター 'だれか'"):
+        parse_script('ずんだもん,"1\n2"\nだれか,あ\n', {"ずんだもん"}, fmt="csv")
+
+
+def test_parse_script_crlf_empty_and_escapes(tmp_path: Path):
+    from tachie_studio.pipeline import load_script
+
+    # CRLF の CSV の「"」の中の改行は \n に、\「 \」 \\ 以外のバックスラッシュは残す
+    assert [x.text for x in parse_script('ずんだもん,"1\r\n2"\r\n', fmt="csv")] == ["1\n2"]
+    assert [x.text for x in parse_script("ずんだもん「C:\\tmp \\「あ\\」」")] == ["C:\\tmp 「あ」"]
+    with pytest.raises(ValueError, match="1 行目: セリフがありません"):
+        parse_script("ずんだもん「 」")
+    (tmp_path / "u.tsv").write_text("ずんだもん\tユニコード\n", encoding="utf-16")
+    assert [x.text for x in load_script(tmp_path / "u.tsv")] == ["ユニコード"]
