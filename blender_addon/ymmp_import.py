@@ -315,6 +315,9 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
         ch.height = min(3.0, max(0.1, material.height * tachie.zoom / 100 / project.height))
         ch.position_x = max(-1.0, min(1.0, tachie.x / project.width))
         ch.position_y = max(-1.0, min(1.0, -tachie.y / project.height))
+        # 左右反転は立ち絵アイテムに付く（キャラクターの TachieIsInverted は新しいアイテムの初期値）。位置は
+        # 画面上の位置のまま（反転したキャラの offset の符号は apply_placement が直す）
+        ch.flip_x = tachie.inverted
         if render.resolution_y != project.height:
             problems.append("解像度が YMM4 と違うので、立ち絵の位置・大きさは割合で写しました")
 

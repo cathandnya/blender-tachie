@@ -255,6 +255,7 @@ class Span:
     zoom: float = 100.0
     effects: list[str] = field(default_factory=list)
     hidden: bool = False
+    inverted: bool = False  # 左右反転（IsInverted）
 
 
 # 画像・動画・音声・テキストのアイテム → Media.kind
@@ -392,7 +393,8 @@ def _span(item: dict, parts: dict) -> Span:
     return Span(character=item.get("CharacterName") or "", frame=int(item.get("Frame", 0)),
                 length=int(item.get("Length", 0)), layer=int(item.get("Layer", 0)), parts=parts,
                 x=value(item.get("X")), y=value(item.get("Y")), zoom=value(item.get("Zoom"), 100.0),
-                effects=_effects(item, "VideoEffects", "TachieFaceEffects"), hidden=bool(item.get("IsHidden")))
+                effects=_effects(item, "VideoEffects", "TachieFaceEffects"), hidden=bool(item.get("IsHidden")),
+                inverted=bool(item.get("IsInverted")))
 
 
 def _media(item: dict, kind: str, hidden_layers: set[int]) -> Media:

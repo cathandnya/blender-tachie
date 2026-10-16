@@ -57,7 +57,7 @@ def project_json(old: bool = False) -> dict:
             {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん",
              "TachieItemParameter": {"Eye": f"{CHAR}\\目\\普通白目_目逸らし.png"}, "X": anim(769.0),
              "Y": anim(530.0, "直線移動", (600.0,)), "Zoom": anim(80.0), "Frame": 0, "Layer": 1, "Length": 600,
-             "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
+             "IsInverted": True, "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
                                "IsEnabled": True}]},
             {"$type": "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker",
              "CharacterName": "ずんだもん", "TachieFaceParameter": {"Eyebrow": f"{CHAR}\\眉\\困り眉1.png"},
@@ -108,6 +108,7 @@ def test_load_project(tmp_path, old):
     assert v.voice_seconds == pytest.approx(1.248) and v.subtitle == "Hidden"
     assert v.face == {"目": "普通白目_カメラ目線", "他": ["", "右腕_指差し"]}
     assert p.tachies[0].parts["目"] == "普通白目_目逸らし" and p.tachies[0].x == 769.0 and p.tachies[0].zoom == 80.0
+    assert p.tachies[0].inverted
     assert p.faces[0].parts == {"眉": "困り眉1"} and p.faces[0].frame == 400
     assert other_items_summary(p) == {"トランジション": 1}
     assert [m.kind for m in p.media] == ["image", "audio", "text", "text", "video"]
