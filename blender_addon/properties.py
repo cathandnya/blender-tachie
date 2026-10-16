@@ -284,12 +284,18 @@ def text_offset(strip) -> tuple[float, float]:
     return float(strip.get("tachie_sub_x", 0.0)), float(strip.get("tachie_sub_y", 0.0))
 
 
+# テキストストリップの行の間隔（行間 space_line = 1 で文字の大きさの約 1.16 倍）
+LINE_PITCH = 1.16
+
+
 def name_height(ch, text: str) -> float:
     """キャラ名を置く高さ（字幕の上。字幕の行数から見積もる）。"""
     render = ch.id_data.render
     lines = wrap(text, chars_per_line(render.resolution_x, ch.font_size)).count("\n") + 1
     margin = ch.box_margin if ch.subtitle_box else 0.0
-    return ch.subtitle_y + (lines * ch.font_size * 1.25 + ch.font_size * 0.6 * 0.3) / render.resolution_y + margin * 2
+    # 1 行目の高さ + 2 行目からの行の間隔
+    text_height = ch.font_size * (1.25 + (lines - 1) * LINE_PITCH * ch.line_spacing)
+    return ch.subtitle_y + (text_height + ch.font_size * 0.6 * 0.3) / render.resolution_y + margin * 2
 
 
 def place_text(strip, ch, text: str) -> None:
@@ -314,6 +320,7 @@ def apply_subtitle(strip, ch, text: str) -> None:
     strip.use_outline = ch.outline_width > 0
     strip.outline_width = ch.outline_width
     strip.outline_color = ch.outline_color
+    strip.space_line = ch.line_spacing
     strip.use_box = ch.subtitle_box
     strip.box_color = ch.box_color
     strip.box_margin = ch.box_margin
@@ -439,6 +446,8 @@ class TachieCharacter(bpy.types.PropertyGroup):
     outline_color: FloatVectorProperty(name="縁取り", subtype="COLOR", size=4, min=0, max=1,
                                        default=(0.0, 0.0, 0.0, 1.0), update=_update_subtitle)
     outline_width: FloatProperty(name="縁取りの太さ", default=0.15, min=0.0, max=1.0, update=_update_subtitle)
+    line_spacing: FloatProperty(name="行間", default=1.0, min=0.3, max=3.0, step=5, update=_update_subtitle,
+                                description="字幕の行の間隔（文字の大きさに対する割合。1 が通常。YMM4 の行間 % の 1/100）")
     subtitle_box: BoolProperty(name="背景の帯", default=False, update=_update_subtitle,
                                description="字幕の後ろに帯（箱）を敷く")
     box_color: FloatVectorProperty(name="帯の色", subtype="COLOR", size=4, min=0, max=1,

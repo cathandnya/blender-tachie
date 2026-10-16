@@ -115,11 +115,11 @@ def _media_of(scene, strip, t0: int, fps: float, speed_of: dict) -> Media | None
                   font_size=strip.font_size, font_color=tuple(strip.color), outline=strip.use_outline,
                   outline_color=tuple(strip.outline_color), bold=strip.use_bold, base_point=_base_point(strip),
                   x=(strip.location[0] - 0.5) * render.resolution_x, y=(0.5 - strip.location[1]) * render.resolution_y,
-                  opacity=strip.blend_alpha * 100)
+                  opacity=strip.blend_alpha * 100, line_spacing=strip.space_line)
         if strip.use_box:  # 背景の帯（置くときの逆）
             m.background = tuple(strip.box_color)
             m.background_margin = strip.box_margin * render.resolution_x
-            m.background_round = strip.box_roundness * box_height(strip.font_size, strip.text, m.background_margin)
+            m.background_round = strip.box_roundness * box_height(strip.font_size, strip.text, m.background_margin, strip.space_line)
         return m
     if strip.type == "COLOR":
         return Media(kind="color", frame=frame, length=length, layer=layer, color=(*strip.color, 1.0),

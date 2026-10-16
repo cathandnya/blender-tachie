@@ -536,6 +536,7 @@ class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
         row.prop(ch, "text_color", text="文字")
         row.prop(ch, "outline_color", text="縁")
         layout.prop(ch, "outline_width")
+        layout.prop(ch, "line_spacing")
         col = layout.column(align=True)
         col.prop(ch, "subtitle_box")
         sub = col.column(align=True)

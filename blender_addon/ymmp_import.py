@@ -300,6 +300,7 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
     elif c.font:
         problems.append(f"{c.name}: 字幕のフォント「{c.font}」が見つかりません（今のフォントのまま）")
     ch.text_color = c.font_color
+    ch.line_spacing = c.line_height / 100  # 範囲の外はプロパティの min / max に丸められる
     ch.outline_color = c.outline_color
     if not c.outline:
         ch.outline_width = 0.0

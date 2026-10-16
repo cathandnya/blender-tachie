@@ -105,7 +105,7 @@ class CharacterConfig:
     voice: dict[str, float] = field(default_factory=dict)  # audio_query のキーで持つ
     expressions: dict[str, dict[str, Any]] = field(default_factory=dict)  # プリセット名 → 上書きするパーツ
     layout: dict[str, Any] = field(default_factory=dict)  # position / flip / height / channel
-    subtitle: dict[str, Any] = field(default_factory=dict)  # font / size / color / outline_color / outline_width / y
+    subtitle: dict[str, Any] = field(default_factory=dict)  # font / size / color / outline_color / outline_width / line_spacing / y
     audio: dict[str, float] = field(default_factory=dict)  # volume / pan / fade_in / fade_out / after
     engine: str = ""  # 声のエンジンの URL（VOICEVOX 互換）。空なら既定のエンジン
 

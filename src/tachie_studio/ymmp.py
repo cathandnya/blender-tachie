@@ -172,6 +172,7 @@ class Character:
     outline: bool = False
     outline_color: tuple = (0.0, 0.0, 0.0, 1.0)
     subtitle_y: float = 0.0  # ピクセル、画面中央から下向き
+    line_height: float = 100.0  # 字幕の行間（%、100 が通常）
     subtitle_visible: bool = True
     has_tachie: bool = False
     tachie_kind: str = ""
@@ -297,6 +298,16 @@ class Media:
     background: tuple | None = None
     background_margin: float = 0.0  # 上下左右の余白の平均（Blender の帯の余白は 1 つだけ）
     background_round: float = 0.0
+    line_spacing: float = 1.0  # テキストの行間（YMM4 の LineHeight2 % の 1/100。1 が通常）
+    # 画面外から移動して登場・退場（YMM4 の映像エフェクト）。{"direction": Left/Right/Top/Bottom, "in", "out",
+    # "seconds", "easing": Expo など, "mode": In/Out/InOut}
+    slide: dict | None = None
+    # 画像の縁取り（YMM4 の映像エフェクト）。{"thickness": 元の画像のピクセル, "color": 不透明度を掛けた RGBA,
+    # "blur", "angular", "only": 縁だけ}
+    stroke: dict | None = None
+    # モザイク（kind == "mosaic"。YMM4 のエフェクトアイテムの四角い範囲のモザイク）。{"size": ブロックの大きさ,
+    # "width", "height": 範囲（ピクセル）, "invert": 範囲の外にかける}。X / Y は範囲の中心
+    mosaic: dict | None = None
     color: tuple = (0.0, 0.0, 0.0, 1.0)  # カラー（kind == "color"、アドオンのテンプレートだけ）
     anim: dict[str, tuple[float, float, str]] = field(default_factory=dict)  # 属性 → (始め, 終わり, 種類)
     effects: list[str] = field(default_factory=list)
@@ -347,6 +358,7 @@ def _subtitle_style(c: Character, d: dict) -> None:
     c.outline = d.get("Style") == "Border"
     c.outline_color = color(d.get("StyleColor"), (0.0, 0.0, 0.0, 1.0))
     c.subtitle_y = value(d.get("Y"))
+    c.line_height = value(d.get("LineHeight2"), 100.0)
 
 
 def _character(d: dict) -> Character:
@@ -401,6 +413,70 @@ def _span(item: dict, parts: dict) -> Span:
                 inverted=bool(item.get("IsInverted")))
 
 
+def _slide(m: Media, item: dict) -> None:
+    """映像エフェクト「画面外から移動して登場・退場」を Media.slide にする（写したものはエフェクトの一覧から外す）。"""
+    for e in item.get("VideoEffects") or []:
+        if _type(e) != "InOutMoveFromOutsideFrameEffect" or not e.get("IsEnabled", True):
+            continue
+        if not (e.get("IsInEffect") or e.get("IsOutEffect")):
+            continue
+        m.slide = {"direction": e.get("Value") or "Left", "in": bool(e.get("IsInEffect")),
+                   "out": bool(e.get("IsOutEffect")), "seconds": float(e.get("EffectTimeSeconds") or 0.3),
+                   "easing": e.get("EasingType") or "Linear", "mode": e.get("EasingMode") or "In"}
+        m.effects.remove("InOutMoveFromOutsideFrameEffect")
+        return
+
+
+def _stroke(m: Media, item: dict) -> None:
+    """画像の映像エフェクト「縁取り」（単色）を Media.stroke にする（写したものはエフェクトの一覧から外す）。
+    縁の位置のずらし・拡大・回転は写さない（使っていればエフェクトの一覧に残して報告する）。"""
+    for e in item.get("VideoEffects") or []:
+        if _type(e) != "OutlineEffect" or not e.get("IsEnabled", True):
+            continue
+        brush = (e.get("StrokeBrush") or {}).get("Parameter") or {}
+        if "SolidColorBrush" not in str(brush.get("$type", "")):
+            continue
+        r, g, b, a = color(brush.get("Color"), (1.0, 1.0, 1.0, 1.0))
+        thickness = value(e.get("StrokeThickness"), 10.0)
+        m.effects.remove("OutlineEffect")
+        if thickness <= 0:
+            return  # 太さ 0 の縁取りは何も描かない
+        m.stroke = {"thickness": thickness,
+                    "color": (r, g, b, a * value(e.get("Opacity"), 100.0) / 100), "blur": value(e.get("Blur")),
+                    "angular": bool(e.get("IsAngular")), "only": bool(e.get("IsOutlineOnly"))}
+        if value(e.get("X")) or value(e.get("Y")) or value(e.get("Zoom"), 100.0) != 100.0 or value(e.get("Rotation")):
+            m.effects.append("OutlineEffect の位置・拡大・回転")
+        return
+
+
+def _mosaic_item(item: dict, hidden_layers: set[int]) -> Media | None:
+    """エフェクトアイテムの、四角い範囲の四角いモザイク → Media(kind="mosaic")。それ以外のエフェクトアイテムは None。"""
+    effects = [e for e in item.get("VideoEffects") or [] if e.get("IsEnabled", True)]
+    mosaic = next((e for e in effects if _type(e) == "MosaicEffect" and e.get("MosaicType") == "Rectangle"), None)
+    shape = item.get("ShapeParameter") or {}
+    if mosaic is None or "QuadrilateralShape" not in str(item.get("ShapeType2", "")) \
+            or "RectangleShapeParameter" not in str(shape.get("$type", "")):
+        return None
+    if shape.get("SizeMode") == "SizeAspect":
+        # AviUtl の図形と同じ: アスペクト比（-100〜100）が正なら幅を、負なら高さを縮める
+        size, aspect = value(shape.get("Size"), 100.0), value(shape.get("AspectRate")) / 100
+        width, height = size * (1 - max(0.0, aspect)), size * (1 + min(0.0, aspect))
+    else:
+        width, height = value(shape.get("Width"), 100.0), value(shape.get("Height"), 100.0)
+    m = Media(kind="mosaic", frame=int(item.get("Frame", 0)), length=int(item.get("Length", 0)),
+              layer=int(item.get("Layer", 0)), x=value(item.get("X")), y=value(item.get("Y")),
+              zoom=value(item.get("Zoom"), 100.0), rotation=value(item.get("Rotation")),
+              opacity=value(item.get("Opacity"), 100.0),
+              fade_in=float(item.get("FadeIn") or 0.0), fade_out=float(item.get("FadeOut") or 0.0),
+              hidden=bool(item.get("IsHidden")) or int(item.get("Layer", 0)) in hidden_layers,
+              mosaic={"size": value((mosaic.get("MosaicParameter") or {}).get("Size"), 10.0), "width": width,
+                      "height": height, "invert": bool(item.get("InvertMask"))})
+    m.effects = [_type(e) for e in effects if e is not mosaic]
+    if value(shape.get("Round")) or value(item.get("Blur")):
+        m.effects.append("範囲の角の丸み・ぼかし")
+    return m
+
+
 def _fill_background(m: Media, item: dict) -> None:
     """テキストの映像エフェクト「背景塗りつぶし」（単色）を背景の色・余白にする（写したものはエフェクトの一覧から外す）。"""
     for e in item.get("VideoEffects") or []:
@@ -428,6 +504,9 @@ def _media(item: dict, kind: str, hidden_layers: set[int]) -> Media:
               offset=seconds(item.get("ContentOffset")), fade_in=float(item.get("FadeIn") or 0.0),
               fade_out=float(item.get("FadeOut") or 0.0), effects=_effects(item, "VideoEffects", "AudioEffects"),
               hidden=bool(item.get("IsHidden")) or int(item.get("Layer", 0)) in hidden_layers)
+    _slide(m, item)
+    if kind == "image":
+        _stroke(m, item)
     if kind == "text":
         m.text = (item.get("Text") or "").replace("\r\n", "\n").replace("\r", "\n")
         m.font = item.get("Font") or ""
@@ -437,6 +516,7 @@ def _media(item: dict, kind: str, hidden_layers: set[int]) -> Media:
         m.outline_color = color(item.get("StyleColor"), (0.0, 0.0, 0.0, 1.0))
         m.bold = bool(item.get("Bold"))
         m.base_point = item.get("BasePoint") or "LeftTop"
+        m.line_spacing = value(item.get("LineHeight2"), 100.0) / 100
         _fill_background(m, item)
     for key, attr in MEDIA_ANIMATED.items():
         v = item.get(key)
@@ -527,6 +607,10 @@ def load_project(path: str | Path) -> Project:
             project.faces.append(span)
             for e in span.effects:
                 project.unsupported[f"表情のエフェクト {e}"] += 1
+        elif kind == "EffectItem" and (m := _mosaic_item(item, hidden_layers)) is not None:
+            project.media.append(m)
+            for e in m.effects:
+                project.unsupported[f"エフェクトアイテムのエフェクト {e}"] += 1
         else:
             project.others.append(item)
             continue

@@ -227,3 +227,61 @@ def test_voice_wav(tmp_path):
     assert voice_wav(Voice("a", "x", 0, 1, 0, cache="")) is None
     assert voice_wav(Voice("a", "x", 0, 1, 0, cache="!!壊れた!!")) is None
     assert voice_wav(Voice("a", "x", 0, 1, 0, cache=base64.b64encode(brotli.compress(b"not a wav" * 10)).decode())) is None
+
+
+def test_effects_and_line_height(tmp_path):
+    """画面外からの登場・画像の縁取り・モザイク（エフェクトアイテム）・行間を読む。写したものはエフェクトの一覧から外す。"""
+    data = project_json(False)
+    data["Characters"][0]["LineHeight2"] = anim(70.0)
+    brush = lambda c: {"Parameter": {"$type": "YukkuriMovieMaker.Plugin.Brush.SolidColorBrushParameter, Y", "Color": c}}
+    items = data["Timelines"][0]["Items"]
+    items += [
+        {"$type": "YukkuriMovieMaker.Project.Items.TextItem, YukkuriMovieMaker", "Text": "見出し", "LineHeight2": anim(77.5),
+         "Frame": 0, "Layer": 11, "Length": 120,
+         "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutMoveFromOutsideFrameEffect, Y", "Value": "Left",
+                           "IsInEffect": True, "IsOutEffect": False, "EffectTimeSeconds": 0.3, "EasingType": "Expo",
+                           "EasingMode": "Out", "IsEnabled": True}]},
+        {"$type": "YukkuriMovieMaker.Project.Items.ImageItem, YukkuriMovieMaker", "FilePath": "C:\\x\\outlined.png",
+         "Frame": 0, "Layer": 12, "Length": 120,
+         "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.OutlineEffect, Y", "StrokeThickness": anim(20.0),
+                           "Blur": anim(0.0), "X": anim(0.0), "Y": anim(0.0), "Opacity": anim(50.0), "Zoom": anim(100.0),
+                           "Rotation": anim(0.0), "StrokeBrush": brush("#FFFFFFFF"), "IsOutlineOnly": False,
+                           "IsAngular": False, "IsEnabled": True}]},
+        {"$type": "YukkuriMovieMaker.Project.Items.EffectItem, YukkuriMovieMaker", "Frame": 10, "Layer": 13, "Length": 50,
+         "ShapeType2": "YukkuriMovieMaker.Shape.QuadrilateralShapePlugin, Y",
+         "ShapeParameter": {"$type": "YukkuriMovieMaker.Project.Items.RectangleShapeParameter, Y", "Round": anim(0.0),
+                            "SizeMode": "SizeAspect", "Size": anim(100.0), "AspectRate": anim(75.0)},
+         "Blur": anim(0.0), "InvertMask": False, "X": anim(171.0), "Y": anim(-74.0), "Opacity": anim(100.0),
+         "Rotation": anim(0.0),
+         "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.MosaicEffect, Y", "MosaicType": "Rectangle",
+                           "MosaicParameter": {"Size": anim(40.0)}, "IsEnabled": True}]},
+        {"$type": "YukkuriMovieMaker.Project.Items.EffectItem, YukkuriMovieMaker", "Frame": 0, "Layer": 14, "Length": 50,
+         "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.BlurEffect, Y", "IsEnabled": True}]},
+    ]
+    p = load_project(write(tmp_path, data))
+    assert p.characters["ずんだもん"].line_height == 70.0
+    text = next(m for m in p.media if m.kind == "text" and m.text == "見出し")
+    assert text.line_spacing == 0.775 and text.effects == []
+    assert text.slide == {"direction": "Left", "in": True, "out": False, "seconds": 0.3, "easing": "Expo", "mode": "Out"}
+    image = next(m for m in p.media if m.kind == "image" and m.file.endswith("outlined.png"))
+    assert image.stroke == {"thickness": 20.0, "color": (1.0, 1.0, 1.0, 0.5), "blur": 0.0, "angular": False,
+                            "only": False} and image.effects == []
+    mosaic = next(m for m in p.media if m.kind == "mosaic")
+    assert (mosaic.x, mosaic.y, mosaic.frame, mosaic.length) == (171.0, -74.0, 10, 50)
+    assert mosaic.mosaic == {"size": 40.0, "width": 25.0, "height": 100.0, "invert": False}  # 正のアスペクト比は幅を縮める
+    assert [i["Layer"] for i in p.others if "EffectItem" in i["$type"]] == [14]  # モザイクでないエフェクトアイテムは読まない
+
+
+def test_outline_image(tmp_path):
+    from PIL import Image
+
+    from tachie_studio.media_effects import outline_image
+
+    src = tmp_path / "a.png"
+    Image.new("RGBA", (10, 6), (255, 0, 0, 255)).save(src)
+    out = outline_image(src, tmp_path / "fx", 3, (1.0, 1.0, 1.0, 1.0))
+    im = Image.open(out)
+    assert im.size == (10 + 2 * 4, 6 + 2 * 4)  # 縁の太さ + 1 ずつ大きくなる
+    row = [im.getpixel((x, 7)) for x in range(im.width)]
+    assert row[0][3] == 0 and row[1] == (255, 255, 255, 255) and row[4] == (255, 0, 0, 255)
+    assert outline_image(src, tmp_path / "fx", 3, (1.0, 1.0, 1.0, 1.0)) == out  # 同じ中身なら作り直さない

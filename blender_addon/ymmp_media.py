@@ -26,8 +26,9 @@ from pathlib import Path, PureWindowsPath
 import bpy
 
 from .motion import _channelbag, _key
-from .operators import _overlaps, _path_for_blend, _sound_error, seq_scene
-from .properties import default_font, load_font
+from .operators import _overlaps, _path_for_blend, _sound_error, output_dir, seq_scene
+from .tachie_studio.media_effects import outline_image
+from .properties import LINE_PITCH, default_font, load_font
 from .tachie_studio.ymmp import Media, Project, find_by_tail, front_layer
 
 # YMM4 の音量（50 が等倍）
@@ -36,7 +37,7 @@ VOLUME_BASE = 50.0
 SEARCH_DEPTH = {"project": 3, "root": 4}
 # 名前で探すときに見るフォルダの数の上限（ホームフォルダなど広すぎる場所を指定されても固まらないように）
 SEARCH_MAX_DIRS = 3000
-KIND_LABELS = {"image": "画像", "video": "動画", "audio": "音声", "text": "テキスト", "color": "カラー"}
+KIND_LABELS = {"image": "画像", "video": "動画", "audio": "音声", "text": "テキスト", "color": "カラー", "mosaic": "モザイク"}
 
 
 def _nfc(name: str) -> str:
@@ -117,21 +118,49 @@ def shift_addon_channels(scene, n: int) -> None:
         c.channel += n
 
 
-def _linear(scene, strip, attr: str) -> None:
-    """`attr` の F カーブを直線にする（YMM4 の直線移動）。"""
+def _keyframes(scene, strip, attr: str):
+    """`attr` の F カーブ（配列なら全要素）のキーフレーム。"""
     bag = _channelbag(scene)
     if bag is None:
         return
     path = strip.path_from_id(attr)
     for fcurve in bag.fcurves:
         if fcurve.data_path == path:
-            for k in fcurve.keyframe_points:
-                k.interpolation = "LINEAR"
+            yield from fcurve.keyframe_points
 
 
-def box_height(font_size: float, text: str, margin: float) -> float:
-    """テキストの背景の帯の高さの見積もり（ピクセル。角の丸みを帯の高さに対する割合にするのに使う）。"""
-    return font_size * max(1, text.count("\n") + 1) + 2 * margin
+def _linear(scene, strip, attr: str) -> None:
+    """`attr` の F カーブを直線にする（YMM4 の直線移動）。"""
+    for k in _keyframes(scene, strip, attr):
+        k.interpolation = "LINEAR"
+
+
+# YMM4 のイージング → Blender のキーフレームの補間・イージング
+EASING_TYPES = {"Sine": "SINE", "Quad": "QUAD", "Cubic": "CUBIC", "Quart": "QUART", "Quint": "QUINT", "Expo": "EXPO",
+                "Circ": "CIRC", "Back": "BACK", "Elastic": "ELASTIC", "Bounce": "BOUNCE"}
+EASING_MODES = {"In": "EASE_IN", "Out": "EASE_OUT", "InOut": "EASE_IN_OUT"}
+# 退場は登場を逆に再生した動き（Out の減速は、退場では加速になる）
+REVERSED_MODES = {"EASE_IN": "EASE_OUT", "EASE_OUT": "EASE_IN", "EASE_IN_OUT": "EASE_IN_OUT"}
+# 画面外へずらす向き（画面の幅・高さの何倍か。Blender の y は上が正）
+SLIDE_DIRECTIONS = {"Left": (-1.0, 0.0), "Right": (1.0, 0.0), "Top": (0.0, 1.0), "Bottom": (0.0, -1.0)}
+
+
+def _ease(scene, strip, attr: str, frame: int, slide: dict, out: bool) -> None:
+    """`frame` から始まる区間の補間を YMM4 のイージングにする（`out` は退場で、イージングを逆向きに）。"""
+    interpolation = EASING_TYPES.get(slide["easing"], "LINEAR")
+    easing = EASING_MODES.get(slide["mode"], "EASE_IN")
+    if out:
+        easing = REVERSED_MODES[easing]
+    for k in _keyframes(scene, strip, attr):
+        if round(k.co[0]) == frame:
+            k.interpolation = interpolation
+            k.easing = easing
+
+
+def box_height(font_size: float, text: str, margin: float, line_spacing: float = 1.0) -> float:
+    """テキストの背景の帯の高さの見積もり（ピクセル。角の丸みを帯の高さに対する割合にするのに使う）。
+    2 行目からは行の間隔（行間 1 で文字の大きさの約 1.16 倍）。"""
+    return font_size * (1 + text.count("\n") * LINE_PITCH * line_spacing) + 2 * margin
 
 
 class MediaPlacer:
@@ -139,6 +168,7 @@ class MediaPlacer:
                  find_font: Callable[[str], str | None], behind: bool | None = None):
         """`behind` は映像を全部立ち絵より奥（True）・手前（False）に置く（テンプレート）。None なら YMM4 のレイヤーで決める。"""
         self.scene = seq_scene(context)
+        self.effects_dir = output_dir(context) / "media"  # 縁取りなどを焼き込んだ画像
         self.behind = behind
         self.project = project
         self.finder = finder
@@ -185,7 +215,7 @@ class MediaPlacer:
         """置く画像・動画・テキストと、使うチャンネルの本数（スピードコントロールの分）。"""
         out = []
         for m in items:
-            if m.kind in ("text", "color"):
+            if m.kind in ("text", "color", "mosaic"):
                 out.append((m, None, 1))
                 continue
             path = self._path(m)
@@ -303,14 +333,27 @@ class MediaPlacer:
             strip = sed.strips.new_effect(name="カラー", type="COLOR", channel=channel, frame_start=start,
                                           length=end - start)
             strip.color = m.color[:3]
+        elif m.kind == "mosaic":
+            # 調整レイヤー + コンポジターの補正（範囲の中だけピクセル化）。下のチャンネル全部にかかる
+            strip = sed.strips.new_effect(name="YMM4 モザイク", type="ADJUSTMENT", channel=channel,
+                                          frame_start=start, length=end - start)
+            modifier = strip.modifiers.new(name="モザイク", type="COMPOSITOR")
+            modifier.node_group = self._mosaic_tree(m)
         elif m.kind == "image":
+            if m.stroke is not None:  # 縁取りは画像に焼き込む（縁の分だけ大きくなるが、中心は同じ）
+                s = m.stroke
+                try:
+                    path = outline_image(path, self.effects_dir, s["thickness"], s["color"], angular=s["angular"],
+                                         blur=s["blur"], only=s["only"])
+                except OSError as e:
+                    self.problems.append(f"{path.name} の縁取りを作れません: {e}")
             strip = sed.strips.new_image(name=f"YMM4 {name}", filepath=_path_for_blend(path), channel=channel,
                                          frame_start=start, fit_method="ORIGINAL")
             strip.right_handle = end
         else:
             strip = self._movie(sed, m, path, channel, start, end)
         self._mark(strip, m)
-        if m.kind not in ("text", "color"):
+        if m.kind not in ("text", "color", "mosaic"):
             t = strip.transform
             t.scale_x = t.scale_y = m.zoom / 100 * self.sy
             t.offset_x, t.offset_y = m.x * self.sx, -m.y * self.sy
@@ -319,6 +362,42 @@ class MediaPlacer:
         strip.blend_alpha = max(0.0, min(1.0, m.opacity / 100))
         self._animate(strip, m, start, end)
         self.placed[m.kind] += 1
+
+    def _mosaic_tree(self, m: Media):
+        """範囲（四角いマスク）の中だけピクセル化するコンポジターのノードグループ。"""
+        mo = m.mosaic
+        tree = bpy.data.node_groups.new("YMM4 モザイク", "CompositorNodeTree")
+        tree.interface.new_socket("Image", in_out="INPUT", socket_type="NodeSocketColor")
+        tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+        nodes, links = tree.nodes, tree.links
+        group_in, group_out = nodes.new("NodeGroupInput"), nodes.new("NodeGroupOutput")
+        group_in.location, group_out.location = (-400, 0), (400, 0)
+        pixelate = nodes.new("CompositorNodePixelate")
+        pixelate.inputs["Size"].default_value = max(1, round(mo["size"] * self.sy))
+        pixelate.location = (-150, 150)
+        box = nodes.new("CompositorNodeBoxMask")  # 位置は画面の割合（下が 0）、大きさは幅・高さに対する割合
+        box.inputs["Position"].default_value = self._location(m.x, m.y)
+        # Box Mask の大きさは縦も横も画面の幅に対する割合（16:9 で (0.5, 0.5) は正方形）
+        zoom = m.zoom / 100
+        box.inputs["Size"].default_value = (mo["width"] * zoom / self.project.width,
+                                            mo["height"] * zoom / self.project.width)
+        box.inputs["Rotation"].default_value = -math.radians(m.rotation)
+        box.location = (-150, -150)
+        mix = nodes.new("ShaderNodeMix")
+        mix.data_type = "RGBA"
+        mix.location = (150, 0)
+
+        def socket(sockets, name, kind):
+            return next(s for s in sockets if s.name == name and s.type == kind)
+        plain, pixel = socket(mix.inputs, "A", "RGBA"), socket(mix.inputs, "B", "RGBA")
+        if mo["invert"]:  # 範囲の外にかける
+            plain, pixel = pixel, plain
+        links.new(group_in.outputs[0], pixelate.inputs["Color"])
+        links.new(group_in.outputs[0], plain)
+        links.new(pixelate.outputs[0], pixel)
+        links.new(box.outputs["Mask"], socket(mix.inputs, "Factor", "VALUE"))
+        links.new(socket(mix.outputs, "Result", "RGBA"), group_out.inputs[0])
+        return tree
 
     def _movie(self, sed, m: Media, path: Path, channel: int, start: int, end: int):
         movie = sed.strips.new_movie(name=f"YMM4 {path.name}", filepath=_path_for_blend(path), channel=channel,
@@ -360,6 +439,7 @@ class MediaPlacer:
         strip.outline_color = m.outline_color
         strip.outline_width = 0.1
         strip.use_bold = m.bold
+        strip.space_line = max(0.0, m.line_spacing)
         strip.wrap_width = 0.0
         horizontal = next((h for h in ("Left", "Center", "Right") if m.base_point.startswith(h)), "Left")
         vertical = next((v for v in ("Top", "Center", "Bottom") if m.base_point.endswith(v)), "Top")
@@ -369,7 +449,7 @@ class MediaPlacer:
         if m.background is not None:
             # 背景の帯。Blender の余白は出力の幅に対する割合、角の丸みは帯の高さに対する割合
             margin = m.background_margin * m.zoom / 100 * self.sx
-            height = box_height(size, m.text, margin)
+            height = box_height(size, m.text, margin, m.line_spacing)
             strip.use_box = True
             strip.box_color = m.background
             strip.box_margin = min(1.0, margin / self.scene.render.resolution_x)
@@ -391,7 +471,7 @@ class MediaPlacer:
                     strip.location = self._location(x, y)
                     strip.keyframe_insert("location", frame=frame)
                 _linear(self.scene, strip, "location")
-        else:
+        elif m.kind != "mosaic":  # モザイクのアニメーションは読み込みで「写せなかった設定」に出している
             moves = {"x": ("transform.offset_x", lambda v: v * self.sx),
                      "y": ("transform.offset_y", lambda v: -v * self.sy),
                      "rotation": ("transform.rotation", lambda v: -math.radians(v)),
@@ -406,6 +486,8 @@ class MediaPlacer:
                         _key(strip, "transform.scale_y", start, conv(a))
                         _key(strip, "transform.scale_y", last, conv(b))
                         _linear(self.scene, strip.transform, "scale_y")
+        if m.slide is not None:
+            self._slide(strip, m, start, last)
         if "opacity" in anim:
             a, b, _ = anim["opacity"]
             _key(strip, "blend_alpha", start, a / 100)
@@ -413,6 +495,45 @@ class MediaPlacer:
             _linear(self.scene, strip, "blend_alpha")
         elif m.fade_in > 0 or m.fade_out > 0:
             self._fade(strip, "blend_alpha", strip.blend_alpha, m, start, last)
+
+    def _slide(self, strip, m: Media, start: int, last: int) -> None:
+        """画面外から移動して登場・退場（画面 1 つ分ずらした位置から、YMM4 のイージングで動かす）。"""
+        anim, slide = m.anim, m.slide
+        dx, dy = SLIDE_DIRECTIONS.get(slide["direction"], (-1.0, 0.0))
+        n = max(1, round(slide["seconds"] * self.fps))
+        if m.kind == "text":
+            if "x" in anim or "y" in anim:
+                self.problems.append(f"テキスト「{m.text[:20]}」は移動のアニメーションがあるので、画面外からの登場は写していません")
+                return
+            target, attr = strip, "location"
+            x, y = strip.location
+            outside, inside = (x + dx, y + dy), (x, y)
+            keys = lambda pos, frame: (setattr(strip, "location", pos), strip.keyframe_insert("location", frame=frame))
+        else:
+            if ("x" if dx else "y") in anim:  # 動かす向きの軸だけがぶつかる
+                self.problems.append(f"{KIND_LABELS[m.kind]}は移動のアニメーションがあるので、画面外からの登場は写していません")
+                return
+            render = self.scene.render
+            target, attr = strip.transform, "offset_x" if dx else "offset_y"
+            base = getattr(target, attr)
+            shift = dx * render.resolution_x if dx else dy * render.resolution_y
+            outside, inside = base + shift, base
+            keys = lambda v, frame: _key(strip, f"transform.{attr}", frame, v)
+        if slide["in"]:
+            keys(outside, start)
+            keys(inside, min(last, start + n))
+        if slide["out"]:
+            keys(inside, max(start, last - n))
+            keys(outside, last)
+        if slide["in"]:
+            _ease(self.scene, target, attr, start, slide, out=False)
+        if slide["out"]:
+            _ease(self.scene, target, attr, max(start, last - n), slide, out=True)
+        # 位置を置いた場所に戻す（キーフレームがあるのでフレームごとに上書きされる）
+        if m.kind == "text":
+            strip.location = inside
+        else:
+            setattr(target, attr, inside)
 
     def _fade(self, strip, attr: str, full: float, m: Media, start: int, last: int) -> None:
         if m.fade_in > 0:

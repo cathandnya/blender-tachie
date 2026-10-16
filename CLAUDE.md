@@ -52,6 +52,15 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   シーンと違えば SPEED ストリップ（`FRAME_NUMBER` に素材のフレーム番号の直線キー）を重ねる。retiming キーの
   `timeline_frame` を API で動かすと、他のストリップがあるシーンで Blender 5.2.2 が落ちる。置いたストリップは `tachie_ymmp`。
   ファイルは `MediaFinder`（元のパス → .ymmp のフォルダ → その下 3 階層 → `ymmp_media_root` の下）。
+  写せる映像エフェクト（写したものは `Media.effects` から外し、残りは「写せなかった設定」に出す）:
+  背景塗りつぶし（テキスト、単色）→ テキストストリップの box（余白は上下左右の平均、`box_height` で角の丸みの割合）。
+  画面外から移動して登場・退場 → `Media.slide`、location / offset に画面 1 つ分ずらしたキーフレーム（`_slide`、イージングは
+  `EASING_TYPES` / `EASING_MODES`、退場は逆向き）。縁取り（画像、単色）→ `media_effects.outline_image` で元の画像のピクセルの
+  太さの縁を付けた PNG を出力フォルダの media/ に作って置く（YMM4 の書き出しで、太さ 20・拡大率 60% の縁が 12px だった）。
+  モザイク（エフェクトアイテムの四角い範囲・四角いモザイク）→ `Media(kind="mosaic")`、調整レイヤー + COMPOSITOR の補正
+  （Pixelate と Box Mask を ShaderNodeMix で混ぜるノードグループ。Box Mask の Size は縦も横も画面の幅に対する割合）。範囲の「サイズとアスペクト比」は AviUtl の図形と同じ
+  （正なら幅、負なら高さを縮める。YMM4 の書き出しでは未確認）。行間は LineHeight2 % / 100 → `space_line`（1.0 で文字の約 1.16 倍）、
+  キャラの字幕は `line_spacing`（TOML の subtitle の line_spacing）。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。

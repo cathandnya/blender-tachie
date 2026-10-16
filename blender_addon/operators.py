@@ -153,7 +153,7 @@ def config_of(ch) -> CharacterConfig:
                 **_config_motion(ch)},
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
-                  "y": ch.subtitle_y, "box": ch.subtitle_box, "box_color": list(ch.box_color),
+                  "line_spacing": ch.line_spacing, "y": ch.subtitle_y, "box": ch.subtitle_box, "box_color": list(ch.box_color),
                   "box_margin": ch.box_margin, "box_roundness": ch.box_roundness, "name": ch.show_name,
                   "fade": ch.subtitle_fade},
         audio=character_audio(ch),
@@ -245,7 +245,7 @@ def apply_config(ch, config: CharacterConfig) -> None:
         setattr(ch, prop, layout.get(key, ch.bl_rna.properties[prop].default))
     for prop, key in (("font_path", "font"), ("font_size", "size"), ("text_color", "color"),
                       ("outline_color", "outline_color"), ("outline_width", "outline_width"),
-                      ("subtitle_y", "y"), ("subtitle_box", "box"), ("box_color", "box_color"),
+                      ("line_spacing", "line_spacing"), ("subtitle_y", "y"), ("subtitle_box", "box"), ("box_color", "box_color"),
                       ("box_margin", "box_margin"), ("box_roundness", "box_roundness"), ("show_name", "name"),
                       ("subtitle_fade", "fade")):
         if key in sub:

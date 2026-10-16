@@ -40,6 +40,8 @@ def media_from_dict(d: dict) -> Media:
     for key in ("font_color", "outline_color", "color", "background"):
         if key in values and isinstance(values[key], list):
             values[key] = tuple(values[key])
+    if isinstance(values.get("stroke"), dict) and isinstance(values["stroke"].get("color"), list):
+        values["stroke"] = {**values["stroke"], "color": tuple(values["stroke"]["color"])}
     values["anim"] = {k: tuple(v) for k, v in (values.get("anim") or {}).items()}
     return Media(**values)
 
