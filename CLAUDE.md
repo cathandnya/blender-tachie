@@ -95,6 +95,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   字幕をセリフごとにずらす量は字幕ストリップの `tachie_sub_x` / `tachie_sub_y`（`properties.place_text`、再生成で引き継ぐ）。
   自動反映（`motion_signature` に含める）で `refresh_motion` がキャラ名にも写して location を当て直す。
   `subtitle_clashes` で時間も位置も重なる字幕を知らせる。
+  プレビューで動かした字幕・キャラ名（#32）: `place_text` が置いた位置をストリップの `tachie_placed_loc` に覚え、
+  そこから動いたもの（`motion.moved_texts`）を自動反映が署名を比べる前に `motion.sync_text_offsets` でずらす量へ
+  書き戻す（キャラ名はキャラ名の基準の位置からの差）。置いた位置はストリップに持つので undo の段・別の .blend でも
+  食い違わない（解像度を変えてキャラ名の基準がずれただけのものは動かしたとみなさない）。undo の段は積まない。
   セリフの形（#18、`properties.LINE_LAYOUTS`）: FULL（立ち絵あり）/ SUBTITLE（音声と字幕）/ AUDIO（音声だけ）。全ストリップの
   `tachie_layout`（無い古いセリフは立ち絵があれば FULL、`line_layout_of`）で、再生成で引き継ぐ。新しく置くセリフはキャラの
   `line_layout`（TOML は `[キャラ.layout]` の `lines`）。素材フォルダの無いキャラ（`folder = ""`、TOML は folder を省略、

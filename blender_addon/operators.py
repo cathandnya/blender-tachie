@@ -1029,8 +1029,10 @@ def _on_depsgraph_update(scene, depsgraph):
     if _applying_faces or _face_timer_running:
         return
     # 引数はウィンドウのシーン。シーケンサーが別のシーンを映していればそちらも見る
+    from .motion import moved_texts
+
     scenes = {scene, getattr(bpy.context, "sequencer_scene", None) or scene}
-    if any(auto_signature(sc) != _applied_signatures.get(sc.name, ("", "", "")) for sc in scenes):
+    if any(auto_signature(sc) != _applied_signatures.get(sc.name, ("", "", "")) or moved_texts(sc) for sc in scenes):
         _face_timer_running = True
         bpy.app.timers.register(_apply_faces_later, first_interval=0.3)
 
@@ -1047,13 +1049,17 @@ def _apply_faces_later():
     with bpy.context.temp_override(window=window) if window else _nullcontext():
         # refresh_faces は seq_scene(context) を描き直すので、そのシーンだけを見る（他のシーンは
         # シーケンサーに映ったときに反映する）
+        from .motion import sync_text_offsets
+
         scene = seq_scene(bpy.context)
-        signature = auto_signature(scene)
-        applied = _applied_signatures.get(scene.name, ("", "", ""))
-        if signature == applied:
-            return None
         _applying_faces = True
         try:
+            # プレビューで動かした字幕は、ずらす量に書き戻してから（動きの作り直しで元の位置に戻さないため）
+            sync_text_offsets(scene)
+            signature = auto_signature(scene)
+            applied = _applied_signatures.get(scene.name, ("", "", ""))
+            if signature == applied:
+                return None
             problems = []
             # 動きだけが変わったとき（セリフごとの位置を変えた・動きのあるセリフを動かしたなど）は、
             # 立ち絵の描き直しと待機の作り直しをせずにキーフレームだけ作り直す

@@ -304,12 +304,16 @@ def name_height(ch, text: str) -> float:
 
 
 def place_text(strip, ch, text: str) -> None:
-    """字幕・キャラ名のストリップを、キャラの字幕の高さ + セリフごとにずらした位置に置く。"""
+    """字幕・キャラ名のストリップを、キャラの字幕の高さ + セリフごとにずらした位置に置く。
+
+    置いた位置を `tachie_placed_loc` に覚える（プレビューで動かしたかを見るため。.blend と undo の段に一緒に入る）。
+    """
     dx, dy = text_offset(strip)
     if strip.get("tachie_role") == "name":
         strip.location = (0.5 + dx, min(0.98, name_height(ch, text) + dy))
     else:
         strip.location = (0.5 + dx, ch.subtitle_y + dy)
+    strip["tachie_placed_loc"] = list(strip.location)
 
 
 def apply_subtitle(strip, ch, text: str) -> None:
