@@ -434,6 +434,46 @@ class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
                 op.preset = preset.name
 
 
+def draw_ymmp_pending(layout, s) -> None:
+    """見つからない素材・ファイルがあって読み込みを待っている YMM4 のプロジェクト。ここで場所を指定する
+    （読み込みのファイル選択の中からはフォルダを選べないので、パネルで）。"""
+    from pathlib import Path
+
+    from .ymmp_import import _abs, material_problem
+
+    box = layout.box()
+    box.label(text=f"{Path(s.ymmp_pending).name}: 見つからないものを指定してください", icon="ERROR")
+    if len(s.ymmp_pending_chars):
+        box.label(text="キャラクターの素材フォルダ:")
+        for c in s.ymmp_pending_chars:
+            problem = material_problem(_abs(c.folder))
+            row = box.row(align=True)
+            row.label(text=c.name, icon="ERROR" if problem else "CHECKMARK")
+            row.prop(c, "folder", text="")
+            if problem and c.folder:
+                box.label(text=f"    {problem}")
+        box.prop(s, "ymmp_material_root", text="探す場所")
+    if s.ymmp_import_media and s.ymmp_pending_files:
+        missing = [n for n in s.ymmp_pending_missing.split("\n") if n]
+        box.label(text=f"画像・動画など: {s.ymmp_pending_files - len(missing)} / {s.ymmp_pending_files} 個見つかりました",
+                  icon="ERROR" if missing else "CHECKMARK")
+        box.prop(s, "ymmp_media_root", text="探す場所")
+        if s.ymmp_pending_wide:
+            box.label(text="    探す場所が広すぎるので途中までしか探していません", icon="INFO")
+        col = box.column(align=True)
+        for n in missing[:5]:
+            col.label(text=f"  {n}")
+        if len(missing) > 5:
+            col.label(text=f"  ほか {len(missing) - 5} 個")
+    box.prop(s, "ymmp_match_video")
+    box.prop(s, "ymmp_import_media")
+    row = box.row(align=True)
+    row.scale_y = 1.2
+    row.operator("tachie.import_ymmp", text="読み込む", icon="IMPORT").pending = True
+    row.operator("tachie.import_ymmp_cancel", icon="CANCEL")
+    box.label(text="見つからないキャラ・ファイルは飛ばして読み込みます", icon="INFO")
+
+
 class TACHIE_PT_script(_Panel, bpy.types.Panel):
     bl_label = "台本の流し込み"
     bl_parent_id = "TACHIE_PT_main"
@@ -452,11 +492,9 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
         sub.enabled = s.script is not None
         sub.operator("tachie.import_script", text="流し込む", icon="PLAY").use_text = True
         layout.operator("tachie.import_script", text="ファイルから流し込む", icon="FILE_TEXT").use_text = False
-        col = layout.column(align=True)
-        col.operator("tachie.import_ymmp", icon="IMPORT")
-        # 読み込みのファイル選択の中からはフォルダを選べない（ファイル選択は 1 つしか開けない）ので、ここでも設定できる
-        col.prop(s, "ymmp_material_root", text="素材")
-        col.prop(s, "ymmp_media_root", text="画像など")
+        layout.operator("tachie.import_ymmp", icon="IMPORT")
+        if s.ymmp_pending:
+            draw_ymmp_pending(layout, s)
 
 
 class TACHIE_PT_placement(_WithTachie, _Panel, bpy.types.Panel):

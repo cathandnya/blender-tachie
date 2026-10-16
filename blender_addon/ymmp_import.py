@@ -10,7 +10,7 @@ import math
 import os
 import unicodedata
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import bpy
 from bpy_extras.io_utils import ImportHelper
@@ -24,15 +24,26 @@ from .operators import (
 from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
 from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, system_fonts
-from .tachie_studio.tachie.loader import _is_placeholder
+from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
 from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
-from .tachie_studio.ymmp import Project, difference, load_project, other_items_summary, overlay, preset_name
+from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary, overlay,
+                                 preset_name)
 
 REPORT_TEXT = "YMM4 の読み込み結果"
 # YMM4 の音量（セリフ・キャラの既定は 50）→ Blender の音量。50 を等倍とみなす（YMM4 での意味は未確認）
 VOLUME_BASE = 50.0
 # 声の終わりよりこれ以上前から始まる別のキャラのセリフは、同時に喋るものとみなす（シーンのフレーム）
 SIMULTANEOUS_FRAMES = 2
+
+
+def material_problem(folder: str) -> str | None:
+    """動く立ち絵の素材フォルダとして使えなければ、その理由（YMM4 から読み込むのは動く立ち絵だけ）。
+    写真の入ったフォルダなどを素材にすると、シンプル立ち絵として大きな画像を合成し続けて固まったようになる。"""
+    if not folder or not os.path.isdir(folder):
+        return "フォルダがありません"
+    if not any(os.path.isdir(os.path.join(folder, c)) for c in CATEGORIES):
+        return "眉・目・口などのフォルダがありません（キャラクターの素材フォルダを選んでください）"
+    return None
 
 
 def find_material(root: str, folder_name: str) -> str | None:
@@ -46,11 +57,108 @@ def find_material(root: str, folder_name: str) -> str | None:
     for depth_root, dirs, _ in os.walk(root):
         depth = Path(depth_root).relative_to(root).parts
         for d in dirs:
-            if unicodedata.normalize("NFC", d) == want:
+            if unicodedata.normalize("NFC", d) == want and material_problem(str(Path(depth_root) / d)) is None:
                 return str(Path(depth_root) / d)
         if len(depth) >= 1:
             dirs[:] = []
     return None
+
+
+def _abs(path: str) -> str:
+    return bpy.path.abspath(os.path.expanduser(path)) if path else ""
+
+
+def resolve_material(settings, c, ymmp: Path) -> str | None:
+    """YMM4 のキャラクターの素材フォルダを探す: 元のパスの後ろの部分（.ymmp のフォルダとその上から）→
+    素材・画像などを探す場所と .ymmp のフォルダの下（2 階層まで、同じ名前のフォルダ）。"""
+    found = find_by_tail(c.folder, ymmp.parent, directory=True) if c.folder else None
+    if found is not None and material_problem(str(found)) is None:
+        return str(found)
+    roots = (settings.ymmp_material_root, settings.ymmp_media_root, str(ymmp.parent))
+    return next((f for r in dict.fromkeys(roots) if (f := find_material(r, c.folder_name))), None)
+
+
+def _used_characters(project: Project) -> set[str]:
+    return {v.character for v in project.voices} | {s.character for s in project.tachies + project.faces}
+
+
+def _missing_media(settings, ymmp: Path, project: Project) -> tuple[int, list[str], bool]:
+    """(画像・動画などのファイルの数, 見つからないファイル名, 探す場所が広すぎて途中までしか探していないか)。"""
+    finder = MediaFinder(ymmp, settings.ymmp_media_root)
+    files = sorted({m.file for m in project.media if m.file})
+    missing = sorted({PureWindowsPath(f).name for f in files if finder.find(f) is None})
+    return len(files), missing, finder.truncated
+
+
+def _resolve_rows(settings, project: Project) -> list[tuple[str, str, str]]:
+    """一覧に無い、立ち絵のあるキャラクターの (名前, YMM4 の素材フォルダの名前, 見つかった素材フォルダか "")。"""
+    rows = []
+    for name in sorted(_used_characters(project)):
+        c = project.characters.get(name)
+        if c is None or not c.has_tachie or any(ch.name == name for ch in settings.characters):
+            continue  # 一覧にあるキャラはそのまま使う
+        rows.append((name, c.folder_name, resolve_material(settings, c, project.path) or ""))
+    return rows
+
+
+def prepare_pending(settings, project: Project, match_video: bool, import_media: bool) -> bool:
+    """見つからない素材フォルダ・ファイルがあれば、パネルで場所を指定するまで読み込みを待つ状態にして True。"""
+    rows = _resolve_rows(settings, project)
+    total, missing, wide = _missing_media(settings, project.path, project) if import_media else (0, [], False)
+    if all(folder for *_, folder in rows) and not missing:
+        return False
+    cancel_pending(settings)
+    settings.ymmp_match_video, settings.ymmp_import_media = match_video, import_media
+    for name, folder_name, folder in rows:
+        item = settings.ymmp_pending_chars.add()
+        item.name, item.folder_name, item.folder = name, folder_name, folder
+    settings.ymmp_pending_files, settings.ymmp_pending_missing = total, "\n".join(missing)
+    settings.ymmp_pending_wide = wide
+    settings.ymmp_pending = str(project.path)
+    return True
+
+
+def cancel_pending(settings) -> None:
+    settings.ymmp_pending = ""
+    settings.ymmp_pending_chars.clear()
+    settings.ymmp_pending_files, settings.ymmp_pending_missing, settings.ymmp_pending_wide = 0, "", False
+
+
+def rescan_pending_media(settings) -> None:
+    """待っている読み込みの、見つからない素材フォルダ・ファイルを探し直す（探す場所を変えたとき）。"""
+    try:
+        project = load_project(settings.ymmp_pending)
+    except ValueError:
+        return
+    found = {name: folder for name, _, folder in _resolve_rows(settings, project) if folder}
+    for item in settings.ymmp_pending_chars:
+        if material_problem(_abs(item.folder)) is not None and found.get(item.name):
+            item.folder = found[item.name]
+    total, missing, wide = (_missing_media(settings, project.path, project) if settings.ymmp_import_media
+                            else (0, [], False))
+    settings.ymmp_pending_files, settings.ymmp_pending_missing = total, "\n".join(missing)
+    settings.ymmp_pending_wide = wide
+
+
+_filling = False
+
+
+def fill_pending_folders(settings, changed) -> None:
+    """素材フォルダを指定したら、その隣（同じ親フォルダの下）から、まだ見つかっていない他のキャラの素材も探す。"""
+    global _filling
+    folder = _abs(changed.folder)
+    if _filling or not settings.ymmp_pending or material_problem(folder) is not None:
+        return
+    _filling = True
+    try:
+        parent = os.path.dirname(folder.rstrip("/\\"))
+        for item in settings.ymmp_pending_chars:
+            if item.name != changed.name and material_problem(_abs(item.folder)) is not None:
+                found = find_material(parent, item.folder_name)
+                if found:
+                    item.folder = found
+    finally:
+        _filling = False
 
 
 def _font_key(name: str) -> str:
@@ -229,26 +337,45 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
     import_media: bpy.props.BoolProperty(name="画像・動画・音声・テキストも読み込む", default=True,
                                          description="YMM4 のレイヤーの順で置く（立ち絵より奥のものは、アドオンの"
                                                      "チャンネルを上へずらしてその下に置く）")
+    # ファイル選択から読み込むとき、見つからない素材・ファイルがあればパネルで場所を指定するまで待つ
+    confirm: bpy.props.BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+    # パネルの「読み込む」（待っている読み込みを、指定した素材フォルダで続ける）
+    pending: bpy.props.BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        if self.pending:
+            return self.execute(context)
+        self.confirm = True
+        return ImportHelper.invoke(self, context, event)
 
     def draw(self, context):
-        layout = self.layout
-        settings = seq_scene(context).tachie
-        layout.prop(settings, "ymmp_material_root")
-        layout.label(text="無いキャラクターは、この中の同じ名前の素材フォルダから追加します")
-        layout.label(text="（空なら下の場所と .ymmp のフォルダの下を探します。パスは入力してください）")
-        layout.prop(self, "match_video")
-        layout.prop(self, "import_media")
-        if self.import_media:
-            layout.prop(settings, "ymmp_media_root")
+        self.layout.prop(self, "match_video")
+        self.layout.prop(self, "import_media")
+        self.layout.label(text="素材・画像などは自動で探します（見つからなければ、あとで指定します）")
 
     def execute(self, context):
         scene = seq_scene(context)
         settings = scene.tachie
+        folders: dict[str, str] = {}  # キャラ名 → 指定された素材フォルダ
+        if self.pending:
+            if not settings.ymmp_pending:
+                self.report({"ERROR"}, "読み込みを待っている YMM4 のプロジェクトがありません")
+                return {"CANCELLED"}
+            self.filepath = settings.ymmp_pending
+            self.match_video, self.import_media = settings.ymmp_match_video, settings.ymmp_import_media
+            folders = {c.name: _abs(c.folder) for c in settings.ymmp_pending_chars if c.folder}
         try:
             project = load_project(self.filepath)
         except ValueError as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
+        if not self.pending and self.confirm and prepare_pending(settings, project, self.match_video,
+                                                                 self.import_media):
+            self.report({"WARNING"}, "見つからない素材・ファイルがあります。「台本の流し込み」で場所を指定して"
+                                     "「読み込む」を押してください")
+            return {"FINISHED"}
+        if self.pending or self.confirm:
+            cancel_pending(settings)
         problems: list[str] = []
         skipped: Counter = Counter()
         ensure_sequencer_scene(context)
@@ -269,8 +396,9 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             return scene.frame_start + round(f * fps / project.fps)
 
         # キャラクター: 同じ名前があればそのまま使い、無ければ素材フォルダから追加して YMM4 の設定を写す
-        used = {v.character for v in project.voices} | {s.character for s in project.tachies + project.faces}
+        used = _used_characters(project)
         characters = {}
+        added_folders: dict[str, str] = {}
         for name in sorted(used):
             c = project.characters.get(name)
             existing = next((ch for ch in settings.characters if ch.name == name), None)
@@ -286,12 +414,13 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 _setup_character(context, ch, c, project, None, problems)
                 characters[name] = ch
                 continue
-            # 指定が無い・見つからないときは、画像・動画などを探す場所と .ymmp のフォルダの下も探す
-            roots = (settings.ymmp_material_root, settings.ymmp_media_root, str(Path(self.filepath).parent))
-            folder = next((f for r in dict.fromkeys(roots) if (f := find_material(r, c.folder_name))), None)
-            if folder is None:
+            folder = folders.get(name) or resolve_material(settings, c, Path(self.filepath))
+            if not folder:
                 problems.append(f"{name}: 素材フォルダ「{c.folder_name}」が見つかりません"
-                                "（「素材フォルダを探す場所」を指定するか、先にキャラクターを追加してください）")
+                                "（読み込むときに指定するか、先にキャラクターを追加してください）")
+                continue
+            if (problem := material_problem(folder)) is not None:  # 指定されたフォルダが素材でない
+                problems.append(f"{name}: {folder}: {problem}")
                 continue
             try:
                 ch, _ = add_character(context, folder)
@@ -302,6 +431,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             tachie = next((s for s in project.tachies if s.character == name and not s.hidden), None)
             _setup_character(context, ch, c, project, tachie, problems)
             characters[name] = ch
+            added_folders[name] = folder
 
         presets = {name: _Presets(ch, problems) for name, ch in characters.items()}
 
@@ -467,6 +597,8 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
         lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、"
                  + (f"セリフなしの立ち絵 {stills} 個、" if stills else "")
                  + f"表情ストリップ {faces} 個、表情プリセットを {created} 個作りました"]
+        if added_folders:
+            lines += ["", "追加したキャラクターの素材フォルダ:"] + [f"  {n}: {f}" for n, f in added_folders.items()]
         if +skipped:
             lines += ["", "置かなかったセリフ:"] + [f"  {k}: {n}" for k, n in (+skipped).items()]
         media_lines = media.report() if media is not None else []
@@ -492,7 +624,19 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
-_classes = (TACHIE_OT_import_ymmp,)
+class TACHIE_OT_import_ymmp_cancel(bpy.types.Operator):
+    """待っている YMM4 のプロジェクトの読み込みをやめる"""
+
+    bl_idname = "tachie.import_ymmp_cancel"
+    bl_label = "やめる"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        cancel_pending(seq_scene(context).tachie)
+        return {"FINISHED"}
+
+
+_classes = (TACHIE_OT_import_ymmp, TACHIE_OT_import_ymmp_cancel)
 
 
 def register():

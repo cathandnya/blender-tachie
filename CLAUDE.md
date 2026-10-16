@@ -21,9 +21,15 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は
   Speed/Intonation/PauseLengthScale が %、Pitch は 100 が 0（(Pitch-100)/100）。`Pronounce.AudioQuery` があればその値と
   accent_phrases を優先。ボイスの `Length` = 声 + AdditionalTime。`VoiceCache`（圧縮された音声）は使わない。
-  アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 立ち絵の無いキャラは素材を探さずに追加する。素材フォルダは `ymmp_material_root` → `ymmp_media_root` → .ymmp のフォルダの下（2 階層）から
-  YMM4 と同じ名前で探す（`add_character` を使う。`~` も使える）。読み込みのファイル選択の中からはフォルダの選択を
-  開けない（ファイル選択は 1 つだけ）ので、2 つの場所は「台本の流し込み」パネルにも出す。既にあるキャラは設定を変えない。表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
+  アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 立ち絵の無いキャラは素材を探さずに追加する。素材フォルダ（`resolve_material`）と画像など（`MediaFinder`）は
+  まず YMM4 の元のパスの後ろの部分を .ymmp のフォルダとその上 3 階層から探す（`ymmp.find_by_tail`。Windows と同じ並びで
+  持ってくれば指定不要）。素材は次に `ymmp_material_root` → `ymmp_media_root` → .ymmp のフォルダの下（2 階層）から同じ名前。
+  ファイル選択から読むとき（`confirm`）に見つからないものがあれば、すぐには読まず `ymmp_pending*` に入れて「台本の流し込み」
+  パネルに確認の欄を出し（`panels.draw_ymmp_pending`。読み込みのファイル選択の中からはフォルダを選べないため）、キャラごとの
+  素材フォルダ・探す場所を指定して「読み込む」（`pending`）。指定した素材の隣から他のキャラも探す（`fill_pending_folders`）。
+  素材フォルダは眉・目・口などのフォルダがあるものだけ使う（`material_problem`。写真のフォルダを素材にするとシンプル立ち絵として
+  大きな画像を合成し続けて固まったようになる）。名前で探すときは `SEARCH_MAX_DIRS` フォルダで打ち切る（広すぎる場所の指定）。
+  スクリプトから直接呼ぶと確認しない。既にあるキャラは設定を変えない。表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
   最後のセリフより後ろの立ち絵アイテムはセリフなしの立ち絵（`place_still`）にする（待機は最後のセリフの終わりまでなので、
   セリフの無いサムネなどで立ち絵が消える）。
