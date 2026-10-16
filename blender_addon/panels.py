@@ -437,23 +437,29 @@ class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
 def draw_ymmp_pending(layout, s) -> None:
     """見つからない素材・ファイルがあって読み込みを待っている YMM4 のプロジェクト。ここで場所を指定する
     （読み込みのファイル選択の中からはフォルダを選べないので、パネルで）。"""
-    import os
     from pathlib import Path
+
+    from .ymmp_import import _abs, material_problem
 
     box = layout.box()
     box.label(text=f"{Path(s.ymmp_pending).name}: 見つからないものを指定してください", icon="ERROR")
     if len(s.ymmp_pending_chars):
         box.label(text="キャラクターの素材フォルダ:")
         for c in s.ymmp_pending_chars:
-            ok = bool(c.folder) and os.path.isdir(bpy.path.abspath(os.path.expanduser(c.folder)))
+            problem = material_problem(_abs(c.folder))
             row = box.row(align=True)
-            row.label(text=c.name, icon="CHECKMARK" if ok else "ERROR")
+            row.label(text=c.name, icon="ERROR" if problem else "CHECKMARK")
             row.prop(c, "folder", text="")
+            if problem and c.folder:
+                box.label(text=f"    {problem}")
+        box.prop(s, "ymmp_material_root", text="探す場所")
     if s.ymmp_import_media and s.ymmp_pending_files:
         missing = [n for n in s.ymmp_pending_missing.split("\n") if n]
         box.label(text=f"画像・動画など: {s.ymmp_pending_files - len(missing)} / {s.ymmp_pending_files} 個見つかりました",
                   icon="ERROR" if missing else "CHECKMARK")
         box.prop(s, "ymmp_media_root", text="探す場所")
+        if s.ymmp_pending_wide:
+            box.label(text="    探す場所が広すぎるので途中までしか探していません", icon="INFO")
         col = box.column(align=True)
         for n in missing[:5]:
             col.label(text=f"  {n}")

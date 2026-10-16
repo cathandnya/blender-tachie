@@ -5,7 +5,7 @@ import os
 import pytest
 
 from tachie_studio.ymmp import (
-    color, difference, front_layer, load_project, other_items_summary, overlay, part_name, parts_of, preset_name,
+    color, difference, find_by_tail, front_layer, load_project, other_items_summary, overlay, part_name, parts_of, preset_name,
     seconds,
 )
 
@@ -171,3 +171,18 @@ def test_real_projects_load():
     for path in REAL:
         p = load_project(path)
         assert all(v.character for v in p.voices), path
+
+
+def test_find_by_tail(tmp_path):
+    proj = tmp_path / "YouTube" / "proj"
+    proj.mkdir(parents=True)
+    char = tmp_path / "YouTube" / "sozai" / "char" / "ずんだもん"
+    char.mkdir(parents=True)
+    (tmp_path / "YouTube" / "sozai" / "bgm.mp3").write_bytes(b"")
+    (tmp_path / "bgm.mp3").write_bytes(b"")
+    assert find_by_tail(CHAR, proj, directory=True) == char
+    assert find_by_tail("C:\\ymm4\\sozai\\bgm.mp3", proj) == tmp_path / "YouTube" / "sozai" / "bgm.mp3"
+    # ファイルは名前だけの一致を上の階層で拾わない
+    assert find_by_tail("D:\\other\\bgm.mp3", proj) is None
+    assert find_by_tail("\\\\server\\share\\sozai\\bgm.mp3", proj) == tmp_path / "YouTube" / "sozai" / "bgm.mp3"
+    assert find_by_tail("", proj) is None

@@ -549,7 +549,8 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     subtitle_channel: IntProperty(name="字幕", default=10, min=1, max=128)
     ymmp_material_root: StringProperty(name="素材フォルダを探す場所", subtype="DIR_PATH", default="",
                                        description="YMM4 のプロジェクトを読み込むとき、無いキャラクターの素材フォルダ"
-                                                   "（YMM4 と同じ名前）をこの中から探す")
+                                                   "（YMM4 と同じ名前）をこの中から探す",
+                                       update=_update_ymmp_media)
     ymmp_media_root: StringProperty(name="画像・動画などを探す場所", subtype="DIR_PATH", default="",
                                     description="YMM4 のプロジェクトの画像・動画・音声が元の場所と .ymmp のフォルダに"
                                                 "無いとき、この中（下の階層も）から同じ名前のファイルを探す",
@@ -559,6 +560,7 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     ymmp_pending_chars: CollectionProperty(type=TachieYmmpCharacter)
     ymmp_pending_files: IntProperty(default=0)  # 画像・動画などのファイルの数
     ymmp_pending_missing: StringProperty(default="")  # 見つからないファイル名（改行区切り）
+    ymmp_pending_wide: BoolProperty(default=False)  # 探す場所が広すぎて途中までしか探していない
     ymmp_match_video: BoolProperty(name="解像度・フレームレートを合わせる", default=True)
     ymmp_import_media: BoolProperty(name="画像・動画・音声・テキストも読み込む", default=True,
                                     update=_update_ymmp_media)

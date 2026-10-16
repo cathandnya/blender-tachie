@@ -34,6 +34,8 @@ from .tachie_studio.ymmp import Media, Project, find_by_tail, front_layer
 VOLUME_BASE = 50.0
 # 探す深さ（.ymmp のフォルダ・指定した場所からの階層）
 SEARCH_DEPTH = {"project": 3, "root": 4}
+# 名前で探すときに見るフォルダの数の上限（ホームフォルダなど広すぎる場所を指定されても固まらないように）
+SEARCH_MAX_DIRS = 3000
 KIND_LABELS = {"image": "画像", "video": "動画", "audio": "音声", "text": "テキスト", "color": "カラー"}
 
 
@@ -52,13 +54,19 @@ class MediaFinder:
         if root:
             self.roots.append((Path(bpy.path.abspath(os.path.expanduser(root))), SEARCH_DEPTH["root"]))
         self._index: dict[str, Path] | None = None
+        self.truncated = False  # 広すぎて途中までしか探していない
 
     def _build(self) -> dict[str, Path]:
         index: dict[str, Path] = {}
+        visited = 0
         for base, depth in self.roots:
             if not base.is_dir():
                 continue
             for dirpath, dirnames, filenames in os.walk(base):
+                visited += 1
+                if visited > SEARCH_MAX_DIRS:
+                    self.truncated = True
+                    return index
                 if len(Path(dirpath).relative_to(base).parts) >= depth:
                     dirnames[:] = []
                 dirnames.sort()
@@ -74,6 +82,9 @@ class MediaFinder:
             return Path(file)  # 元のパス（Windows のパスは Windows でだけ）
         if self.base is not None and (found := find_by_tail(file, self.base)) is not None:
             return found  # Windows と同じ並びで持ってきたとき
+        for base, _ in self.roots[1 if self.base is not None else 0:]:  # 指定した場所の直下に同じ並びで
+            if (found := find_by_tail(file, base, levels=0)) is not None:
+                return found
         name = PureWindowsPath(file).name
         if self.base is not None and (self.base / name).is_file():
             return self.base / name
@@ -426,6 +437,8 @@ class MediaPlacer:
     def report(self) -> list[str]:
         labels = {**KIND_LABELS, "video_sound": "動画の音"}
         lines = ["置いたアイテム: " + "、".join(f"{labels[k]} {n}" for k, n in self.placed.items())] if self.placed else []
+        if self.finder.truncated:
+            lines += ["", f"「画像・動画などを探す場所」が広すぎるので、{SEARCH_MAX_DIRS} フォルダまでしか探していません"]
         if self.missing:
             names = sorted(self.missing)
             lines += ["", f"見つからなかったファイル（{len(names)} 個。「画像・動画などを探す場所」で指定できます）:"]

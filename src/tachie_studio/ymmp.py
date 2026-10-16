@@ -128,7 +128,8 @@ def difference(base: dict[str, Any], parts: dict[str, Any]) -> dict[str, Any]:
 def find_by_tail(original: str, start: Path, levels: int = 3, directory: bool = False) -> Path | None:
     """YMM4 の元のパス（Windows）の後ろの部分を、`start` とその上 `levels` 階層のフォルダの下で探す。
     `C:\\ymm4\\sozai\\char\\ずんだもん` を、Windows と同じ並びで持ってきた `~/YouTube/sozai/char/ずんだもん` に見つける。
-    近いフォルダ・長く一致するものが優先。"""
+    近いフォルダ・長く一致するものが優先。ファイルは名前だけの一致は見ない（よくある名前を上の階層で拾わないため。
+    .ymmp のフォルダの同じ名前は `MediaFinder` が別に探す）。"""
     if not original:
         return None
     parts = [p for p in ntpath.normpath(original).split("\\") if p]
@@ -138,7 +139,7 @@ def find_by_tail(original: str, start: Path, levels: int = 3, directory: bool = 
         return None
     base = Path(start)
     for _ in range(levels + 1):
-        for k in range(len(parts), 0, -1):
+        for k in range(len(parts), 0 if directory else 1, -1):
             candidate = base.joinpath(*parts[-k:])
             if candidate.is_dir() if directory else candidate.is_file():
                 return candidate
