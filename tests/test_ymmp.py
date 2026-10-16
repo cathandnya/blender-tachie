@@ -186,3 +186,34 @@ def test_find_by_tail(tmp_path):
     assert find_by_tail("D:\\other\\bgm.mp3", proj) is None
     assert find_by_tail("\\\\server\\share\\sozai\\bgm.mp3", proj) == tmp_path / "YouTube" / "sozai" / "bgm.mp3"
     assert find_by_tail("", proj) is None
+
+
+def test_voice_wav(tmp_path):
+    """YMM4 の VoiceCache（Brotli で圧縮した WAV、終わりの印なし）を WAV に戻す。"""
+    import base64
+    import io
+    import wave
+
+    import brotli
+
+    from tachie_studio.ymmp import Voice, voice_wav
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x01" * 24000)  # 1 秒
+    wav = buf.getvalue()
+    c = brotli.Compressor()
+    unfinished = c.process(wav) + c.flush()  # YMM4 と同じく finish しない
+    with pytest.raises(brotli.error):
+        brotli.decompress(unfinished)
+    cache = base64.b64encode(unfinished).decode()
+    assert voice_wav(Voice("a", "x", 0, 1, 0, voice_seconds=1.0, cache=cache)) == wav
+    assert voice_wav(Voice("a", "x", 0, 1, 0, voice_seconds=1.0,
+                           cache=base64.b64encode(brotli.compress(wav)).decode())) == wav
+    assert voice_wav(Voice("a", "x", 0, 1, 0, voice_seconds=2.0, cache=cache)) is None  # 長さが違う
+    assert voice_wav(Voice("a", "x", 0, 1, 0, cache="")) is None
+    assert voice_wav(Voice("a", "x", 0, 1, 0, cache="!!壊れた!!")) is None
+    assert voice_wav(Voice("a", "x", 0, 1, 0, cache=base64.b64encode(brotli.compress(b"not a wav" * 10)).decode())) is None

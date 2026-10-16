@@ -20,7 +20,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `src/tachie_studio/ymmp.py` — YMM4 のプロジェクト（.ymmp、UTF-8 BOM の JSON）を読む（#15）。`Timelines`（古い版は `Timeline`）、
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は
   Speed/Intonation/PauseLengthScale が %、Pitch は 100 が 0（(Pitch-100)/100）。`Pronounce.AudioQuery` があればその値と
-  accent_phrases を優先。ボイスの `Length` = 声 + AdditionalTime。`VoiceCache`（圧縮された音声）は使わない。
+  accent_phrases を優先。ボイスの `Length` = 声 + AdditionalTime。`VoiceCache` は YMM4 が合成した音声で、
+  Brotli で圧縮した WAV（24kHz 16bit モノラル）の base64。YMM4 は Brotli の終わりの印を書かないので `brotli.decompress` は失敗し、
+  `Decompressor.process` を出し切るまで繰り返す（1 回 32KB ほど）。`ymmp.voice_wav` が VoiceLength と長さが合えば WAV を返し、
+  読み込みは `Line.wav` に渡して VOICEVOX で合成しない（口パクの計算の audio_query だけ頼む。82 本で 233 秒 → 23 秒）。
   アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 立ち絵の無いキャラは素材を探さずに追加する。素材フォルダ（`resolve_material`）と画像など（`MediaFinder`）は
   まず YMM4 の元のパスの後ろの部分を .ymmp のフォルダとその上 3 階層から探す（`ymmp.find_by_tail`。Windows と同じ並びで
   持ってくれば指定不要）。素材は次に `ymmp_material_root` → `ymmp_media_root` → .ymmp のフォルダの下（2 階層）から同じ名前。
@@ -163,7 +166,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   メニューの「初期値として保存」で両方に書ける（tachie.toml にある声のキーは残す）。CLI の `parse_characters` も tachie.toml で補う。
   書き出し（キャラ設定・初期値）は空のパーツも `"目" = ""` / `"他" = []` と明示し、tachie.toml の値で補われないようにする。
   消した表情プリセットは書けないので、tachie.toml にあるプリセットは戻る（仕様）。
-- `scripts/build_addon.py` — Pillow の wheel（cp313、macOS arm64 / x64・Windows x64 / arm64・Linux x64）を取ってきて
+- `scripts/build_addon.py` — Pillow と Brotli の wheel（cp313、macOS arm64 / x64・Windows x64 / arm64・Linux x64。`PACKAGES`。
+  Brotli は macOS は universal2 の 1 つで、Windows arm64 用は無いのでその OS では YMM4 の音声を使わず合成する）を取ってきて
   `blender --command extension build --split-platforms` で OS ごとの `dist/blender_tachie-<ver>-<OS>.zip` を作る
   （zip の manifest には Blender が `[build.generated]` でその OS の platforms / wheels を書き足す）。`--install` でこの OS 用を
   Blender に入れる（普段の Blender に入るので、試すだけなら smoke.sh の一時ユーザーフォルダを使う）。

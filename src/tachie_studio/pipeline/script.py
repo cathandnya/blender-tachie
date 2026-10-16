@@ -46,6 +46,8 @@ class Line:
     fade_in: float | None = None  # 音声の先頭のフェード（秒）
     fade_out: float | None = None  # 音声の末尾のフェード（秒）
     after: float | None = None  # セリフ後の余韻（秒）。音声の後ろに口を閉じた立ち絵（まばたきのみ）を足す
+    # 合成済みの音声（WAV）。あれば VOICEVOX で合成せずにこれを使う（YMM4 が .ymmp に保存した音声など）
+    wav: bytes | None = field(default=None, hash=False, compare=False, repr=False)
 
 
 _KANA_RE = re.compile(r"^(?P<text>.*?)\s*[{｛](?P<kana>[^{}｛｝]*)[}｝]\s*$")

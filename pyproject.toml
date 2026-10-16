@@ -3,7 +3,10 @@ name = "blender-tachie"
 version = "0.1.0"
 description = "Talking character (tachie) add-on for Blender's Video Sequencer, with VOICEVOX lip sync. Also reads YMM4 moving tachie materials."
 requires-python = ">=3.13"
-dependencies = ["pillow"]
+dependencies = [
+    "brotli>=1.2.0",
+    "pillow",
+]
 
 [dependency-groups]
 dev = ["pytest"]

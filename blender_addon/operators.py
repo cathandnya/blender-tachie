@@ -358,7 +358,8 @@ def line_layout(ch, layout: str | None = None) -> str:
 
 def clip_job(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
              voice: dict | None = None, kana: str | None = None, accent: list | None = None,
-             accent_kana: str | None = None, audio: dict | None = None, layout: str = "FULL"):
+             accent_kana: str | None = None, audio: dict | None = None, layout: str = "FULL",
+             wav: bytes | None = None):
     """セリフの合成の準備（Blender に触る部分）だけをして、合成して書き出す関数を返す。返した関数は
     (RenderedClip, 書き出し先フォルダ) を返し、Blender に触らないので別スレッドで呼べる（音声合成を待つ間、画面を固めない）。
 
@@ -367,6 +368,7 @@ def clip_job(context, ch, text: str, preset: str | None = None, speaker: int | N
     `accent` は抑揚を編集した accent_phrases（kana より優先）。`accent_kana` は編集したときの発音で、
     今の発音（`kana` か自動の読み）と違えば `accent` は使わない（ユーザー辞書で自動の読みが変わったときなど）。
     `audio` はフェードと余韻（None ならキャラクターの既定値）。`layout` が FULL 以外なら立ち絵の連番は書かない。
+    `wav` は合成済みの音声（YMM4 が保存した音声）。あれば VOICEVOX では合成しない（口パクの計算に audio_query は使う）。
     """
     audio = audio if audio is not None else character_audio(ch)
     if not ch.folder:
@@ -383,7 +385,7 @@ def clip_job(context, ch, text: str, preset: str | None = None, speaker: int | N
     lines_dir = output_dir(context) / "lines"
     line = Line(0, ch.name, text, preset or None, speaker, voice if voice is not None else character_voice(ch),
                 kana or None, accent or None, accent_kana=accent_kana, fade_in=audio.get("fade_in", 0.0),
-                fade_out=audio.get("fade_out", 0.0), after=audio.get("after", 0.0))
+                fade_out=audio.get("fade_out", 0.0), after=audio.get("after", 0.0), wav=wav)
     engine, fps, character = client(context, ch), scene_fps(seq_scene(context)), cache and cache.character
 
     def run():

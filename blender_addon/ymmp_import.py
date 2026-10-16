@@ -29,7 +29,7 @@ from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, system_fonts
 from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
 from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
 from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary, overlay,
-                                 preset_name)
+                                 preset_name, voice_wav)
 
 REPORT_TEXT = "YMM4 の読み込み結果"
 # YMM4 の音量（セリフ・キャラの既定は 50）→ Blender の音量。50 を等倍とみなす（YMM4 での意味は未確認）
@@ -586,6 +586,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
         voices = [v for v in project.voices if v.character in characters]
         skipped["キャラクターを読み込めなかったセリフ"] += len(project.voices) - len(voices)
         placed = 0
+        reused = 0  # YMM4 が保存した音声を使ったセリフ（VOICEVOX で合成しない）
         line_spans: dict[str, list[tuple[int, int]]] = {}
         jobs: list[_LineJob] = []
         for i, v in enumerate(voices):
@@ -617,16 +618,18 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             layout = line_layout(ch)
             if not ch.folder:  # 立ち絵の無いキャラは、字幕を出すセリフは音声と字幕、出さないセリフは音声だけ
                 layout = "AUDIO" if hide_subtitle else "SUBTITLE"
+            wav = voice_wav(v)
             try:
                 preset = expression(v.character, v.frame, v.face)
                 run = clip_job(context, ch, v.text, preset or None, speaker=v.style_id, voice=voice,
                                kana=v.kana or None, accent=v.accent, accent_kana=v.kana or None,
-                               audio=audio, layout=layout)
+                               audio=audio, layout=layout, wav=wav)
             except ERRORS as e:
                 problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: {e}")
                 skipped["置けなかったセリフ"] += 1
                 continue
             jobs.append(_LineJob(v, ch, start, audio, voice, hide_subtitle, layout, run))
+            reused += wav is not None
 
         def place(job: _LineJob, result) -> None:
             """合成し終わったセリフを置く（result は (RenderedClip, フォルダ) か、合成で出た例外）。"""
@@ -730,6 +733,9 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、"
                      + (f"セリフなしの立ち絵 {stills} 個、" if stills else "")
                      + f"表情ストリップ {faces} 個、表情プリセットを {created} 個作りました"]
+            if jobs:
+                lines += ["", f"音声: YMM4 が保存した音声を使ったセリフ {reused} 本、VOICEVOX で合成したセリフ "
+                              f"{len(jobs) - reused} 本"]
             if added_folders:
                 lines += ["", "追加したキャラクターの素材フォルダ:"] + [f"  {n}: {f}" for n, f in added_folders.items()]
             if +skipped:

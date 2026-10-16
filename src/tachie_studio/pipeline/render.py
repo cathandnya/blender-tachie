@@ -226,7 +226,8 @@ def render_line(client: VoicevoxClient, config: CharacterConfig, character: Char
         query["kana"] = line.kana
     audio = {k: getattr(line, k) if getattr(line, k) is not None else float(config.audio.get(k, 0.0))
              for k in ("fade_in", "fade_out", "after")}
-    wav_bytes = apply_fade(client.synthesis(query, speaker), audio["fade_in"], audio["fade_out"])
+    voiced = line.wav if line.wav is not None else client.synthesis(query, speaker)
+    wav_bytes = apply_fade(voiced, audio["fade_in"], audio["fade_out"])
     wav = read_wav(wav_bytes)
     n = frame_count(wav.duration, fps)
     after = frame_count(audio["after"], fps) if audio["after"] > 0 else 0

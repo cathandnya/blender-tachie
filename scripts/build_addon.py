@@ -36,6 +36,14 @@ PLATFORMS = {
     "windows-arm64": "win_arm64",
     "linux-x64": "manylinux_2_28_x86_64",
 }
+# 同梱する wheel（パッケージ → Blender の platforms ごとの platform タグ。None はその OS 用に取ってこない）。
+# Brotli は YMM4 の .ymmp に保存された音声（VoiceCache）を展開するため。macOS は arm64 で取れる universal2 の 1 つで
+# x64 も兼ねる（x86_64 用も取ると x64 の zip に 2 つ入る）。Windows arm64 用は配布されていないので、その OS では
+# YMM4 の音声を使わずに VOICEVOX で合成する
+PACKAGES = {
+    "pillow": PLATFORMS,
+    "brotli": {**PLATFORMS, "macos-x64": None, "linux-x64": "manylinux_2_17_x86_64", "windows-arm64": None},
+}
 
 
 def find_blender() -> str:
@@ -61,17 +69,21 @@ def this_platform() -> str:
 
 
 def download_wheels() -> list[Path]:
-    pillow = version("pillow")
     wheels = []
-    for platform in PLATFORMS.values():
-        WHEEL_CACHE.mkdir(parents=True, exist_ok=True)
-        found = list(WHEEL_CACHE.glob(f"pillow-{pillow}-cp{PYTHON_VERSION.replace('.', '')}-*{platform}*.whl"))
-        if not found:
-            subprocess.run(["uvx", "pip", "download", f"pillow=={pillow}", "--only-binary=:all:", "--no-deps",
-                            "--python-version", PYTHON_VERSION, "--platform", platform, "-d", str(WHEEL_CACHE)],
-                           check=True)
-            found = list(WHEEL_CACHE.glob(f"pillow-{pillow}-*{platform}*.whl"))
-        wheels.append(found[0])
+    for package, platforms in PACKAGES.items():
+        ver = version(package)
+        for platform in filter(None, platforms.values()):
+            # wheel の名前のタグは指定と違うことがある（macOS arm64 の Brotli は universal2）ので、パッケージ・OS ごとのフォルダに置く
+            folder = WHEEL_CACHE / package / ver / platform
+            found = list(folder.glob("*.whl"))
+            if not found:
+                folder.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["uvx", "pip", "download", f"{package}=={ver}", "--only-binary=:all:", "--no-deps",
+                                "--python-version", PYTHON_VERSION, "--platform", platform, "-d", str(folder)],
+                               check=True)
+                found = list(folder.glob("*.whl"))
+            if found[0] not in wheels:
+                wheels.append(found[0])
     return wheels
 
 

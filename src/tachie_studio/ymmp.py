@@ -12,10 +12,14 @@ UTF-8（BOM 付き）の JSON。トップの `Characters` にキャラクター�
 
 from __future__ import annotations
 
+import base64
+import binascii
+import io
 import json
 import ntpath
 import re
 import unicodedata
+import wave
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -199,6 +203,42 @@ class Voice:
     face: dict[str, Any] = field(default_factory=dict)  # セリフ中の表情（変えるパーツだけ）
     subtitle: str = "UseCharacterSetting"  # JimakuVisibility
     hidden: bool = False
+    cache: str = field(default="", repr=False)  # VoiceCache（YMM4 が合成した音声。Brotli で圧縮した WAV の base64）
+
+
+# VoiceCache の WAV の長さが VoiceLength とこれ以上違えば、別の音声とみなして使わない（秒）
+CACHE_TOLERANCE = 0.05
+
+
+def voice_wav(voice: Voice) -> bytes | None:
+    """YMM4 が .ymmp に保存した音声（VoiceCache）を WAV にする。無い・読めない・長さが合わなければ None
+    （VOICEVOX で合成し直す）。Brotli の圧縮で、YMM4 は終わりの印を書かないので、流し込みで展開する。"""
+    if not voice.cache:
+        return None
+    try:
+        import brotli
+    except ImportError:  # Brotli の wheel が無い OS（Windows arm64）
+        return None
+    try:
+        dec = brotli.Decompressor()
+        chunks = [dec.process(base64.b64decode(voice.cache))]
+        while chunk := dec.process(b""):  # 1 回の呼び出しで出すのは 32KB ほどまでなので、出し切るまで
+            chunks.append(chunk)
+        wav = b"".join(chunks)
+    except (brotli.error, binascii.Error, ValueError):
+        return None
+    if len(wav) < 44 or wav[:4] != b"RIFF" or wav[8:12] != b"WAVE":
+        return None
+    try:  # 長さはヘッダーから（全サンプルを読むと、読み込みの準備で画面が固まる）
+        with wave.open(io.BytesIO(wav), "rb") as w:
+            if w.getsampwidth() != 2:  # 16bit PCM 以外は口パクの計算で読めない
+                return None
+            duration = w.getnframes() / w.getframerate()
+    except (wave.Error, EOFError, ZeroDivisionError):  # 壊れた WAV は使わない
+        return None
+    if voice.voice_seconds and abs(duration - voice.voice_seconds) > CACHE_TOLERANCE:
+        return None
+    return wav
 
 
 @dataclass
@@ -340,7 +380,8 @@ def _voice(item: dict) -> Voice:
         voice=params, voice_seconds=seconds(item.get("VoiceLength")), volume=value(item.get("Volume"), 50.0),
         pan=value(item.get("Pan")), fade_in=float(item.get("VoiceFadeIn") or 0.0),
         fade_out=float(item.get("VoiceFadeOut") or 0.0), face=parts_of(item.get("TachieFaceParameter"), full=False),
-        subtitle=item.get("JimakuVisibility") or "UseCharacterSetting", hidden=bool(item.get("IsHidden")))
+        subtitle=item.get("JimakuVisibility") or "UseCharacterSetting", hidden=bool(item.get("IsHidden")),
+        cache=item.get("VoiceCache") or "")
 
 
 def _effects(item: dict, *keys: str) -> list[str]:

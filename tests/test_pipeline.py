@@ -600,3 +600,25 @@ def test_parse_script_crlf_empty_and_escapes(tmp_path: Path):
         parse_script("ずんだもん「 」")
     (tmp_path / "u.tsv").write_text("ずんだもん\tユニコード\n", encoding="utf-16")
     assert [x.text for x in load_script(tmp_path / "u.tsv")] == ["ユニコード"]
+
+
+def test_render_line_uses_given_wav(tmp_path: Path, char_dir: Path):
+    """合成済みの音声（YMM4 が保存した音声）があれば合成しない。長さはその音声から。"""
+    from tachie_studio.pipeline.render import FrameCache, render_line
+    from tachie_studio.pipeline.script import Line
+
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path)["テスト"]
+    character = load_character(char_dir)
+    client = FakeClient()
+    client.synthesis = lambda q, s: pytest.fail("合成した")
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x10" * 36000)  # 1.5 秒
+    cache = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    clip = render_line(client, cfg, character, Line(1, "テスト", "あ", wav=buf.getvalue()), tmp_path / "o",
+                       fps=10, cache=cache)
+    assert clip.frames == 15 and abs(clip.duration - 1.5) < 1e-6
+    assert (tmp_path / "o" / clip.wav).read_bytes()[:4] == b"RIFF"
