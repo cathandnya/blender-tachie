@@ -15,7 +15,7 @@ from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, 
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
-from .tachie_studio.pipeline.script import FORMATS, split_kana
+from .tachie_studio.pipeline.script import script_format, split_kana
 from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
                                             parse_characters)
@@ -3156,8 +3156,7 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
         try:
             if self.use_text:
                 # テキストの名前が .csv / .tsv なら（ファイルを開いたときなど）その形で読む
-                fmt = FORMATS.get(Path(settings.script.name).suffix.lower(), "text")
-                lines = parse_script(settings.script.as_string(), configs, fmt=fmt)
+                lines = parse_script(settings.script.as_string(), configs, fmt=script_format(settings.script.name))
             else:
                 lines = load_script(self.filepath, configs)
         except OSError as e:

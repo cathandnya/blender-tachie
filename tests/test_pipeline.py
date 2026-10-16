@@ -588,3 +588,15 @@ def test_parse_script_csv_tsv(tmp_path: Path):
         parse_script("だれか,あ\n", {"ずんだもん"}, fmt="csv")
     with pytest.raises(ValueError, match="3 行目: キャラクター 'だれか'"):
         parse_script('ずんだもん,"1\n2"\nだれか,あ\n', {"ずんだもん"}, fmt="csv")
+
+
+def test_parse_script_crlf_empty_and_escapes(tmp_path: Path):
+    from tachie_studio.pipeline import load_script
+
+    # CRLF の CSV の「"」の中の改行は \n に、\「 \」 \\ 以外のバックスラッシュは残す
+    assert [x.text for x in parse_script('ずんだもん,"1\r\n2"\r\n', fmt="csv")] == ["1\n2"]
+    assert [x.text for x in parse_script("ずんだもん「C:\\tmp \\「あ\\」」")] == ["C:\\tmp 「あ」"]
+    with pytest.raises(ValueError, match="1 行目: セリフがありません"):
+        parse_script("ずんだもん「 」")
+    (tmp_path / "u.tsv").write_text("ずんだもん\tユニコード\n", encoding="utf-16")
+    assert [x.text for x in load_script(tmp_path / "u.tsv")] == ["ユニコード"]

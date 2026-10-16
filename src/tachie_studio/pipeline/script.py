@@ -11,6 +11,7 @@ YMM4 の台本の形も読める（キャラ名の欄では表情・発音の書
 
 from __future__ import annotations
 
+import codecs
 import csv
 import io
 import re
@@ -22,6 +23,11 @@ _NAME_RE = re.compile(r"^(?P<name>[^(（\[]+?)\s*(?:[(（\[](?P<expr>[^)）\]]*)
 # YMM4 のテキスト台本: キャラ名「セリフ」（キャラ名に : や括弧の「」は入らない）
 _BRACKET_RE = re.compile(r"^(?P<head>[^:：「」]+?)\s*「(?P<rest>.*)$", re.S)
 FORMATS = {".csv": "csv", ".tsv": "tsv"}  # 他の拡張子はテキスト
+
+
+def script_format(name: str | Path) -> str:
+    """ファイル名（テキストの名前）の拡張子から台本の形（"text" / "csv" / "tsv"）。"""
+    return FORMATS.get(Path(name).suffix.lower(), "text")
 
 
 @dataclass(frozen=True)
@@ -85,7 +91,7 @@ def _text_entries(text: str):
                 raise ValueError(f"{lineno} 行目: 「」が閉じていません: {raw}")
             if rest[end + 1:].strip():
                 raise ValueError(f"{lineno} 行目: 」の後ろに文字があります（セリフの中の括弧は \\「 \\」）: {raw}")
-            body = re.sub(r"\\(.)", r"\1", rest[:end])
+            body = re.sub(r"\\([「」\\])", r"\1", rest[:end])
             yield lineno, m["head"], body
             continue
         m = _LINE_RE.match(raw)
@@ -99,7 +105,10 @@ def _table_entries(text: str, delimiter: str):
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
     while True:
         lineno = reader.line_num + 1  # 改行を含むセリフでも始まりの行
-        row = next(reader, None)
+        try:
+            row = next(reader, None)
+        except csv.Error as e:
+            raise ValueError(f"{lineno} 行目: 読めません: {e}") from None
         if row is None:
             return
         if not any(c.strip() for c in row) or row[0].lstrip().startswith("#"):
@@ -113,6 +122,8 @@ def _table_entries(text: str, delimiter: str):
 def read_script(path: str | Path) -> str:
     """台本ファイルを読む。UTF-8（BOM 付きも）で読めなければ Shift_JIS（Excel の CSV）。"""
     data = Path(path).read_bytes()
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):  # Excel の「Unicode テキスト」
+        return data.decode("utf-16")
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -124,12 +135,13 @@ def read_script(path: str | Path) -> str:
 
 def load_script(path: str | Path, characters=None) -> list[Line]:
     """台本ファイルを拡張子に合った形（.csv / .tsv / それ以外はテキスト）で読む。"""
-    return parse_script(read_script(path), characters, fmt=FORMATS.get(Path(path).suffix.lower(), "text"))
+    return parse_script(read_script(path), characters, fmt=script_format(path))
 
 
 def parse_script(text: str, characters=None, fmt: str = "text") -> list[Line]:
     """`characters` にキャラ名の集合か {名前: CharacterConfig} を渡すと、名前（と表情）を検査する。
     `fmt` は "text"（「キャラ名: セリフ」か YMM4 の「キャラ名「セリフ」」）/ "csv" / "tsv"。"""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")  # CRLF の CSV の「"」の中の改行
     if fmt == "text":
         entries = _text_entries(text)
     elif fmt in ("csv", "tsv"):
@@ -148,5 +160,7 @@ def parse_script(text: str, characters=None, fmt: str = "text") -> list[Line]:
         if expr and isinstance(characters, dict) and expr not in characters[name].expressions:
             raise ValueError(f"{lineno} 行目: {name} に表情 {expr!r} がありません")
         body, kana = split_kana(body)
+        if not body:
+            raise ValueError(f"{lineno} 行目: セリフがありません")
         lines.append(Line(len(lines) + 1, name, body, expr, kana=kana))
     return lines
