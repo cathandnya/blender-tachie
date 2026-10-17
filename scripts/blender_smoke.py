@@ -637,6 +637,37 @@ assert role(msts, SOUND).channel not in reserved and msub.channel not in reserve
 metan.font_size += 2
 assert abs(msub.location[1] - (metan.subtitle_y + 0.3)) < 1e-6 and abs(role(msts, NAME).location[0] - 0.4) < 1e-6
 metan.font_size -= 2
+# プレビューで動かした字幕: 置いた位置（tachie_placed_loc）から動いたものを、ずらす量に書き戻す（キャラ名もついてくる）
+from bl_ext.user_default.blender_tachie.properties import name_height  # noqa: E402
+
+mname = role(msts, NAME)
+assert not motion_mod.moved_texts(scene)
+msub.location = (0.45, metan.subtitle_y + 0.1)
+assert motion_mod.moved_texts(scene) == [msub]
+ops._apply_faces_later()  # 自動の反映（ドラッグが終わったあと）
+assert abs(msub["tachie_sub_x"] + 0.05) < 1e-5 and abs(msub["tachie_sub_y"] - 0.1) < 1e-5
+assert abs(mname.location[0] - 0.45) < 1e-5 and abs(mname["tachie_sub_y"] - 0.1) < 1e-5
+assert not motion_mod.moved_texts(scene)
+# キャラ名を動かしたら、キャラ名の基準の位置からの差を字幕のずらす量にする
+base = name_height(metan, mname.get("tachie_placed_text", mname["tachie_text"]))
+mname.location = (0.5, base + 0.05)
+ops._apply_faces_later()
+assert abs(msub["tachie_sub_x"]) < 1e-5 and abs(msub["tachie_sub_y"] - 0.05) < 1e-5
+assert abs(msub.location[1] - (metan.subtitle_y + 0.05)) < 1e-5 and abs(msub.location[0] - 0.5) < 1e-5
+# 解像度を変えてキャラ名の基準の位置がずれただけ（置き直していない）のものは、動かしたとみなさない
+res = scene.render.resolution_y
+scene.render.resolution_y = res // 2
+assert not motion_mod.moved_texts(scene) and motion_mod.sync_text_offsets(scene) == 0
+scene.render.resolution_y = res
+# undo で「動かした位置 + 前のずらす量」の段に戻っても、置いた位置と比べるので動かした方を使う
+placed = list(msub["tachie_placed_loc"])
+msub["tachie_sub_y"] = 0.2
+msub.location = (0.5, metan.subtitle_y + 0.05)
+assert motion_mod.sync_text_offsets(scene) == 0  # 置いた位置のまま（ずらす量とずれていても動かしていない）
+msub.location = (0.5, metan.subtitle_y + 0.12)
+msub["tachie_placed_loc"] = placed
+assert motion_mod.sync_text_offsets(scene) == 1 and abs(msub["tachie_sub_y"] - 0.12) < 1e-5
+ops.refresh_motion_now(scene)
 cue_texts = [c.text for c in ops.subtitle_cues(scene)]
 assert any("同時に。" in t for t in cue_texts) and any("同時に喋りますわね" in t for t in cue_texts)
 assert any(a <= t0 and b >= role(msts, SOUND).right_handle for a, b in ducking.voice_spans(sed, 0))

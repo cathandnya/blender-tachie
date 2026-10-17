@@ -13,7 +13,7 @@ from pathlib import Path
 
 import bpy
 
-from .properties import apply_placement, place_text, text_offset
+from .properties import apply_placement, name_height, place_text, text_offset
 
 # 声が出ているとみなす音量（lipsync.mouth の無音のしきい値と同じ）
 VOICED_RMS = 0.02
@@ -200,6 +200,54 @@ def refresh_motion(scene, lines_dir: Path) -> int:
                 _edge(last, ch, ch.exit_effect, begin, last.right_handle - 1, False, width)
                 count += 1
     return count
+
+
+def _movable_texts(sed):
+    """プレビューで動かせる字幕・キャラ名（tachie_sub_x を持つセリフのもの）。"""
+    subtitles = {s["tachie_id"] for s in sed.strips
+                 if s.type == "TEXT" and s.get("tachie_id") and s.get("tachie_role") != "name" and "tachie_sub_x" in s}
+    return [s for s in sed.strips if s.type == "TEXT" and s.get("tachie_id") in subtitles]
+
+
+def moved_texts(scene) -> list:
+    """プレビューで動かした字幕・キャラ名（`place_text` が置いた位置 `tachie_placed_loc` から動いたもの）。
+    置いた位置を持たない古いものは動かしていないとみなす。"""
+    sed = scene.sequence_editor
+    if sed is None:
+        return []
+    return [s for s in _movable_texts(sed) if "tachie_placed_loc" in s
+            and any(abs(a - b) > 1e-5 for a, b in zip(s.location, s["tachie_placed_loc"]))]
+
+
+def sync_text_offsets(scene) -> int:
+    """プレビューで動かした字幕・キャラ名の位置を、セリフごとのずらす量（字幕ストリップの tachie_sub_x /
+    tachie_sub_y）に書き戻し、そのセリフの字幕とキャラ名を置き直す。書き戻したセリフの数を返す。
+
+    キャラ名はキャラ名の基準の位置からの差にする。字幕とキャラ名を一緒に動かしたら字幕を使う。
+    動かしたかは置いた位置と比べる（解像度を変えてキャラ名の基準の位置がずれただけのものを、動かしたと
+    取り違えないため。undo で動かしたあとの段に戻ったときも、その段の置いた位置と比べられる）。
+    """
+    sed = scene.sequence_editor
+    characters = {c.name: c for c in scene.tachie.characters}
+    moved = [s for s in moved_texts(scene) if s.get("tachie_character") in characters]
+    if not moved:
+        return 0
+    offsets: dict[str, tuple[float, float]] = {}
+    for s in sorted(moved, key=lambda s: s.get("tachie_role") == "name"):  # 字幕を先に
+        if s["tachie_id"] in offsets:
+            continue
+        ch = characters[s["tachie_character"]]
+        if s.get("tachie_role") == "name":
+            base = name_height(ch, s.get("tachie_placed_text", s.get("tachie_text", "")))
+        else:
+            base = ch.subtitle_y
+        offset = (s.location[0] - 0.5, s.location[1] - base)
+        offsets[s["tachie_id"]] = tuple(round(max(-1.0, min(1.0, v)), 5) for v in offset)
+    for t in _movable_texts(sed):
+        if t["tachie_id"] in offsets and t.get("tachie_character") in characters:
+            t["tachie_sub_x"], t["tachie_sub_y"] = offsets[t["tachie_id"]]
+            place_text(t, characters[t["tachie_character"]], t.get("tachie_placed_text", t.get("tachie_text", "")))
+    return len(offsets)
 
 
 def motion_signature(scene) -> str:
