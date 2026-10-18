@@ -1,6 +1,6 @@
 import bpy
 
-from .operators import (line_image, line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
+from .operators import (line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
                         prefs, selected_targets, seq_scene)
 from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS
 
@@ -82,9 +82,6 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         row.operator("tachie.add_face", text="表情を置く", icon="SHADERFX")
         row.prop(s, "face_seconds")
         layout.prop(s, "advance")
-        row = layout.row(align=True)
-        row.prop(s, "auto_idle")
-        row.operator("tachie.refresh_idle", text="", icon="FILE_REFRESH")
         if not bpy.data.filepath and not context.preferences.addons[__package__].preferences.output_dir:
             layout.label(text=f"未保存のため {output_dir(context)} に書き出します", icon="INFO")
 
@@ -118,7 +115,7 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             layout.label(text="重なる範囲だけこの表情になります", icon="INFO")
             layout.operator("tachie.apply_faces", icon="FILE_REFRESH")
         elif strip is not None and strip.get("tachie_still"):
-            layout.label(text=f"{strip['tachie_still']}の立ち絵（セリフなし）", icon="USER")
+            layout.label(text=f"{strip['tachie_still']}の立ち絵", icon="USER")
             row = layout.row(align=True)
             row.label(text="表情")
             row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "STILL"
@@ -157,11 +154,12 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row = layout.row(align=True)
             row.label(text="形")
             row.operator_menu_enum("tachie.pick_line_layout", "line_layout",
-                                   text=next(n for k, n, _ in LINE_LAYOUTS if k == shape))
-            if shape == "FULL":
+                                   text=next(n for k, n, *_ in LINE_LAYOUTS if k == shape))
+            if owner is not None and owner.folder:  # 重なる立ち絵がセリフの間だけこの表情になる
                 row = layout.row(align=True)
                 row.label(text="表情")
-                row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "LINE"
+                row.operator("tachie.pick_expression",
+                             text=strip.get("tachie_expression") or "（立ち絵のまま）").target = "LINE"
             col = layout.column(align=True)
             if sound is not None and "tachie_voice_speed_scale" in sound:
                 for prop, (_, label, *_) in VOICE_PROPS.items():
@@ -176,7 +174,6 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                 col.operator("tachie.reset_line_voice", icon="LOOP_BACK")
             else:
                 col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
-            draw_pose(layout, line_image(strips))
             draw_text_pose(layout, line_subtitle(strips))
             row = layout.row()
             row.scale_y = 1.2
@@ -241,7 +238,6 @@ class TACHIE_PT_character(_Panel, bpy.types.Panel):
         row.operator("tachie.pick_speaker", text=ch.speaker_name or "選ぶ", icon="VIEWZOOM")
         if ch.folder:
             layout.prop(ch, "mouth")
-            layout.prop(ch, "show_idle")
 
 
 class _WithTachie:

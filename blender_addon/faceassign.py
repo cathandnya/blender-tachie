@@ -70,7 +70,6 @@ def build_jobs(context, ids: list[str]) -> Plan:
         ch = next((c for c in settings.characters if c.name == name), None)
         reason = ("キャラクターがありません" if ch is None
                   else "立ち絵の無いキャラクターです" if not ch.folder
-                  else "立ち絵の無いセリフです" if ops.line_layout_of(strips) != "FULL"
                   else "表情プリセットがありません" if not len(ch.expressions)
                   else "")
         if reason:
@@ -165,7 +164,7 @@ def apply_outcomes(context, plan: Plan, results: list, target: str) -> tuple[int
                         same = strips[0].get("tachie_expression", "") == preset
                         if not same:
                             ops.set_line_expression(context, cid, preset)
-                            strips = ops.line_strips(sed, cid)  # 作り直したら別のストリップになる
+                            strips = ops.line_strips(sed, cid)
                             if ops.face_segments(sed, ops.find_character(settings, job.character),
                                                  min(s.left_handle for s in strips), ops.line_end(strips)):
                                 reason += "（表情ストリップが重なる区間はそちらが優先）"

@@ -24,7 +24,7 @@
     bounce = 0.02                   # 喋っている間に跳ねる高さ（画面の高さに対する割合）、sway は揺れる角度（度）
     period = 0.3                    # 跳ねる・揺れる 1 往復の秒数
     enter = "FADE"                  # 登場・退場（exit）の効果 NONE / FADE / SLIDE、effect_seconds はその長さ
-    lines = "SUBTITLE"             # セリフの形の既定 FULL（立ち絵あり）/ SUBTITLE（音声と字幕）/ AUDIO（音声だけ）
+    lines = "SUBTITLE"             # セリフの形の既定 SUBTITLE（音声と字幕）/ AUDIO（音声だけ）。立ち絵は別に置く
 
     ["ずんだもん".audio]               # 省略可（fade_in / fade_out / after は秒。volume / pan は Blender アドオンのみ）
     volume = 1.0

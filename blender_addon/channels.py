@@ -16,9 +16,9 @@ DEFAULT_NAME = "Channel {}"
 
 
 def overlaps(sed, channel: int, start: int, end: int, ignore=()) -> bool:
-    """チャンネルの [start, end) に他のストリップがあるか（待機ストリップは作り直すので邪魔にならない）。"""
+    """チャンネルの [start, end) に他のストリップがあるか（前の版の待機ストリップも、もう作り直さないので数える）。"""
     return any(s.channel == channel and s.left_handle < end and start < s.right_handle and s not in ignore
-               and not s.get("tachie_idle") for s in sed.strips)
+               for s in sed.strips)
 
 
 def lane_key(strip) -> tuple[str, str | None] | None:

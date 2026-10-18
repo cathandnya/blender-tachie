@@ -52,21 +52,48 @@ def lines():
     return dict(sorted(out.items(), key=lambda kv: kv[1][0]))
 
 
-def idle_spans():
-    return sorted((st["tachie_idle"], st.channel, st.left_handle, st.right_handle)
-                  for st in sed.strips if st.get("tachie_idle"))
+def still(name):
+    """キャラ `name` の立ち絵（1 本だけ置いている前提）。"""
+    found = [st for st in sed.strips if st.get("tachie_still") == name]
+    assert len(found) == 1, (name, [st.name for st in found])
+    return found[0]
 
 
-def check_idle():
-    """各キャラの立ち絵チャンネルが、シーン開始から最後のセリフの終わりまで隙間なく埋まっている。"""
-    end = max(r for _, r, _ in lines().values())
-    for ch in s.characters:
-        spans = sorted((st.left_handle, st.right_handle) for st in sed.strips if st.channel == ch.channel)
-        cursor = scene.frame_start
-        for l, r in spans:
-            assert l == cursor, (ch.name, spans)
-            cursor = r
-        assert cursor == end, (ch.name, cursor, end)
+def check_stills():
+    """立ち絵は今の長さの連番で、重なるセリフ・表情ストリップに合わせて作り直されている。"""
+    for st in sed.strips:
+        if st.get("tachie_still"):
+            ch = next(c for c in s.characters if c.name == st["tachie_still"])
+            assert len(st.elements) == st.right_handle - st.left_handle, st.name
+            assert st["tachie_faced"] == ops.still_key(bpy.context, sed, ch, st), st.name
+
+
+def frame_inode(strip, frame):
+    """立ち絵の `frame`（シーンのフレーム）の画像の inode。"""
+    i = frame - int(strip.content_start)
+    return os.stat(Path(bpy.path.abspath(strip.directory)) / strip.elements[i].filename).st_ino
+
+
+def cache_file(strip, frame):
+    """立ち絵の `frame` の画像の、合成キャッシュの中の元（表情のフォルダ, e<目>_<口>.png）。"""
+    ino = frame_inode(strip, frame)
+    for p in (Path(prefs.output_dir) / "cache").glob("*/*.png"):
+        if p.stat().st_ino == ino:
+            return p.parent.name, p.name
+    raise AssertionError(f"{strip.name} の {frame} フレームの画像がキャッシュにありません")
+
+
+def mouth(strip, frame):
+    """立ち絵の `frame` の口（l0 = 閉じ、l<n> = 音量の段階、v<母音> = あいうえお）。"""
+    return cache_file(strip, frame)[1].split("_", 1)[1].removesuffix(".png")
+
+
+def expression_dir(strip, frame):
+    return cache_file(strip, frame)[0]
+
+
+def cache_dir(ch, preset):
+    return ops.character_cache(bpy.context, ch, preset).directory.name
 
 
 def dump(title):
@@ -92,50 +119,60 @@ assert bg.channel == 1  # レーンより下（背景など）は動かさない
 metan.flip_x = False
 zunda.position_x = 0.28
 
+# 立ち絵は別に置く（セリフは音声と字幕だけ）。立ち絵は重なるそのキャラのセリフの間だけ口パクする
+from bl_ext.user_default.blender_tachie import operators as ops  # noqa: E402
+
+scene.frame_current = 1
+s.still_seconds = 30.0
+for index in (0, 1):
+    s.active_character, s.expression = index, ""
+    scene.frame_current = 1
+    run(bpy.ops.tachie.add_still)
+assert still("ずんだもん").channel == zunda.channel and still("四国めたん").channel == metan.channel
+assert len(still("ずんだもん").elements) == 900
+
 scene.frame_current = 1
 for index, text in [(0, "こんにちは、ずんだもんなのだ。"), (1, "四国めたんよ。"), (0, "今日は Blender で動画を作るのだ。")]:
     s.active_character, s.text = index, text
     run(bpy.ops.tachie.add_line)
 dump("追加")
-print("待機:", idle_spans())
-check_idle()
+check_stills()
 before = list(lines().values())
-assert len(before) == 3 and all(len(v[2]) == 3 for v in before)
+assert len(before) == 3 and all(len(v[2]) == 2 for v in before)  # 音声と字幕
+assert not any(x.type == "IMAGE" for _, _, sts in before for x in sts), "セリフに立ち絵がある"
 assert before[0][1] == before[1][0] and before[1][1] == before[2][0], "隙間なく並んでいない"
+# ずんだもんの立ち絵はずんだもんのセリフの間だけ口が動き、めたんのセリフの間は閉じている
+(zl, zr, _), (ml, mr, _) = before[0], before[1]
+assert len({mouth(still("ずんだもん"), f) for f in range(zl, zr)}) > 1
+assert {mouth(still("ずんだもん"), f) for f in range(ml, mr)} == {"l0"}
+assert len({mouth(still("四国めたん"), f) for f in range(ml, mr)}) > 1
+assert {mouth(still("四国めたん"), f) for f in range(zl, zr)} == {"l0"}
+assert mouth(still("ずんだもん"), 900) == "l0"  # セリフの後ろも閉じた口
 
-# 2 本目を長くして再生成 → 3 本目が後ろにずれる
+# 2 本目を長くして再生成 → 3 本目が後ろにずれる（立ち絵は動かず、口パクの区間が付いてくる）
 second_id = list(lines())[1]
 target = next(x for x in lines()[second_id][2] if x.type == "TEXT")
 target["tachie_text"] = "四国めたんよ。「動く立ち絵」の素材をそのまま読み込めるのね。"
 sed.active_strip = target
 run(bpy.ops.tachie.regenerate)
 dump("2 本目を長くして再生成")
-print("待機:", idle_spans())
-check_idle()
+check_stills()
 after = list(lines().values())
 delta = after[1][1] - before[1][1]
 assert delta > 0 and after[2][0] == before[2][0] + delta, (delta, after[2][0], before[2][0])
 assert after[1][0] == before[1][0]
+assert still("ずんだもん").left_handle == 1 and len(still("ずんだもん").elements) == 900
 
-# 表情を変えて全再生成（位置と長さは変わらない）
+# 表情を変えて全再生成（位置と長さは変わらない。立ち絵も作り直す）
 zunda.part_eye, zunda.part_eyebrow = "ジト目", "困り眉1"
 spans = [(l, r) for l, r, _ in lines().values()]
 run(bpy.ops.tachie.regenerate_all, character_only=True)
 dump("ずんだもんの表情を変えて再生成")
-check_idle()
-
-# 待機を切ったキャラは待機ストリップが無くなる
-s.characters[1].show_idle = False
-run(bpy.ops.tachie.refresh_idle)
-assert {name for name, *_ in idle_spans()} == {"ずんだもん"}, idle_spans()
-s.characters[1].show_idle = True
-run(bpy.ops.tachie.refresh_idle)
-check_idle()
+check_stills()
 assert [(l, r) for l, r, _ in lines().values()] == spans
+assert expression_dir(still("ずんだもん"), 1) == ops.character_cache(bpy.context, zunda, "").directory.name
 
 # セリフごとの声: 置いたときのキャラの既定値が音声ストリップにコピーされ、あとで既定値を変えても変わらない
-from bl_ext.user_default.blender_tachie import operators as ops  # noqa: E402
-
 zunda.speed_scale = 1.1
 first_id = next(iter(lines()))
 sound = lambda cid: next(x for x in ops.line_strips(sed, cid) if x.type == "SOUND")
@@ -151,19 +188,23 @@ l1, r1, _ = lines()[first_id]
 assert l1 == l0 and r1 < r0, (l0, r0, l1, r1)
 assert list(lines().values())[1][0] == second_start - (r0 - r1)
 assert abs(sound(first_id)["tachie_voice_speed_scale"] - 1.5) < 1e-6
+check_stills()
 # スタイルを変える
 ops._style_items = [("1", "ずんだもん（あまあま）", "", 1)]
 run(bpy.ops.tachie.pick_speaker, style="1", target="LINE")
 first_id = sed.active_strip["tachie_id"]
 assert all(x["tachie_speaker"] == 1 for x in ops.line_strips(sed, first_id))
 assert abs(sound(first_id)["tachie_voice_speed_scale"] - 1.5) < 1e-6
-# キャラクターを変える → そのキャラのチャンネル・話者・声になる
+# キャラクターを変える → そのキャラのチャンネル・話者・声になり、そのキャラの立ち絵が口パクする
 run(bpy.ops.tachie.pick_line_character, character="四国めたん")
 first_id = sed.active_strip["tachie_id"]
-image = next(x for x in ops.line_strips(sed, first_id) if x.type == "IMAGE")
-assert image.channel == metan.channel and image["tachie_character"] == "四国めたん"
+fl, fr, _ = lines()[first_id]
+assert sound(first_id).channel == lane("audio", "四国めたん") and sound(first_id)["tachie_character"] == "四国めたん"
 assert sound(first_id)["tachie_speaker"] == metan.speaker
 assert abs(sound(first_id)["tachie_voice_speed_scale"] - 1.0) < 1e-6
+check_stills()
+assert len({mouth(still("四国めたん"), f) for f in range(fl, fr)}) > 1
+assert {mouth(still("ずんだもん"), f) for f in range(fl, fr)} == {"l0"}
 run(bpy.ops.tachie.pick_line_character, character="ずんだもん")
 assert abs(sound(sed.active_strip["tachie_id"])["tachie_voice_speed_scale"] - 1.1) < 1e-6
 # キャラクターの声に戻す
@@ -281,46 +322,35 @@ snd["tachie_accent_key"] = __import__("json").dumps([key[0], "ア'", key[2]], en
 sed.active_strip = snd
 run(bpy.ops.tachie.regenerate)
 assert not sound(sed.active_strip["tachie_id"]).get("tachie_accent")
-check_idle()
+check_stills()
 # 音量・パン（すぐ反映）とフェード・余韻（再生成で反映）
 first_id = sed.active_strip["tachie_id"]
 snd = sound(first_id)
 assert snd.volume == 1.0 and snd["tachie_after"] == 0.0
 voice_end = snd.right_handle
-image_end = next(x for x in ops.line_strips(sed, first_id) if x.type == "IMAGE").right_handle
+subtitle_end = ops.line_subtitle(ops.line_strips(sed, first_id)).right_handle
 snd.volume, snd.pan = 0.5, -0.5
 snd["tachie_after"], snd["tachie_fade_out"] = 0.5, 0.2
 sed.active_strip = snd
 run(bpy.ops.tachie.regenerate)
 first_id = sed.active_strip["tachie_id"]
 snd = sound(first_id)
-image = next(x for x in ops.line_strips(sed, first_id) if x.type == "IMAGE")
 assert (snd.volume, snd.pan) == (0.5, -0.5) and snd.right_handle == voice_end
-assert image.right_handle == image_end + 15, (image.right_handle, image_end)  # 0.5 秒 = 15 フレーム
+subtitle = ops.line_subtitle(ops.line_strips(sed, first_id))
+assert subtitle.right_handle == subtitle_end + 15, (subtitle.right_handle, subtitle_end)  # 0.5 秒 = 15 フレーム
+assert ops.line_end(ops.line_strips(sed, first_id)) == subtitle.right_handle
+# 余韻の間は立ち絵の口を閉じる
+assert {mouth(still("ずんだもん"), f) for f in range(voice_end, subtitle.right_handle)} == {"l0"}
 from bl_ext.user_default.blender_tachie.tachie_studio.lipsync import read_wav  # noqa: E402
 
 assert read_wav(bpy.path.abspath(snd.sound.filepath)).samples[-1] == 0
-check_idle()
+check_stills()
 zunda.audio_after = 0.3
 
 # 表情ストリップ: 重なる範囲だけ立ち絵の表情が変わり、音声はそのまま
-
-def image_of(cid):
-    return next(x for x in ops.line_strips(sed, cid) if x.type == "IMAGE")
-
-
-def frame_inode(strip, i):
-    return os.stat(Path(bpy.path.abspath(strip.directory)) / strip.elements[i].filename).st_ino
-
-
-def cache_inodes(ch, preset):
-    return {p.stat().st_ino for p in ops.character_cache(bpy.context, ch, preset).directory.iterdir()}
-
-
 zunda_id = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
-img = image_of(zunda_id)
-orig_dir, wav_before = img.directory, sound(zunda_id).sound.filepath
-l, r = img.left_handle, img.right_handle
+wav_before = sound(zunda_id).sound.filepath
+l, r = lines()[zunda_id][0], ops.line_end(ops.line_strips(sed, zunda_id))
 mid = (l + r) // 2
 s.active_character, s.expression = 0, "ドヤ"
 scene.frame_current = mid
@@ -328,17 +358,17 @@ run(bpy.ops.tachie.add_face)
 face = sed.active_strip
 assert face["tachie_face"] == "ずんだもん" and face.mute and (face.left_handle, face.right_handle) == (mid, r)
 assert face.channel == lane("face", "ずんだもん") and sed.channels[face.channel].name == "ずんだもん 表情"
-img = image_of(zunda_id)
-assert img.directory != orig_dir and img["tachie_faced"]
-doya, base = cache_inodes(zunda, "ドヤ"), cache_inodes(zunda, "")
-assert frame_inode(img, mid - l) in doya and frame_inode(img, r - l - 1) in doya
-assert frame_inode(img, 0) in base and frame_inode(img, mid - l - 1) in base
+doya, base = cache_dir(zunda, "ドヤ"), cache_dir(zunda, "")
+zs = still("ずんだもん")
+assert expression_dir(zs, mid) == doya and expression_dir(zs, r - 1) == doya
+assert expression_dir(zs, l) == base and expression_dir(zs, mid - 1) == base and expression_dir(zs, r) == base
+assert len({mouth(zs, f) for f in range(mid, r)}) > 1  # 表情ストリップの間も口パクする
 assert sound(zunda_id).sound.filepath == wav_before
 # 動かして反映（画面ではハンドラが自動でやる）
 face.content_start = l
 run(bpy.ops.tachie.apply_faces)
-img = image_of(zunda_id)
-assert frame_inode(img, 0) in doya and frame_inode(img, r - l - 1) not in doya
+zs = still("ずんだもん")
+assert expression_dir(zs, l) == doya and expression_dir(zs, r - 1) != doya
 # チャンネルが上の表情ストリップが優先
 s.expression = "困り"
 scene.frame_current = l
@@ -347,46 +377,75 @@ face2 = sed.active_strip
 face2.duration = 3
 run(bpy.ops.tachie.apply_faces)
 assert face2.channel > face.channel  # 重なる表情は上（あふれ）に置き、後から置いたほうが優先
-img = image_of(zunda_id)
-komari = cache_inodes(zunda, "困り")
-assert frame_inode(img, 0) in komari and frame_inode(img, 3) in doya
+komari = cache_dir(zunda, "困り")
+zs = still("ずんだもん")
+assert expression_dir(zs, l) == komari and expression_dir(zs, l + 3) == doya
 # 表情ストリップの表情を変える
 sed.active_strip = face2
 ops._expression_items = [("ドヤ", "ドヤ", "")]
 run(bpy.ops.tachie.pick_expression, target="FACE", expression="ドヤ")
-assert face2.name.startswith("表情 ずんだもん: ドヤ") and frame_inode(image_of(zunda_id), 0) in doya
+assert face2.name.startswith("表情 ずんだもん: ドヤ") and expression_dir(still("ずんだもん"), l) == doya
 # 再生成しても表情ストリップに従う
 sed.active_strip = sound(zunda_id)
 run(bpy.ops.tachie.regenerate)
 zunda_id = sed.active_strip["tachie_id"]
-assert frame_inode(image_of(zunda_id), 0) in doya
-# 待機も表情ストリップの境目で分かれる
+assert expression_dir(still("ずんだもん"), l) == doya
+# 喋っていない間（めたんのセリフ）も表情ストリップの表情になる
 metan_id = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "四国めたん")
 ml, mr, _ = lines()[metan_id]
-idle_before = [x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]
 s.expression = "困り"
 scene.frame_current = ml + 2
 run(bpy.ops.tachie.add_face)
 face3 = sed.active_strip
 face3.duration = 5
 run(bpy.ops.tachie.apply_faces)
-idle_after = [x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]
-assert len(idle_after) == len(idle_before) + 2, (len(idle_before), len(idle_after))
-covered = next(x for x in idle_after if x.left_handle == ml + 2)
-assert covered.right_handle == ml + 7 and frame_inode(covered, 0) in komari
-check_idle()
-# キャラに無い表情の表情ストリップは無視する（待機の作り直しが失敗しない）
+zs = still("ずんだもん")
+assert [expression_dir(zs, f) == komari for f in range(ml + 1, ml + 8)] == [False] + [True] * 5 + [False]
+assert {mouth(zs, f) for f in range(ml + 2, ml + 7)} == {"l0"}
+check_stills()
+# キャラに無い表情の表情ストリップは無視する
 face3["tachie_expression"] = "無い表情"
 run(bpy.ops.tachie.apply_faces)
-assert len([x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]) == len(idle_before)
-check_idle()
+assert expression_dir(still("ずんだもん"), ml + 2) == base
+check_stills()
 # 表情ストリップを消すと元に戻る
 for f in [face, face2, face3]:
     sed.strips.remove(f)
 run(bpy.ops.tachie.apply_faces)
-img = image_of(zunda_id)
-assert not img["tachie_faced"] and frame_inode(img, 0) in base
-assert len([x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"]) == len(idle_before)
+assert expression_dir(still("ずんだもん"), l) == base and expression_dir(still("ずんだもん"), mid) == base
+# セリフの表情は、そのセリフの間だけ立ち絵の表情になる（音声は合成し直さない）
+sed.active_strip = sound(zunda_id)
+wav_before = sound(zunda_id).sound.filepath
+ops._expression_items = [("困り", "困り", "")]
+run(bpy.ops.tachie.pick_expression, target="LINE", expression="困り")
+assert sed.active_strip["tachie_id"] == zunda_id and sound(zunda_id).sound.filepath == wav_before
+zs = still("ずんだもん")
+assert expression_dir(zs, l) == komari and expression_dir(zs, r - 1) == komari
+assert expression_dir(zs, l - 1) == base and expression_dir(zs, r) == base
+assert len({mouth(zs, f) for f in range(l, r)}) > 1
+# 表情ストリップはセリフの表情より優先
+s.expression = "ドヤ"
+scene.frame_current = l
+run(bpy.ops.tachie.add_face)
+face = sed.active_strip
+assert (face.left_handle, face.right_handle) == (l, r)  # 再生位置のセリフの終わりまで
+assert expression_dir(still("ずんだもん"), l) == doya
+sed.strips.remove(face)
+ops._expression_items = [(ops.NONE, "（立ち絵のまま）", "")]
+sed.active_strip = sound(zunda_id)
+run(bpy.ops.tachie.pick_expression, target="LINE", expression=ops.NONE)
+run(bpy.ops.tachie.apply_faces)
+assert expression_dir(still("ずんだもん"), l) == base
+# 立ち絵の表情を変えると、セリフの表情が "" のセリフの間もその表情
+sed.active_strip = still("ずんだもん")
+ops._expression_items = [("困り", "困り", "")]
+run(bpy.ops.tachie.pick_expression, target="STILL", expression="困り")
+zs = still("ずんだもん")
+assert zs["tachie_expression"] == "困り" and expression_dir(zs, l) == komari and expression_dir(zs, 1) == komari
+assert len({mouth(zs, f) for f in range(l, r)}) > 1
+sed.active_strip = zs
+ops._expression_items = [(ops.NONE, "（基本）", "")]
+run(bpy.ops.tachie.pick_expression, target="STILL", expression=ops.NONE)
 s.expression = ""
 
 # まとめて変える（ダイアログは画面が要るので execute だけ）
@@ -404,14 +463,15 @@ scene.frame_current = lines()[zunda_ids[0]][0]
 s.active_character, s.expression = 0, ""
 run(bpy.ops.tachie.add_face)
 bface = sed.active_strip
-select_only([image_of(zunda_ids[0]), sound(zunda_ids[1]), bface])
+select_only([sound(zunda_ids[0]), ops.line_subtitle(ops.line_strips(sed, zunda_ids[1])), bface])
 assert ops.selected_targets(sed)[0] == zunda_ids and ops.selected_targets(sed)[2] == [bface]
 run(bpy.ops.tachie.batch_edit, use_expression=True, expression="ドヤ")
 new_ids = [cid for cid in lines() if lines()[cid][2][0]["tachie_character"] == "ずんだもん"][:2]
+assert new_ids == zunda_ids, "表情だけで作り直された"
 assert all(lines()[cid][2][0]["tachie_expression"] == "ドヤ" for cid in new_ids)
 assert bface["tachie_expression"] == "ドヤ"
 # 音量だけ: 作り直さない
-select_only([image_of(cid) for cid in new_ids])
+select_only([sound(cid) for cid in new_ids])
 run(bpy.ops.tachie.batch_edit, use_audio_volume=True, audio_volume=0.4)
 assert [cid for cid in lines() if cid in new_ids] == new_ids, "音量だけで作り直された"
 assert all(abs(sound(cid).volume - 0.4) < 1e-6 for cid in new_ids)
@@ -423,11 +483,12 @@ for old_id, cid in zip(new_ids, after_ids):
     assert lines()[cid][1] - lines()[cid][0] < before[old_id][0]
     assert lines()[cid][2][0]["tachie_text"] == before[old_id][1]
     assert abs(sound(cid)["tachie_voice_speed_scale"] - 1.6) < 1e-6 and abs(sound(cid).volume - 0.4) < 1e-6
+check_stills()
 # 何も変えなければ何もしない
 assert bpy.ops.tachie.batch_edit() == {"CANCELLED"}
 # 別キャラが混ざると、両方が持っている表情だけ選べる
 metan_ids = [cid for cid in lines() if lines()[cid][2][0]["tachie_character"] == "四国めたん"][:1]
-select_only([image_of(after_ids[0]), image_of(metan_ids[0])])
+select_only([sound(after_ids[0]), sound(metan_ids[0])])
 names = [i[0] for i in ops._batch_expressions(type("P", (), {"use_character": False, "character": ""})(), bpy.context)]
 common = {e.name for e in zunda.expressions} & {e.name for e in metan.expressions}
 assert names[0] == ops.NONE and set(names[1:]) == common and "ドヤ" not in names, names
@@ -437,10 +498,12 @@ zunda_items = ops._batch_expressions(type("P", (), {"use_character": True, "char
 zunda_numbers = {i[0]: i[3] for i in zunda_items}
 assert all(zunda_numbers[i[0]] == i[3] for i in mixed_items) and len(set(zunda_numbers.values())) == len(zunda_items)
 sed.strips.remove(bface)
+for cid in after_ids:
+    ops.set_line_expression(bpy.context, cid, "")
 run(bpy.ops.tachie.apply_faces)
-check_idle()
+check_stills()
 
-# 立ち絵の動き: 喋っている間に跳ねる・揺れる、登場（フェード）・退場（スライド）、セリフごとの大きさ
+# 立ち絵の動き: 喋っている間に跳ねる・揺れる、登場（フェード）・退場（スライド）、立ち絵ごとの大きさ
 from bl_ext.user_default.blender_tachie import motion as motion_mod  # noqa: E402
 
 
@@ -453,46 +516,70 @@ def keyed(strip, attr):
 
 zunda.talk_bounce, zunda.talk_sway = 0.02, 3.0  # 変えるとすぐ作り直す
 zid = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
-zimg = image_of(zid)
+zl, zr = lines()[zid][0], ops.line_end(ops.line_strips(sed, zid))
+zimg = still("ずんだもん")
 ys = keyed(zimg, "transform.offset_y")
 assert len(ys) > 4 and max(v for _, v in ys) > 0, ys
+assert any(zl <= f < zr for f, v in ys if v > 0), (zl, zr, ys)  # ずんだもんのセリフの間
+metan_spans = [(l_, ops.line_end(sts)) for _, (l_, _, sts) in lines().items() if sts[0]["tachie_character"] == "四国めたん"]
+assert not any(a_ <= f < b_ and v > 0 for f, v in ys for a_, b_ in metan_spans)  # めたんのセリフの間は跳ねない
 assert keyed(zimg, "transform.rotation")
 peak = next(f for f, v in ys if v > 0)
 scene.frame_set(int(peak))
 assert zimg.transform.offset_y > 0
 zunda.enter_effect, zunda.exit_effect = "FADE", "SLIDE"
-zstrips = sorted([x for x in sed.strips if motion_mod.owner(x) == "ずんだもん" and x.channel == zunda.channel],
-                 key=lambda x: x.left_handle)
-assert [v for _, v in keyed(zstrips[0], "blend_alpha")][:2] == [0.0, 1.0]
-assert len(keyed(zstrips[-1], "transform.offset_x")) == 2
-# セリフの立ち絵を手で別のチャンネルに動かしても、待機は重ならず（キャラが二重にならない）、動きも付く
-moved, home = zimg, zimg.channel
+assert [v for _, v in keyed(zimg, "blend_alpha")][:2] == [0.0, 1.0]
+assert len(keyed(zimg, "transform.offset_x")) == 2
+# セリフを動かすと、動きも口パクもついてくる（画面ではハンドラが自動でやる）
+homes = {x.name: x.channel for x in ops.line_strips(sed, zid)}
+for i, x in enumerate(ops.line_strips(sed, zid)):
+    x.channel = 70 + i  # 空いているチャンネルへ逃がしてから動かす
+for x in ops.line_strips(sed, zid):
+    x.content_start += 400
+ops.refresh_faces(bpy.context)
+zimg = still("ずんだもん")
+assert any(zl + 400 <= f < zr + 400 for f, v in keyed(zimg, "transform.offset_y") if v > 0)
+assert len({mouth(zimg, f) for f in range(zl + 400, zr + 400)}) > 1
+assert {mouth(zimg, f) for f in range(zl, zr)} == {"l0"}
+for x in ops.line_strips(sed, zid):
+    x.content_start -= 400
+for x in ops.line_strips(sed, zid):
+    x.channel = homes[x.name]
+assert all(x.channel == homes[x.name] for x in ops.line_strips(sed, zid))
+ops.refresh_faces(bpy.context)
+check_stills()
+# 立ち絵を手で別のチャンネルに動かしても、動きは付く
+moved, home = still("ずんだもん"), still("ずんだもん").channel
 moved.channel = 60
 assert moved.channel == 60
-ops.refresh_idle(bpy.context)
-assert not [x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"
-            and x.left_handle < moved.right_handle and moved.left_handle < x.right_handle], "待機が重なった"
+ops.refresh_motion_now(scene)
 assert keyed(moved, "transform.offset_y"), "動かした立ち絵に動きが付かない"
 moved.channel = home
 assert moved.channel == home
-ops.refresh_idle(bpy.context)
-check_idle()
-# セリフごとの大きさ（足元が中心）。再生成しても残る
+# 立ち絵を縮めて伸ばすと作り直す（今の長さの連番になる）
+moved.duration = 599
+run(bpy.ops.tachie.apply_faces)
+assert len(still("ずんだもん").elements) == 599
+still("ずんだもん").duration = 900
+run(bpy.ops.tachie.apply_faces)
+assert len(still("ずんだもん").elements) == 900
+check_stills()
+# 立ち絵ごとの大きさ（足元が中心）。セリフを再生成して立ち絵を作り直しても残る
+zimg = still("ずんだもん")
 zimg["tachie_scale"] = 1.5
 ops.refresh_motion_now(scene)
 assert abs(zimg.transform.scale_x - 1.5) < 1e-6 and tuple(zimg.transform.origin) == (0.5, 0.0)
 sed.active_strip = sound(zid)
 run(bpy.ops.tachie.regenerate)
 zid = sed.active_strip["tachie_id"]
-assert abs(image_of(zid)["tachie_scale"] - 1.5) < 1e-6 and keyed(image_of(zid), "transform.offset_y")
+assert abs(still("ずんだもん")["tachie_scale"] - 1.5) < 1e-6 and keyed(still("ずんだもん"), "transform.offset_y")
 # 動きを切るとキーフレームは消える
 zunda.talk_bounce = zunda.talk_sway = 0.0
 zunda.enter_effect = zunda.exit_effect = "NONE"
-image_of(zid)["tachie_scale"] = 1.0
+still("ずんだもん")["tachie_scale"] = 1.0
 ops.refresh_motion_now(scene)
-assert not keyed(image_of(zid), "transform.offset_y") and not keyed(zstrips[0], "blend_alpha") \
-    if zstrips[0].name in {x.name for x in sed.strips} else True
-assert abs(image_of(zid).transform.scale_x - 1.0) < 1e-6
+assert not keyed(still("ずんだもん"), "transform.offset_y") and not keyed(still("ずんだもん"), "blend_alpha")
+assert abs(still("ずんだもん").transform.scale_x - 1.0) < 1e-6
 
 # 字幕の帯・キャラ名・フェードイン、見出しテロップ
 metan.subtitle_box, metan.box_roundness = True, 0.5
@@ -628,13 +715,13 @@ msound, msub, mname = role(msts, SOUND), role(msts, SUB), role(msts, NAME)
 assert (msound.channel, msub.channel, mname.channel) == (
     lane("audio", "四国めたん"), lane("subtitle", "四国めたん"), lane("name", "四国めたん"))
 assert msound.left_handle == t0 + 5 and msound.left_handle < role(zsts, SOUND).right_handle
-scene.frame_current = t0 + 10  # 同じキャラは重ねられない
+scene.frame_current = t0 + 10  # 同じキャラでも重ねて置ける（レーンが埋まっていれば上の空き）
 s.active_character, s.text = 0, "かぶせるのだ。"
-try:
-    bpy.ops.tachie.add_line()
-    raise AssertionError("同じキャラなのに重ねて置けた")
-except RuntimeError as e:
-    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
+run(bpy.ops.tachie.add_line)
+over = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"] == "かぶせるのだ。")
+assert role(over, SOUND).channel > chmod.scene_layout(scene).top and role(over, SOUND).left_handle == t0 + 10
+for x in over:
+    sed.strips.remove(x)
 # 縮めて再生成: 同時に喋るめたんのセリフは動かさず、その後ろのめたんのセリフはそこに重ならないところまで詰める
 zl, zr, _ = next(v for v in lines().values() if v[2][0]["tachie_text"] == "同時に喋るのだ。")
 ml, mr, _ = next(v for v in lines().values() if v[2][0]["tachie_text"] == "同時に喋りますわね、ずんだもんさん。")
@@ -647,7 +734,7 @@ sed.active_strip = role(zsts, SOUND)
 sed.active_strip["tachie_text"] = "同時に。"
 run(bpy.ops.tachie.regenerate)
 (cl, cr, csts), = [v for v in lines().values() if v[2][0]["tachie_text"] == "同時に続けますわ。"]
-assert cl >= mr and role(csts, ("IMAGE", None)).channel == metan.channel, (cl, mr)
+assert cl >= mr and role(csts, SOUND).channel == lane("audio", "四国めたん"), (cl, mr)
 assert next(v for v in lines().values() if v[2][0]["tachie_text"] == "同時に喋りますわね、ずんだもんさん。")[:2] == (ml, mr)
 # 字幕をセリフごとにずらす（キャラ名も一緒に動く）。再生成・スタイル変更でも残る
 name_y = mname.location[1]
@@ -701,10 +788,10 @@ assert any(a <= t0 and b >= role(msts, SOUND).right_handle for a, b in ducking.v
 for x in [x for x in sed.strips if x.get("tachie_text", "").startswith("同時に")]:
     sed.strips.remove(x)
 metan.show_name = False
-ops.refresh_idle(bpy.context)
+ops.refresh_faces(bpy.context)
 scene.frame_end = frame_end_before
 
-# セリフの形: 音声と字幕・音声だけ（立ち絵なし）。喋っている間はそのキャラの立ち絵（待機）も消す
+# セリフの形: 音声と字幕・音声だけ
 import tomllib  # noqa: E402
 
 from bl_ext.user_default.blender_tachie.tachie_studio.pipeline.config import (  # noqa: E402
@@ -715,15 +802,13 @@ t1 = max(r for _, r, _ in lines().values()) + 30
 by_text = lambda text: next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"] == text)
 span = lambda sts: (min(x.left_handle for x in sts), max(x.right_handle for x in sts))
 cue_has = lambda text: any(text in c.text.replace("\n", "") for c in ops.subtitle_cues(scene))
-zunda.line_layout = "SUBTITLE"
+assert zunda.line_layout == "SUBTITLE"
 scene.frame_current = t1
 s.active_character, s.expression, s.text = 0, "", "形を変えるのだ。"
 run(bpy.ops.tachie.add_line)
 fsts = by_text("形を変えるのだ。")
 fl, fr = span(fsts)
 assert sorted(x.type for x in fsts) == ["SOUND", "TEXT"] and all(x["tachie_layout"] == "SUBTITLE" for x in fsts)
-assert not any(x.channel == zunda.channel and x.left_handle < fr and fl < x.right_handle for x in sed.strips)
-assert any(x.get("tachie_idle") == "四国めたん" and x.left_handle < fr and fl < x.right_handle for x in sed.strips)
 assert cue_has("形を変えるのだ")
 sed.active_strip = role(fsts, SOUND)
 run(bpy.ops.tachie.pick_line_layout, line_layout="AUDIO")
@@ -731,11 +816,14 @@ fsts = by_text("形を変えるのだ。")
 assert [x.type for x in fsts] == ["SOUND"] and not cue_has("形を変えるのだ") and span(fsts)[0] == fl
 assert ops.line_end(fsts) == fr  # 音声だけでも余韻を含む長さ（再生成で後ろがずれない）
 sed.active_strip = fsts[0]
-run(bpy.ops.tachie.pick_line_layout, line_layout="FULL")
+run(bpy.ops.tachie.pick_line_layout, line_layout="SUBTITLE")
 fsts = by_text("形を変えるのだ。")
-assert role(fsts, ("IMAGE", None)).channel == zunda.channel and span(fsts) == (fl, fr)
-check_idle()  # 立ち絵が戻れば待機も元どおり
-zunda.line_layout = "FULL"
+assert sorted(x.type for x in fsts) == ["SOUND", "TEXT"] and span(fsts) == (fl, fr)
+# 前の版の TOML の FULL（立ち絵あり）は音声と字幕として読む
+cfg = ops.config_of(zunda)
+cfg.layout["lines"] = "FULL"
+ops.apply_config(zunda, cfg)
+assert zunda.line_layout == "SUBTITLE"
 # 立ち絵の無いキャラクター: 声と字幕だけ。同じキャラでも重ねて置ける。TOML に folder を書かない
 run(bpy.ops.tachie.character_add_voice, name="ナレーション")
 nar = s.characters[-1]
@@ -753,7 +841,7 @@ run(bpy.ops.tachie.regenerate)
 nsts = by_text("ナレーションです。")
 assert sorted(x.type for x in nsts) == ["SOUND", "TEXT"] and span(nsts)[0] == t1
 again = parse_characters(tomllib.loads(dump_characters({nar.name: ops.config_of(nar)})), out)[nar.name]
-assert again.folder is None and again.layout.get("lines") == "SUBTITLE"
+assert again.folder is None and "lines" not in again.layout  # 既定値（音声と字幕）は書かない
 for x in sed.strips_all:
     x.select = False
 for x in nsts:
@@ -765,7 +853,7 @@ for x in [x for x in sed.strips if x.get("tachie_character") == nar.name
     sed.strips.remove(x)
 s.characters.remove(len(s.characters) - 1)
 s.active_character = 0
-ops.refresh_idle(bpy.context)
+ops.refresh_faces(bpy.context)
 scene.frame_end = frame_end_before
 
 # YMM4 のプロジェクトの読み込み: 今あるキャラ（ずんだもん）はそのまま、無いキャラは素材フォルダから追加する
@@ -870,7 +958,9 @@ assert "画像 1" in report and "音声 1" in report and "テキスト 1" in rep
 # 読み込んだキャラのレーンが増え、置いてあったセリフもそのキャラのレーンのまま
 assert s.channel_base == base_before and first_sound.channel == lane("audio", "ずんだもん")
 assert all(x.channel == lane(*chmod.lane_key(x)) or x.channel > chmod.scene_layout(scene).top
-           for x in sed.strips if chmod.lane_key(x)), "レーンに置かれていないストリップがある"
+           for x in sed.strips if chmod.lane_key(x)), ("レーンに置かれていないストリップがある", [
+    (x.name, x.channel, chmod.lane_key(x), x.left_handle, x.right_handle) for x in sed.strips
+    if chmod.lane_key(x) and x.channel != lane(*chmod.lane_key(x))], chmod.scene_layout(scene).to_json())
 assert sed.channels[lane("audio", "めたん（YMM4）")].name == "めたん（YMM4） 音声"
 ymm = {x.get("tachie_ymmp"): x for x in sed.strips if x.get("tachie_ymmp") and x.type != "MOVIE"}
 bg = ymm["image"]
@@ -899,6 +989,11 @@ ml, _ = ylines["読み込んだセリフですわ"]
 assert zl == scene.frame_start + ymm_base // 2 and ml == zl + 150  # 60fps → 30fps
 zpreset = zsts[0]["tachie_expression"]
 assert zpreset not in zunda_presets and next(e for e in zunda.expressions if e.name == zpreset).part_eye == "なごみ目"
+# 立ち絵アイテムはその区間の立ち絵になり、重なるそのキャラのセリフの間だけ口パクする
+ystill, = [x for x in sed.strips if x.get("tachie_still") == "めたん（YMM4）"]
+assert (ystill.left_handle, ystill.right_handle) == (zl, zl + 350) and ystill.channel == ymetan.channel
+assert len({mouth(ystill, f) for f in range(ml, ml + 30)}) > 1 and mouth(ystill, ml - 5) == "l0"
+assert not [x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.right_handle > zl]  # 立ち絵アイテムが無い
 yfaces = [x for x in sed.strips if x.get("tachie_face") == "ずんだもん" and x.left_handle == zl + 300]
 assert yfaces and next(e for e in zunda.expressions
                        if e.name == yfaces[0]["tachie_expression"]).part_eyebrow == "怒り眉"
@@ -922,7 +1017,7 @@ assert not lay_problems and (zunda.channel, metan.channel) == (12, 14), (lay_pro
 for i in reversed(range(len(zunda.expressions))):
     if zunda.expressions[i].name not in zunda_presets:
         zunda.expressions.remove(i)
-ops.refresh_idle(bpy.context)
+ops.refresh_faces(bpy.context)
 scene.frame_end = frame_end_before
 
 # テンプレート: 選んだストリップ（セリフ・表情・画像・テキスト）を登録して、別の位置に置く。YMM4 のテンプレートも読み込む
@@ -970,14 +1065,14 @@ run(bpy.ops.tachie.insert_template, index=list(templates).index(tpl))
 p_img2 = next(x for x in sed.strips if x.get("tachie_ymmp") == "image" and x.left_handle >= t_at2)
 assert p_img2.channel < s.channel_base == base_before  # 下が空いているのでレーンはずらさない
 # いちばん下のチャンネルを変えると、レーンと置いてあるストリップがまとめてずれる（下の背景などは動かない）
-zimg_ch = image_of(next(iter(lines()))).channel
+zimg_ch = still("ずんだもん").channel
 s.channel_base = 12
 back_color = sed.strips["背景"]
-assert image_of(next(iter(lines()))).channel == zimg_ch + 2 and back_color.channel == 1 and p_img2.channel < 10, (
-    image_of(next(iter(lines()))).channel, zimg_ch, back_color.channel, p_img2.channel)
+assert still("ずんだもん").channel == zimg_ch + 2 and back_color.channel == 1 and p_img2.channel < 10, (
+    still("ずんだもん").channel, zimg_ch, back_color.channel, p_img2.channel)
 assert sed.channels[zunda.channel].name == "ずんだもん 立ち絵" and sed.channels[10].name == "Channel 10"
 s.channel_base = 10
-assert image_of(next(iter(lines()))).channel == zimg_ch
+assert still("ずんだもん").channel == zimg_ch
 # YMM4 のテンプレート（ItemSettings.json）を読み込む: セリフと画像は置ける、トランジション・立ち絵アイテムは読まない
 YMM_ITEM2 = "YukkuriMovieMaker.Project.Items."
 item_settings = out / "YukkuriMovieMaker.Settings.ItemSettings.json"
@@ -1022,7 +1117,7 @@ for i in reversed(range(len(templates))):
 for i in reversed(range(len(zunda.expressions))):  # 読み込みで作った表情プリセット
     if zunda.expressions[i].name not in zunda_presets_t:
         zunda.expressions.remove(i)
-ops.refresh_idle(bpy.context)
+ops.refresh_faces(bpy.context)
 scene.frame_end = frame_end_before
 
 # AI で表情を割り当てる（偽の LLM サーバ。キャラごとの束の最初の行は -1 = 変えない、他は WANT の表情の番号）
@@ -1081,36 +1176,36 @@ def no_faces(cid):
 
 
 fa_ids = [cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん"
-          and ops.line_layout_of(sts) == "FULL" and no_faces(cid)][:2]
+          and no_faces(cid)][:2]
 assert len(fa_ids) == 2, fa_ids
-keep_expr = image_of(fa_ids[0])["tachie_expression"]
-old_expr = image_of(fa_ids[1])["tachie_expression"]
+keep_expr = sound(fa_ids[0])["tachie_expression"]
+old_expr = sound(fa_ids[1])["tachie_expression"]
 WANT["ずんだもん"] = next(e.name for e in zunda.expressions if e.name != old_expr)
 wav_before = sound(fa_ids[1]).sound.filepath
-select_only([image_of(fa_ids[0]), sound(fa_ids[1])])
+select_only([ops.line_subtitle(ops.line_strips(sed, fa_ids[0])), sound(fa_ids[1])])
 prefs.faceassign_target = "LINE"
 run(bpy.ops.tachie.assign_faces)
 assert len(llm_calls) == 1 and llm_calls[0].count("#") == 2, llm_calls
 assert all(x["tachie_expression"] == keep_expr for x in ops.line_strips(sed, fa_ids[0]))
 assert all(x["tachie_expression"] == WANT["ずんだもん"] for x in ops.line_strips(sed, fa_ids[1]))
 assert sound(fa_ids[1]).sound.filepath == wav_before  # 音声は合成し直さない
-img = image_of(fa_ids[1])
-assert frame_inode(img, 0) in cache_inodes(zunda, WANT["ずんだもん"])
+fa_start = lines()[fa_ids[1]][0]
+assert expression_dir(still("ずんだもん"), fa_start) == cache_dir(zunda, WANT["ずんだもん"])
 fa_report = bpy.data.texts[fa_mod.REPORT_TEXT].as_string()
 assert fa_report.startswith("2 行のうち 1 行の表情を変えました"), fa_report
 print(fa_report)
 # 書き込み先を表情ストリップにすると、セリフの区間に表情ストリップを置く（セリフの表情はそのまま）
 WANT["ずんだもん"] = next(e.name for e in zunda.expressions if e.name not in (WANT["ずんだもん"], keep_expr))
 prefs.faceassign_target = "FACE_STRIP"
-select_only([image_of(fa_ids[0]), image_of(fa_ids[1])])
+select_only([sound(fa_ids[0]), sound(fa_ids[1])])
 faces_before = set(ops.face_strips(sed, "ずんだもん"))
 run(bpy.ops.tachie.assign_faces)
 new_faces = [f for f in ops.face_strips(sed, "ずんだもん") if f not in faces_before]
 sts = ops.line_strips(sed, fa_ids[1])
 assert [(f.left_handle, f.right_handle, f["tachie_expression"]) for f in new_faces] == [
     (min(x.left_handle for x in sts), ops.line_end(sts), WANT["ずんだもん"])], new_faces
-assert image_of(fa_ids[1])["tachie_expression"] != WANT["ずんだもん"]
-assert frame_inode(image_of(fa_ids[1]), 0) in cache_inodes(zunda, WANT["ずんだもん"])
+assert sound(fa_ids[1])["tachie_expression"] != WANT["ずんだもん"]
+assert expression_dir(still("ずんだもん"), fa_start) == cache_dir(zunda, WANT["ずんだもん"])
 # 片付け
 prefs.faceassign_target = "LINE"
 for f in new_faces:
@@ -1132,8 +1227,9 @@ assert again["ずんだもん"].layout["period"] == 0.5 and "enter" not in again
 print(exported.read_text(encoding="utf-8"))
 
 # 台本の流し込み（テキストエディタの台本、表情つき）
-for st in [st for st in sed.strips if st.get("tachie_id") or st.get("tachie_idle")]:
+for st in [st for st in sed.strips if st.get("tachie_id") or st.get("tachie_still")]:
     sed.strips.remove(st)
+scene.frame_end = 1  # 置いたセリフ・立ち絵の分だけ伸びる
 text = bpy.data.texts.new("台本")
 text.from_string((characters_toml.parent / "script.txt").read_text(encoding="utf-8"))
 s.script = text
@@ -1146,6 +1242,15 @@ assert len(placed) == 5
 assert [v[2][0].get("tachie_expression") for v in placed] == ["", "", "困り", "おこ", "ドヤ"]
 assert all(next(x for x in v[2] if x.type == "SOUND")["tachie_kana"] for v in placed)
 assert all(b[0] - a[1] == 6 for a, b in zip(placed, placed[1:])), "セリフの間隔が 0.2 秒（6 フレーム）でない"
+# 立ち絵は台本の最後のセリフの終わりまで（あとで後ろにもう 1 本置く）
+script_end = max(r for _, r, _ in lines().values())
+s.still_seconds = (script_end - 1) / 30
+for index in (0, 1):
+    s.active_character, s.expression = index, ""
+    scene.frame_current = 1
+    run(bpy.ops.tachie.add_still)
+assert still("ずんだもん").right_handle == script_end
+assert len({mouth(still("ずんだもん"), f) for f in range(placed[0][0], placed[0][1])}) > 1
 
 
 # 選択中のセリフの表情を変えて再生成
@@ -1203,9 +1308,9 @@ assert zunda.engine == "AIVIS"  # 既知のエンジンの URL は名前で選�
 zunda.engine = "DEFAULT"
 assert scene.frame_end == max(r for _, r, _ in lines().values()) - 1, scene.frame_end
 
-# 左右反転は置いてあるストリップ（セリフと待機）にすぐ反映される
+# 左右反転は置いてある立ち絵にすぐ反映される
 metan_images = lambda: [x for x in sed.strips if x.type == "IMAGE"
-                        and "四国めたん" in (x.get("tachie_character"), x.get("tachie_idle"))]
+                        and x.get("tachie_still") == "四国めたん"]
 assert metan_images() and not any(x.use_flip_x for x in metan_images())
 metan.flip_x = True
 assert all(x.use_flip_x for x in metan_images())
@@ -1226,40 +1331,38 @@ assert all(x.font_size == 72 and x.font and os.path.realpath(bpy.path.abspath(x.
            for x in subs("四国めたん")), [(x.font_size, x.font.filepath if x.font else None) for x in subs("四国めたん")]
 assert all(x.font_size == 64 for x in subs("ずんだもん"))
 print("フォント:", {x.get("tachie_character"): x.font.name for x in sed.strips if x.type == "TEXT"})
-zunda_images = [x for x in sed.strips if x.type == "IMAGE" and "ずんだもん" in (x.get("tachie_character"), x.get("tachie_idle"))]
+zunda_images = [x for x in sed.strips if x.type == "IMAGE" and x.get("tachie_still") == "ずんだもん"]
 assert not any(x.use_flip_x for x in zunda_images)
 assert s.characters[0].speaker_name, "話者名が入っていない"
 
-# セリフなしの立ち絵を最後のセリフの後ろに置く → 他のキャラの待機もそこまで伸びる
-stills = lambda: [x for x in sed.strips if x.get("tachie_still")]
+# 立ち絵を最後のセリフの後ろに置く（喋らないのでまばたきだけ）
 last_end = max(r for _, r, _ in lines().values())
+tail = lambda: [x for x in sed.strips if x.get("tachie_still") and x.left_handle >= last_end]
 s.active_character, s.expression, s.still_seconds = 0, "困り", 2.0
 scene.frame_current = last_end
 run(bpy.ops.tachie.add_still)
-(still,) = stills()
-assert (still.left_handle, still.right_handle, still.channel) == (last_end, last_end + 60, zunda.channel)
-assert still["tachie_expression"] == "困り" and not still.use_flip_x
-assert scene.frame_end == still.right_handle - 1
-metan_idle = [(x.left_handle, x.right_handle) for x in sed.strips if x.get("tachie_idle") == "四国めたん"]
-assert max(r for _, r in metan_idle) == still.right_handle, metan_idle
-# セリフに重ねては置けない
+(tail_still,) = tail()
+assert (tail_still.left_handle, tail_still.right_handle, tail_still.channel) == (last_end, last_end + 60, zunda.channel)
+assert tail_still["tachie_expression"] == "困り" and not tail_still.use_flip_x and not tail_still["tachie_faced"]
+assert scene.frame_end == tail_still.right_handle - 1
+# 同じキャラの立ち絵に重ねては置けない
 scene.frame_current = list(lines().values())[0][0]
 try:
     bpy.ops.tachie.add_still()
     raise AssertionError("重なっているのに置けた")
 except RuntimeError as e:
     print("期待どおり失敗:", str(e).strip().splitlines()[-1])
-# 伸ばして作り直すと、まばたきが伸ばした長さぶん入る（待機の作り直しでは消えない）
-still.right_handle = still.left_handle + 90
-still["tachie_expression"] = ""
-sed.active_strip = still
+# 伸ばして作り直すと、まばたきが伸ばした長さぶん入る
+tail_still.right_handle = tail_still.left_handle + 90
+tail_still["tachie_expression"] = ""
+sed.active_strip = tail_still
 run(bpy.ops.tachie.remake_still)
-(still,) = stills()
-assert still.right_handle - still.left_handle == 90 and len(still.elements) == 90, len(still.elements)
-assert still["tachie_expression"] == ""
-run(bpy.ops.tachie.refresh_idle)
+(tail_still,) = tail()
+assert tail_still.right_handle - tail_still.left_handle == 90 and len(tail_still.elements) == 90, len(tail_still.elements)
+assert tail_still["tachie_expression"] == ""
 run(bpy.ops.tachie.regenerate_all, character_only=False)
-assert [(x.left_handle, x.right_handle) for x in stills()] == [(last_end, last_end + 90)]
+assert [(x.left_handle, x.right_handle) for x in tail()] == [(last_end, last_end + 90)]
+check_stills()
 s.expression = ""
 
 # チャンネル: キャラを並べ替えるとレーンが入れ替わり、置いたストリップとチャンネルのミュートもついてくる
@@ -1276,7 +1379,7 @@ run(bpy.ops.tachie.character_move, direction="DOWN")  # 並べ替えると zunda
 char = lambda name: next(c for c in s.characters if c.name == name)
 assert s.characters[1].name == "ずんだもん" and char("ずんだもん").channel > char("四国めたん").channel and on_lanes()
 assert sed.channels[lane("subtitle", "ずんだもん")].mute and not sed.channels[lane("subtitle", "四国めたん")].mute
-assert all(x.channel == char("ずんだもん").channel for x in stills())
+assert all(x.channel == char("ずんだもん").channel for x in sed.strips if x.get("tachie_still") == "ずんだもん")
 run(bpy.ops.tachie.character_move, direction="UP")
 zunda, metan = s.characters[0], s.characters[1]
 assert zunda.name == "ずんだもん" and lane("subtitle", "ずんだもん") == zsub and on_lanes()
@@ -1284,26 +1387,27 @@ sed.channels[zsub].mute = False
 # 手で動かしたストリップは、並べ替え・再生成をしても動かさない（今のチャンネルに置き直す）。
 # 「チャンネルを整理する」を押したときだけレーンに戻る
 first_id = next(iter(lines()))
-moved = image_of(first_id)
+subtitle_of = lambda cid: ops.line_subtitle(ops.line_strips(sed, cid))
+moved = subtitle_of(first_id)
 moved.channel = 90
 s.active_character = 0
 run(bpy.ops.tachie.character_move, direction="DOWN")
 run(bpy.ops.tachie.character_move, direction="UP")
 zunda, metan = s.characters[0], s.characters[1]
-assert image_of(first_id).channel == 90, image_of(first_id).channel
+assert subtitle_of(first_id).channel == 90, subtitle_of(first_id).channel
 sed.active_strip = sound(first_id)
 sound(first_id).channel = 91
 run(bpy.ops.tachie.regenerate)
 first_id = sed.active_strip["tachie_id"]
-assert image_of(first_id).channel == 90 and sound(first_id).channel == 91
+assert subtitle_of(first_id).channel == 90 and sound(first_id).channel == 91
 run(bpy.ops.tachie.relayout)
-moved = image_of(first_id)
-assert moved.channel == zunda.channel and sound(first_id).channel == lane("audio", zunda.name) and on_lanes()
+moved = subtitle_of(first_id)
+assert moved.channel == lane("subtitle", zunda.name) and sound(first_id).channel == lane("audio", zunda.name) and on_lanes()
 # 古い .blend（レーンに並べ直す前）: 開いたときに並べ直す
 s.applied_layout, s.layout_version = "", 0
 moved.channel = 91
 chmod._on_load(None)
-assert s.layout_version == 1 and moved.channel == zunda.channel and on_lanes()
+assert s.layout_version == 1 and moved.channel == lane("subtitle", zunda.name) and on_lanes()
 assert sed.channels[zunda.channel].name == "ずんだもん 立ち絵"
 
 scene.render.image_settings.file_format = "PNG"
@@ -1408,10 +1512,12 @@ run(bpy.ops.tachie.character_add, directory=str(simple_dir) + "/")
 simple = s.characters[-1]
 assert simple.name == "シンプル" and ops.load_material(simple.folder).simple
 s.active_character, s.expression, s.text = len(s.characters) - 1, "", "シンプル立ち絵なのだ。"
-scene.frame_current = scene.frame_end + 10
+s.still_seconds = 5.0
+scene.frame_current = at = scene.frame_end + 10
+run(bpy.ops.tachie.add_still)
+scene.frame_current = at
 run(bpy.ops.tachie.add_line)
-cid = list(lines())[-1]
-img = image_of(cid)
+img = still("シンプル")
 names = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
 assert len(names) == 2, names  # 閉じと開きの 2 枚だけを行き来する
 # 素材を選び直す: 設定はそのままで、新しい素材に無いパーツ（シンプル立ち絵の画像名）は既定に戻す
@@ -1462,10 +1568,11 @@ else:
     run(bpy.ops.tachie.psd_choose, group="!口", preset=preset.name, option="!口/*お")
     assert ops.expression_of(pch, preset.name).layers["!口/*お"] is True
     s.expression, s.text = "", "PSD の立ち絵なのだ。"
-    scene.frame_current = scene.frame_end + 10
+    scene.frame_current = at = scene.frame_end + 10
+    run(bpy.ops.tachie.add_still)
+    scene.frame_current = at
     run(bpy.ops.tachie.add_line)
-    cid = list(lines())[-1]
-    img = image_of(cid)
+    img = still(pch.name)
     assert img.channel == pch.channel == lane("image", pch.name)
     inodes = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
     assert len(inodes) >= 3, inodes  # 口パク（3 段）とまばたき

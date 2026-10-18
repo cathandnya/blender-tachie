@@ -41,9 +41,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （TachieDefaultItemParameter）は新しく置くアイテムの初期値で、表情プリセットを当てて口・体が空になっていることがある（実際のプロジェクトで確認）。
   表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
-  最後のセリフより後ろの立ち絵アイテムはセリフなしの立ち絵（`place_still`）にする（待機は最後のセリフの終わりまでなので、
-  セリフの無いサムネなどで立ち絵が消える）。
-  立ち絵アイテムの基本がキャラの基本と違う区間は、セリフの区間を除いて表情ストリップにする。余韻は次のセリフに 1 フレーム
+  立ち絵アイテムはその区間の立ち絵（`place_still`、重なるセリフの間だけ口パク）にし、立ち絵アイテムの基本がキャラの基本と
+  違えばそのプリセットの立ち絵にする（同じキャラの立ち絵アイテムが重なれば先のものを優先）。ボイスの表情は 立ち絵アイテムの基本 +
+  差分 なので、セリフの間もその立ち絵アイテムの見た目のまま。表情アイテムは表情ストリップ。余韻は次のセリフに 1 フレーム
   あけて重ならないように縮める（声の終わりより `SIMULTANEOUS_FRAMES` 以上前から始まる別のキャラのセリフは同時に喋るので相手にしない）。YMM4 の音量 50 = 等倍（未確認）、立ち絵の X/Y は画像の中心（`position_x`/`position_y`）、
   Zoom は素材の高さに対する %（`height`）。キャラの字幕の大きさは FontSize × Zoom（字幕の拡大率）。実ファイルのテストは `YMMP_DIR`。
   画像・動画・音声・テキスト（段階 2）: `ymmp.Media`（`Project.media`）を `blender_addon/ymmp_media.py` が置く。座標は画面中央から
@@ -75,24 +75,29 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
   シーケンサーのサイドバー「立ち絵」タブ。キャラクター設定は `Scene.tachie.characters`（.blend に保存、TOML で読み書き）。
-  セリフを追加すると再生位置に音声・立ち絵（連番画像）・字幕を置き、カスタムプロパティ
+  セリフ（YMM4 と同じく音声と字幕だけ）を追加すると再生位置に音声・字幕（とキャラ名）を置き、カスタムプロパティ
   `tachie_id` `tachie_text` `tachie_character` `tachie_speaker` `tachie_folder` `tachie_mouth` `tachie_expression` を付ける。
+  セリフは wav と動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・まばたきの seed）だけ書く（`render_line(cache=None)`）。
   台本の流し込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。
-  再生成のテキストと表情は、パネルで編集する選択中のストリップから取る（3 本のうち他の 2 本は古いまま）。
-  再生成は同じ `tachie_id` の 3 本を消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。
-  待機ストリップ（`tachie_idle` = キャラ名）は各キャラの立ち絵のレーンの隙間を、シーン開始から最後のセリフの終わりまで埋める
-  （使用中はレーンにあるものと、そのキャラの立ち絵＝別のチャンネルに動かしたものも、`_own_image`）。
-  セリフの追加・再生成のたびに全部消して作り直す（重なり判定・ずらしの対象外）。画像は `cache/` の合成画像を
-  `elements` で直接並べる（同じファイル名を何度並べてもよい。1.8 万フレームで 1.4 秒）。
+  再生成のテキストと表情は、パネルで編集する選択中のストリップから取る（他のストリップは古いまま）。
+  再生成は同じ `tachie_id` のストリップを消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。
+  立ち絵（`tachie_still` = キャラ名、`tachie_expression`、「立ち絵だけを置く」・YMM4 の立ち絵アイテム）はセリフとは別に置き、
+  まばたきし、重なるそのキャラのセリフ（ミュートは除く）の間だけ口パクする（`render.still_frames`、口はセリフ全体で計算した
+  `mouth_states` をずれの分ずらす。同じキャラのセリフが重なれば後から始まるもの。余韻は閉じた口）。表情は
+  立ち絵の表情 < セリフの表情（"" は立ち絵のまま、キャラに無いプリセットも）< 表情ストリップ。目はセリフの間も立ち絵のまばたき
+  （seed は (キャラ名, 立ち絵の始まり)）。セリフの動きの頭は音声ストリップの `content_start`、長さは `tachie_frames`。
+  json が無い・長さが違うセリフ（前の版）は閉じた口で、`problems` に出す。重なるセリフ・表情ストリップが無ければ `cache/` の合成画像を
+  `elements` で直接並べ（同じファイル名を何度並べてもよい。1.8 万フレームで 1.4 秒）、あれば `faces/<hash>/` にリンクする。
+  作り直しの鍵 `tachie_faced`（`still_key`: 表情・表情ストリップの区間・重なるセリフの (id, ずれ, 表情, 長さ)）が変わったものと、
+  長さを変えた（ハンドルを動かした）ものを `apply_faces` が作り直す（`remake_still`、今のチャンネルと位置・大きさを引き継ぐ）。
+  自動の待機・立ち絵ごと置くセリフ（前の版の FULL）はやめた。前の .blend に残った待機・セリフの立ち絵はそのまま（作り直さない）。
   表情ストリップ（`tachie_face` = キャラ名、`tachie_expression`）はミュートしたカラーストリップで、そのキャラの表情のレーン
-  （重なる表情があればその上＝あふれ、`channels.face_channel`）に置く。重なる範囲だけ立ち絵（セリフ・セリフなし・待機）がその表情になる。重なったらチャンネルが上、
-  同じなら後から始まるものが優先。セリフは書き出し時に保存した動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・
-  まばたきの seed）から `segment_frames` で並べ直し、`lines/<id>_f<hash>/` にリンクして `strip.directory` を差し替える
-  （音声は合成し直さない。元は `tachie_frames_dir`、今の区間は `tachie_faced`）。セリフなしは作り直し、待機は
-  `refresh_idle` が表情ストリップの境目で分ける。json の無い古いセリフは再生成するまで効かない。
-  自動の反映は `depsgraph_update_post` のハンドラで署名（`faces_signature`）の変化を見て、タイマーでモーダル操作の
+  （重なる表情があればその上＝あふれ、`channels.face_channel`）に置く。重なる範囲だけ立ち絵がその表情になる。重なったらチャンネルが上、
+  同じなら後から始まるものが優先。キャラに無い表情の表情ストリップは無視する。
+  自動の反映は `depsgraph_update_post` のハンドラで署名（`faces_signature`: 表情ストリップ、セリフの音声ストリップの位置・長さ・
+  表情・ミュート、立ち絵の位置・長さ・鍵）の変化を見て、タイマーでモーダル操作の
   終わりを待ってから `refresh_faces` する（`_applying_faces` で再入防止）。反映では undo の段を積まない（直前の操作の段は反映前の
-  状態で、元に戻すと署名（`tachie_faced` を含む）が変わって描き直されるため）。キャラに無い表情の表情ストリップは無視する。
+  状態で、元に戻すと署名（`tachie_faced` を含む）が変わって描き直されるため）。
   チャンネル（レーン、`tachie_studio/channels.py` と `blender_addon/channels.py`）: キャラ × 役割に 1 本ずつ、役割ごとに並べる
   （下から 音声（全キャラ）→ 立ち絵・表情（キャラごとに隣り合わせ）→ 字幕 → キャラ名（出すキャラだけ）→ 見出し。どの字幕も
   全員の立ち絵より手前）。`channel_base`（既定 10）から上で、下は動画・背景・効果音・BGM の場所（触らない）。一覧の順が立ち絵の
@@ -104,10 +109,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   読み込み、`channel_base` / `show_name` の update、置く処理の最初、自動反映、`load_post`（`layout_version` 0 の古い .blend の移行）、
   ボタン「チャンネルを整理する」（`tachie.relayout`、手で動かしたストリップも戻す）。作り直す（再生成・`remake_still`）ときは、
   手で動かしたもの（レーンにいないもの）は今のチャンネルが空いていればそこに置き直す（`line_channels` の `prefer`）。消したキャラのストリップは「（未登録）」の
-  レーン、待機は消す。`TachieCharacter.channel`（立ち絵）と `headline_channel` はレイアウトから書く値、ほかの `*_channel` は
+  レーン（前の版の待機は消す）。`TachieCharacter.channel`（立ち絵）と `headline_channel` はレイアウトから書く値、ほかの `*_channel` は
   古い設定で使わない。TOML の `[キャラ.layout]` の channel は書かず読まない。
-  同時に喋るセリフ（#17）: `line_channels` がそのキャラのレーンを返す（立ち絵は同じキャラと重ねられない。音声・字幕・キャラ名は
-  埋まっていればあふれ、キャラ名は字幕より上）。セリフのストリップはチャンネルではなく `tachie_id` と種類・`tachie_role` で探す。
+  同時に喋るセリフ（#17）: `line_channels` がそのキャラのレーンを返す（同じキャラのセリフも重ねてよい。埋まっていればあふれ、
+  キャラ名は字幕より上）。セリフのストリップはチャンネルではなく `tachie_id` と種類・`tachie_role` で探す。
   字幕をセリフごとにずらす量は字幕ストリップの `tachie_sub_x` / `tachie_sub_y`（`properties.place_text`、再生成で引き継ぐ）。
   自動反映（`motion_signature` に含める）で `refresh_motion` がキャラ名にも写して location を当て直す。
   `subtitle_clashes` で時間も位置も重なる字幕を知らせる。
@@ -115,23 +120,23 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   そこから動いたもの（`motion.moved_texts`）を自動反映が署名を比べる前に `motion.sync_text_offsets` でずらす量へ
   書き戻す（キャラ名はキャラ名の基準の位置からの差）。置いた位置はストリップに持つので undo の段・別の .blend でも
   食い違わない（解像度を変えてキャラ名の基準がずれただけのものは動かしたとみなさない）。undo の段は積まない。
-  セリフの形（#18、`properties.LINE_LAYOUTS`）: FULL（立ち絵あり）/ SUBTITLE（音声と字幕）/ AUDIO（音声だけ）。全ストリップの
-  `tachie_layout`（無い古いセリフは立ち絵があれば FULL、`line_layout_of`）で、再生成で引き継ぐ。新しく置くセリフはキャラの
-  `line_layout`（TOML は `[キャラ.layout]` の `lines`）。素材フォルダの無いキャラ（`folder = ""`、TOML は folder を省略、
-  `CharacterConfig.folder = None`、CLI では使えない）の FULL は SUBTITLE（`operators.line_layout`）。立ち絵の無い形は
-  `render_line(cache=None)` で連番を書かず（wav・json・長さは同じ）、`line_channels` は立ち絵のレーンを見ない（同じキャラでも
-  重ねてよい）。`refresh_idle` はそのキャラの立ち絵の無いセリフの区間を待機で埋めない（立ち絵を消す）。
-  `place_strips` の戻り値は置いたものだけなので、番号ではなく `line_image` / `line_subtitle` / `line_texts` / `line_end` /
-  `line_focus` で取る。音声だけのセリフは音声ストリップが余韻の分短いので、セリフの長さは全ストリップの
-  `tachie_frames`（`line_end`）。立ち絵の無いキャラのセリフを立ち絵のあるキャラに変えたら形はそのキャラの既定。立ち絵の無いキャラは `add_voice_character`（メニュー「立ち絵なしのキャラクターを追加」）、
+  セリフの形（#18、`properties.LINE_LAYOUTS`）: SUBTITLE（音声と字幕、既定）/ AUDIO（音声だけ）。全ストリップの
+  `tachie_layout`（`line_layout_of`。前の版の FULL・印の無い古いセリフは字幕があれば SUBTITLE）で、再生成で引き継ぐ。新しく置く
+  セリフはキャラの `line_layout`（TOML は `[キャラ.layout]` の `lines`、既定値は書かない。前の版の "FULL" は SUBTITLE に読む、
+  `operators.line_layout`）。素材フォルダの無いキャラ（`folder = ""`、TOML は folder を省略、`CharacterConfig.folder = None`、
+  CLI では使えない）は声と字幕だけ。
+  `place_strips` の戻り値は置いたものだけなので、番号ではなく `line_sound` / `line_subtitle` / `line_texts` / `line_end` /
+  `line_focus` で取る。音声ストリップは余韻の分短いので、セリフの長さは全ストリップの
+  `tachie_frames`（`line_end`）。立ち絵の無いキャラは `add_voice_character`（メニュー「立ち絵なしのキャラクターを追加」）、
   素材に関わるパネルは `_WithTachie` で隠す。YMM4 の立ち絵の無いキャラ（`has_tachie` が False）もこれで読み込む。
   ストリップの位置は `content_start` / `duration` を使う（`frame_start` / `frame_final_duration` は 6.0 で削除予定）。
   立ち絵の動き（#11、`blender_addon/motion.py`）: 立ち絵ストリップの transform.offset_x / offset_y / rotation と
   blend_alpha にキーフレームを打つ（シーンの Action、Blender 5 はスロットの channelbag。`anim_utils.action_get_channelbag_for_slot`）。
   `refresh_motion` は管理しているパス（と、もう無いストリップのパス）の F カーブを全部消してから作り直す。喋っている区間は
-  lines/<id>.json の音量、登場・退場はそのキャラの立ち絵（待機を含む、チャンネルは問わない）が続いて並ぶまとまりの最初と最後。
-  セリフごとの位置・大きさは立ち絵ストリップの `tachie_pos_x` / `tachie_pos_y` / `tachie_scale`（再生成で引き継ぐ）。
-  拡大・回転の中心 `transform.origin` は足元 (0.5, 0)。`refresh_idle` の最後と、自動反映（`auto_signature` に
+  立ち絵に重なるそのキャラのセリフ（`_line_heads`）の lines/<id>.json の音量（立ち絵の区間で切る）、登場・退場はそのキャラの
+  立ち絵（チャンネルは問わない）が続いて並ぶまとまりの最初と最後。
+  立ち絵ごとの位置・大きさは立ち絵ストリップの `tachie_pos_x` / `tachie_pos_y` / `tachie_scale`（作り直しで引き継ぐ）。
+  拡大・回転の中心 `transform.origin` は足元 (0.5, 0)。`refresh_faces` の最後と、自動反映（`auto_signature` に
   `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
   キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。
   字幕の装飾（#12）: テキストストリップの box（`use_box` / `box_color` / `box_margin` / `box_roundness`）。キャラ名は
@@ -158,24 +163,24 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   プリセットにする。YMM4 のテンプレートのボイスは VoiceLength が 0 なので、余韻はアイテムの `AdditionalTime`（無ければキャラの
   既定値）。中身が空になるテンプレートは登録しない。
   AI で表情を割り当てる（#27、`blender_addon/faceassign.py`、LLM 側は `tachie_studio/faceassign.py`。cathandnya/ymm4faceassign を
-  移したもの）: 選んだセリフ（立ち絵のあるセリフで、プリセットのあるキャラ）をキャラごとに、シーンのセリフ全部を台本にして
+  移したもの）: 選んだセリフ（プリセットのあるキャラのセリフ）をキャラごとに、シーンのセリフ全部を台本にして
   OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。
   文脈は束の手前 `llm_context_lines` 行と対象の間の直前 1 行。取りこぼしは一度だけ聞き直す。json_schema を断るサーバには
   スキーマ無しで送り直す。通信は別スレッド + モーダル（タイマー）で、bpy に触るのはメインスレッドだけ（バックグラウンドは
-  execute で待つ）。書き込み先 `faceassign_target`: LINE は `operators.set_line_expression`（lines/<id>.json から
-  `segment_frames` で連番を並べ直して `tachie_frames_dir` を差し替える。音声は合成し直さない。json が無い・長さが違えば
-  `regenerate`）、FACE_STRIP はセリフの区間の表情ストリップ（同じ区間のものがあれば中身を変える）。設定はアドオン設定の
+  execute で待つ）。書き込み先 `faceassign_target`: LINE は `operators.set_line_expression`（セリフの `tachie_expression` を
+  書くだけ。重なる立ち絵が作り直される。音声は合成し直さない）、FACE_STRIP はセリフの区間の表情ストリップ（同じ区間のものが
+  あれば中身を変える）。設定はアドオン設定の
   `llm_*` / `faceassign_*`、API キーは環境変数 `TACHIE_LLM_API_KEY` が優先。結果はテキスト「表情の割り当て結果」。
   スモークテストは偽の LLM サーバ（`http.server`）で回す。実機の LLM は未確認。
-  まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・セリフなし・表情ストリップを対象に、
+  まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・立ち絵・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
   音声ストリップに直接書き、表情だけなら `set_line_expression`、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。
-  「立ち絵だけを置く」はセリフなしの立ち絵（まばたきのみ、`tachie_still` = キャラ名、`tachie_expression`）を
-  再生位置に置く。待機の作り直しでは消えず、待機の範囲の終わりにも数える。伸ばしたら「作り直す」で今の長さに合わせる。
+  「立ち絵だけを置く」は立ち絵を再生位置に置く（同じキャラの立ち絵とは重ねられない）。伸ばすと自動の反映で今の長さに作り直す
+  （「作り直す」ボタンでも）。素材を選び直す・読み直すと、そのキャラの立ち絵を作り直す（キャッシュの画像を直接指しているため）。
   セリフごとの声（読み上げ速度・声の高さ・抑揚・音量・開始/終了無音・間の長さ、`properties.VOICE_PROPS`）は
-  **音声ストリップだけ**の `tachie_voice_<prop>` に持つ（3 本の不一致を避ける）。置くときにキャラの既定値をコピーし、
+  **音声ストリップだけ**の `tachie_voice_<prop>` に持つ（ストリップ間の不一致を避ける）。置くときにキャラの既定値をコピーし、
   以後キャラの既定値を変えても置いたセリフは変わらない（YMM4 と同じ。「置いたセリフにも当て直す」で反映）。
-  スタイルは `tachie_speaker`（3 本とも）。再生成はこれらを引き継ぐ。セリフのキャラクターを変えると、
+  スタイルは `tachie_speaker`（全ストリップ）。再生成はこれらを引き継ぐ。セリフのキャラクターを変えると、
   スタイルと声はそのキャラの既定値、無い表情プリセットは基本に戻る。範囲は `id_properties_ui` で付ける（Strip でも使える）。
   音量・パンは音声ストリップの `volume` / `pan` をそのまま使う（すぐ反映、再生成でも引き継ぐ）。フェードイン/アウトと
   セリフ後の余韻は `tachie_fade_in` / `tachie_fade_out` / `tachie_after`（秒）で、wav と連番に焼き込む（再生成で反映）。
@@ -291,7 +296,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `Expression.others` / `backs` は位置を保ったリストで "" は空きスロット（`config.merge_slots`、合成では飛ばす）。
   YMM4 の並びは 他1 = 左腕、他2 = 右腕（実物の preset.ini から）。基本の表情もこの順にしないとプリセットで腕が重なる。
   重ねるのは `CharacterConfig.expression_for`。台本では `キャラ名(表情): セリフ`（`（）` `[]` も可。YMM4 の台本・CSV のキャラ名の欄でも同じ）。
-  ストリップには `tachie_expression` を付け、再生成はそれを使う。待機ストリップは基本の表情。
+  ストリップには `tachie_expression` を付け、再生成はそれを使う。
 - YMM4 の表情プリセットは素材フォルダの `preset.ini`（UTF-8 BOM、`[名前]` に `眉=x.png`、`他1=x.png` …）。
   `tachie.presets.load_presets` で読み、素材に無いパーツは警告して飛ばす。`config.load_material_defaults` が
   tachie.toml の下に重ねるので、キャラ追加と CLI の両方で補われる（優先: アドオン設定 → tachie.toml → preset.ini）。

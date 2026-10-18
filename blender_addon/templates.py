@@ -20,7 +20,7 @@ from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, auto_signature, character_audio, character_voice,
     ensure_sequencer_scene, line_accent, line_audio, line_channels, line_end, line_kana, line_layout,
     line_layout_of, line_sound, line_strips, line_subtitle, line_text, line_texts, line_voice, place_strips, prefs,
-    refresh_faces, remove_idle, render_clip, scene_fps, seq_scene, set_text_offset,
+    refresh_faces, render_clip, scene_fps, seq_scene, set_text_offset,
 )
 from .properties import place_text, text_offset
 from .tachie_studio.templates import (
@@ -175,7 +175,7 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
                           "layer": s.channel, "character": s["tachie_face"],
                           "expression": s.get("tachie_expression", ""), "parts": None})
         elif s.get("tachie_idle") or s.get("tachie_still"):
-            skipped.append(f"待機・セリフなしの立ち絵（{s.name}）")
+            skipped.append(f"立ち絵（{s.name}）")
         else:
             m = _media_of(scene, s, t0, fps, speed_of)
             if m is None:
@@ -231,7 +231,6 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
     problems: list[str] = []
     items = data.get("items", [])
     characters = {c.name: c for c in settings.characters}
-    remove_idle(sed)
     # 映像・音声（先に置く。立ち絵より奥のものはアドオンのチャンネルをずらすことがある）
     media = [media_from_dict(i["media"]) for i in items if i["kind"] == "media"]
     if media:
@@ -267,7 +266,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             preset = _resolve_expression(ch, item, problems)
             clip, lines_dir = render_clip(context, ch, item["text"], preset or None, speaker=item.get("style"),
                                           voice=voice, kana=item.get("kana") or None, accent=item.get("accent"),
-                                          accent_kana=item.get("accent_kana"), audio=audio, layout=layout)
+                                          accent_kana=item.get("accent_kana"), audio=audio)
             # 同じキャラの次のセリフに重ならないように余韻を縮める（合成し直した声の長さや fps の丸めで伸びることがある）
             nxt = next((w for w in lines[n + 1:] if w["character"] == item["character"] and w["frame"] > item["frame"]),
                        None)
@@ -276,7 +275,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
                 audio["after"] = math.floor(max(0.0, audio["after"] - excess / fps) * 10000) / 10000
                 clip, lines_dir = render_clip(context, ch, item["text"], preset or None, speaker=item.get("style"),
                                               voice=voice, kana=item.get("kana") or None, accent=item.get("accent"),
-                                              accent_kana=item.get("accent_kana"), audio=audio, layout=layout)
+                                              accent_kana=item.get("accent_kana"), audio=audio)
             channels = line_channels(context, ch, at, clip.frames, layout=layout)
         except ERRORS as e:
             problems.append(f"「{item['text'][:20]}」: {e}")
@@ -317,7 +316,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
 
     operators._applying_faces = True
     try:
-        refresh_faces(context, problems)  # 待機（auto_idle のとき）・動き・ダッキングも作り直す
+        refresh_faces(context, problems)  # 重なる立ち絵の口パク・動き・ダッキングも作り直す
     finally:
         operators._applying_faces = False
         _applied_signatures[scene.name] = auto_signature(scene)

@@ -1,8 +1,9 @@
 """立ち絵の動き: 喋っている間に跳ねる・揺れる、キャラが現れる・消えるところの登場・退場（フェード・スライド）。
 
-立ち絵ストリップ（セリフ・待機・セリフなし）の transform.offset_x / offset_y / rotation と blend_alpha に
-キーフレームを打つ（連番には焼き込まない）。`refresh_motion` は管理しているキーフレームを全部消してから作り直すので、
-何度呼んでもよい。喋っている区間は、セリフを書き出すときに保存した音量（lines/<id>.json）から取る。
+立ち絵ストリップ（立ち絵と、前の版で置いたセリフ・待機の立ち絵）の transform.offset_x / offset_y / rotation と
+blend_alpha にキーフレームを打つ（連番には焼き込まない）。`refresh_motion` は管理しているキーフレームを全部消してから
+作り直すので、何度呼んでもよい。喋っている区間は、立ち絵に重なるそのキャラのセリフを書き出すときに保存した音量
+（lines/<id>.json）から取る。
 """
 
 from __future__ import annotations
@@ -81,8 +82,11 @@ def _key(strip, path: str, frame: int, value: float) -> None:
     target.keyframe_insert(attr, frame=frame)
 
 
-def _talk(strip, ch, motion_path: Path, fps: float, height: int) -> None:
-    """喋っている間、半周期ごとに跳ねる（上下）・揺れる（回転）キーフレームを打つ。"""
+def _talk(strip, ch, motion_path: Path, fps: float, height: int, start: int | None = None) -> None:
+    """喋っている間、半周期ごとに跳ねる（上下）・揺れる（回転）キーフレームを打つ。
+
+    `start` はセリフの動きの頭のフレーム（None ならストリップの中身の頭。前の版のセリフの立ち絵）。
+    声の区間はストリップの区間で切る。"""
     if not motion_path.is_file():
         return
     from .tachie_studio.pipeline.render import LineMotion
@@ -91,8 +95,13 @@ def _talk(strip, ch, motion_path: Path, fps: float, height: int) -> None:
     half = max(1, round(ch.talk_period * fps / 2))
     amp_y = ch.talk_bounce * height
     amp_r = math.radians(ch.talk_sway)
-    base_y, start = strip.transform.offset_y, int(strip.content_start)
+    base_y = strip.transform.offset_y
+    start = int(strip.content_start) if start is None else start
+    lo, hi = strip.left_handle - start, strip.right_handle - 1 - start
     for a, b in voiced_segments(motion.rms[:motion.voice_frames], half):
+        a, b = max(a, lo), min(b, hi)
+        if b - a < 2:
+            continue
         frames = list(range(a, b, half)) + [b]
         for k, f in enumerate(frames):
             # 端（喋り始め・終わり）は元の位置、間は上と下・右と左を交互に
@@ -101,6 +110,16 @@ def _talk(strip, ch, motion_path: Path, fps: float, height: int) -> None:
                 _key(strip, "transform.offset_y", start + f, base_y + (0 if edge else amp_y * (k % 2)))
             if amp_r:
                 _key(strip, "transform.rotation", start + f, 0 if edge else amp_r * (1 if k % 2 else -1))
+
+
+def _line_heads(sed, name: str) -> list[tuple[str, int, int]]:
+    """キャラ `name` のセリフ（ミュートは除く）の [(id, 動きの頭, 終わり)]。動きの頭は音声ストリップの中身の頭。"""
+    out = []
+    for s in sed.strips:
+        if s.type == "SOUND" and s.get("tachie_id") and s.get("tachie_character") == name and not s.mute:
+            head = int(s.content_start)
+            out.append((s["tachie_id"], head, head + (int(s.get("tachie_frames", 0)) or s.right_handle - head)))
+    return out
 
 
 def spans(strips) -> list[list]:
@@ -180,10 +199,16 @@ def refresh_motion(scene, lines_dir: Path) -> int:
     for ch in characters.values():
         mine = [s for s in images if owner(s) == ch.name]  # チャンネルでは絞らない（手で動かした立ち絵も）
         if ch.talk_bounce > 0 or ch.talk_sway > 0:
+            talks = _line_heads(sed, ch.name)
             for s in mine:
-                if s.get("tachie_id"):
+                if s.get("tachie_id"):  # 前の版のセリフの立ち絵
                     _talk(s, ch, lines_dir / f"{s['tachie_id']}.json", fps, height)
                     count += 1
+                elif s.get("tachie_still"):  # 重なるセリフの間
+                    for clip_id, head, end in talks:
+                        if head < s.right_handle and s.left_handle < end:
+                            _talk(s, ch, lines_dir / f"{clip_id}.json", fps, height, head)
+                            count += 1
         duration = max(1, round(ch.effect_seconds * fps))
         for group in spans(mine):
             first, last = group[0], group[-1]
@@ -251,7 +276,8 @@ def sync_text_offsets(scene) -> int:
 
 
 def motion_signature(scene) -> str:
-    """動きに関わる値（立ち絵ストリップの位置・長さ、セリフごとの位置・大きさ・字幕の位置、キャラの動きの設定）。"""
+    """動きに関わる値（立ち絵ストリップの位置・長さ、セリフの位置、立ち絵ごとの位置・大きさ、字幕の位置、
+    キャラの動きの設定）。"""
     sed = scene.sequence_editor
     if sed is None:
         return ""
@@ -261,6 +287,10 @@ def motion_signature(scene) -> str:
     active = any(s[1] or s[2] or s[4] != "NONE" or s[5] != "NONE" or s[7] for s in settings)
     items = []
     for s in sed.strips:
+        if s.type == "SOUND" and s.get("tachie_id"):  # 立ち絵が跳ねる・揺れる区間
+            items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, s.mute,
+                          int(s.get("tachie_frames", 0))))
+            continue
         if s.type == "TEXT" and s.get("tachie_id"):  # 字幕のフェードは字幕の位置で決まる
             offset = () if s.get("tachie_role") == "name" else tuple(round(v, 4) for v in text_offset(s))
             active = active or offset not in ((), (0.0, 0.0))

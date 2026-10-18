@@ -21,8 +21,8 @@ from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
-    auto_signature, character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_end, line_layout,
-    line_texts, load_material, place_still, place_strips, refresh_faces, remove_idle, render_clip, scene_fps, seq_scene,
+    auto_signature, character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_layout,
+    line_texts, load_material, place_still, place_strips, refresh_faces, render_clip, scene_fps, seq_scene,
     set_text_offset, subtitle_clashes,
 )
 from .tachie_studio.lipsync.timing import frame_count
@@ -317,7 +317,6 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
         ch.outline_width = 0.0
     # YMM4 の字幕の Y は画面中央からの下向きのピクセル（下揃え）。このアドオンは画面の下からの割合
     ch.subtitle_y = min(1.0, max(0.0, 0.5 - c.subtitle_y / project.height))
-    ch.show_idle = True
     base = tachie.parts if tachie is not None and any(tachie.parts.values()) else c.parts  # 立ち絵アイテムの見た目を優先
     if base:
         _set_parts(ch, _valid_parts(ch, base, problems))
@@ -612,12 +611,10 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
 
         # セリフ: 準備（Blender に触る部分）を全部してから、音声合成（時間がかかる）を順に進め、できたものから置く
         sed = scene.sequence_editor or scene.sequence_editor_create()
-        remove_idle(sed)
         voices = [v for v in project.voices if v.character in characters]
         skipped["キャラクターを読み込めなかったセリフ"] += len(project.voices) - len(voices)
         placed = 0
         reused = 0  # YMM4 が保存した音声を使ったセリフ（VOICEVOX で合成しない）
-        line_spans: dict[str, list[tuple[int, int]]] = {}
         jobs: list[_LineJob] = []
         for i, v in enumerate(voices):
             if v.hidden:
@@ -653,7 +650,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 preset = expression(v.character, v.frame, v.face)
                 run = clip_job(context, ch, v.text, preset or None, speaker=v.style_id, voice=voice,
                                kana=v.kana or None, accent=v.accent, accent_kana=v.kana or None,
-                               audio=audio, layout=layout, wav=wav)
+                               audio=audio, wav=wav)
             except ERRORS as e:
                 problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: {e}")
                 skipped["置けなかったセリフ"] += 1
@@ -694,36 +691,13 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 if clashes:
                     problems.append(f"{where}: 字幕が{'・'.join(clashes)}の字幕と重なっています")
             connect(context, strips)
-            line_spans.setdefault(v.character, []).append((job.start, line_end(strips)))
             placed += 1
 
         def finish(cancelled: int = 0):
             """セリフを置き終わったあと（`cancelled` は途中でやめて置かなかったセリフの数）。"""
             if cancelled:
                 skipped["途中でやめたので置かなかったセリフ"] += cancelled
-            # 最後のセリフより後ろの立ち絵アイテムは、セリフなしの立ち絵にする（待機は最後のセリフの終わりまでしか
-            # 埋めないので、セリフの無いプロジェクトやエンディングで立ち絵が消える）。表情は下の表情ストリップで付く
-            stills = 0
-            last_line = max((b for spans in line_spans.values() for _, b in spans), default=scene.frame_start)
-            for name in characters:
-                ch = characters[name]
-                if not ch.folder:
-                    continue
-                cursor = last_line
-                for span in sorted((s for s in project.tachies if s.character == name and not s.hidden),
-                                   key=lambda s: s.frame):
-                    a, b = max(cursor, frame(span.frame)), frame(span.frame + span.length)
-                    if b <= a:
-                        continue
-                    try:
-                        place_still(context, ch, "", a, b - a)
-                    except ERRORS as e:
-                        problems.append(f"{a} フレームの {name} の立ち絵: {e}")
-                        continue
-                    stills += 1
-                    cursor = b
-
-            # 表情: 立ち絵アイテムの基本の表情がキャラの基本と違う区間（セリフの間を除く）と、表情アイテム
+            # 表情アイテムは表情ストリップにする（立ち絵より先に置く。後から置くと立ち絵を全部作り直すことになる）
             faces = 0
 
             def add_face(name: str, start: int, end: int, preset: str) -> None:
@@ -738,37 +712,46 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 face["tachie_expression"] = preset
                 faces += 1
 
-            for span in project.tachies:
-                if span.character not in characters or span.hidden or not characters[span.character].folder:
-                    continue
-                ch = characters[span.character]
-                preset = presets[span.character].name_for(
-                    _valid_parts(ch, span.parts, problems, _base_parts(ch))) if span.parts else ""
-                if not preset:
-                    continue
-                cursor, end = frame(span.frame), frame(span.frame + span.length)
-                for a, b in sorted(line_spans.get(span.character, [])):  # セリフは自分の表情を持っている
-                    if b <= cursor or a >= end:
-                        continue
-                    add_face(span.character, cursor, min(a, end), preset)
-                    cursor = max(cursor, b)
-                add_face(span.character, cursor, end, preset)
             for span in project.faces:
                 if span.character not in characters or span.hidden or not characters[span.character].folder:
                     continue
                 add_face(span.character, frame(span.frame), frame(span.frame + span.length),
                          expression(span.character, span.frame, span.parts))
 
+            # 立ち絵アイテムはその区間の立ち絵にする（重なるセリフの間だけ口パクする）。立ち絵アイテムの基本の表情が
+            # キャラの基本と違えば、その表情（プリセット）の立ち絵にする。同じキャラの立ち絵アイテムが重なれば先のものを優先
+            stills = 0
+            for name in characters:
+                ch = characters[name]
+                if not ch.folder:
+                    continue
+                cursor = None
+                for span in sorted((s for s in project.tachies if s.character == name and not s.hidden),
+                                   key=lambda s: s.frame):
+                    a, b = frame(span.frame), frame(span.frame + span.length)
+                    a = a if cursor is None else max(cursor, a)
+                    if b <= a:
+                        continue
+                    try:
+                        preset = presets[name].name_for(
+                            _valid_parts(ch, span.parts, problems, _base_parts(ch))) if span.parts else ""
+                        place_still(context, ch, preset, a, b - a, problems=problems)
+                    except ERRORS as e:
+                        problems.append(f"{a} フレームの {name} の立ち絵: {e}")
+                        continue
+                    stills += 1
+                    cursor = b
+
             if frame(project.length) - 1 > scene.frame_end:
                 scene.frame_end = frame(project.length) - 1
             problems_faces: list[str] = []
-            refresh_faces(context, problems_faces)  # 待機の作り直しも（auto_idle のとき）
+            refresh_faces(context, problems_faces)  # 表情ストリップに合わせて立ち絵を作り直す
             _applied_signatures[scene.name] = auto_signature(scene)
 
             # 結果
             created = sum(p.created for p in presets.values())
             lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、"
-                     + (f"セリフなしの立ち絵 {stills} 個、" if stills else "")
+                     + f"立ち絵 {stills} 個、"
                      + f"表情ストリップ {faces} 個、表情プリセットを {created} 個作りました"]
             if jobs:
                 lines += ["", f"音声: YMM4 が保存した音声を使ったセリフ {reused} 本、VOICEVOX で合成したセリフ "

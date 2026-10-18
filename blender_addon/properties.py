@@ -251,12 +251,12 @@ _add_part_props(TachieExpression, "空なら基本の表情のまま",
 
 
 def character_image_strips(ch):
-    """このキャラクターの立ち絵ストリップ（セリフと待機）。"""
+    """このキャラクターの立ち絵ストリップ（セリフなしの立ち絵と、前の版で置いたセリフ・待機の立ち絵）。"""
     sed = ch.id_data.sequence_editor
     if sed is None:
         return []
     return [s for s in sed.strips if s.type == "IMAGE"
-            and (s.get("tachie_character") == ch.name or s.get("tachie_idle") == ch.name)]
+            and ch.name in (s.get("tachie_character"), s.get("tachie_idle"), s.get("tachie_still"))]
 
 
 def apply_placement(strip, ch) -> None:
@@ -399,10 +399,11 @@ def _update_placement(self, context):
 
 
 # セリフの形（セリフごとにストリップの tachie_layout に持つ。キャラの line_layout は新しく置くセリフの既定）
+# 立ち絵はセリフとは別に置く（「立ち絵だけを置く」）。重なるそのキャラのセリフの間だけ口パクする
+# 番号は前の版（0 = FULL、1 = SUBTITLE、2 = AUDIO）と同じにする（.blend の EnumProperty は番号で保存される）
 LINE_LAYOUTS = [
-    ("FULL", "立ち絵あり", "音声・口パクする立ち絵・字幕"),
-    ("SUBTITLE", "音声と字幕", "立ち絵を出さない（喋っている間はそのキャラの立ち絵を消す）"),
-    ("AUDIO", "音声だけ", "立ち絵も字幕も出さない（喋っている間はそのキャラの立ち絵を消す）"),
+    ("SUBTITLE", "音声と字幕", "音声と字幕を置く", 1),
+    ("AUDIO", "音声だけ", "字幕を出さない", 2),
 ]
 
 
@@ -457,11 +458,8 @@ class TachieCharacter(bpy.types.PropertyGroup):
                               description="立ち絵が消えるところ（最後と、途切れる前）の効果")
     effect_seconds: FloatProperty(name="登場・退場の長さ", default=0.3, min=0.05, max=3.0, step=1, precision=2,
                                   unit="TIME_ABSOLUTE", update=_update_motion)
-    show_idle: BoolProperty(name="待機中も表示", default=True,
-                            description="喋っていない間も、まばたきだけする立ち絵を表示する")
-    line_layout: EnumProperty(name="セリフの形", items=LINE_LAYOUTS, default="FULL",
-                              description="新しく置くセリフの形（置いたセリフはセリフごとに変えられる）。"
-                                          "素材フォルダの無いキャラの「立ち絵あり」は「音声と字幕」になる")
+    line_layout: EnumProperty(name="セリフの形", items=LINE_LAYOUTS, default="SUBTITLE",
+                              description="新しく置くセリフの形（置いたセリフはセリフごとに変えられる）")
 
     font_path: StringProperty(name="フォント", subtype="FILE_PATH", default=default_font(), update=_update_subtitle)
     font_size: FloatProperty(name="文字サイズ", default=64, min=8, max=400, update=_update_subtitle)
@@ -621,8 +619,6 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
                                 description="「表情を置く」の長さ（秒）。再生位置にそのキャラのセリフがあれば、その終わりまで")
     advance: BoolProperty(name="追加後に再生位置を進める", default=True)
     ripple: BoolProperty(name="再生成で長さが変わったら後ろをずらす", default=True)
-    auto_idle: BoolProperty(name="待機を自動で更新", default=True,
-                            description="セリフを追加・再生成したら、待機中の立ち絵を作り直す")
 
     def character(self):
         if 0 <= self.active_character < len(self.characters):

@@ -18,7 +18,7 @@ from . import channels as lanes
 from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, place_text, system_fonts, text_offset
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
-from .tachie_studio.pipeline.render import LineMotion, blink_segment_frames, link_frames, segment_frames
+from .tachie_studio.pipeline.render import LineMotion, link_frames, still_frames
 from .tachie_studio.pipeline.script import script_format, split_kana
 from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
@@ -247,7 +247,10 @@ def apply_config(ch, config: CharacterConfig) -> None:
             setattr(ch, prop, layout[key])
     ch.position_y = layout.get("position_y", 0.0)
     for prop, key in MOTION_KEYS.items():  # 書いていないものは既定値（書き出しで既定値を省くため）
-        setattr(ch, prop, layout.get(key, ch.bl_rna.properties[prop].default))
+        value = layout.get(key, ch.bl_rna.properties[prop].default)
+        if prop == "line_layout":
+            value = line_layout(ch, value)  # 前の版の FULL（立ち絵あり）は SUBTITLE
+        setattr(ch, prop, value)
     for prop, key in (("font_path", "font"), ("font_size", "size"), ("text_color", "color"),
                       ("outline_color", "outline_color"), ("outline_width", "outline_width"),
                       ("line_spacing", "line_spacing"), ("subtitle_y", "y"), ("subtitle_box", "box"), ("box_color", "box_color"),
@@ -370,15 +373,14 @@ def character_cache(context, ch, preset: str | None = None) -> FrameCache:
 
 
 def line_layout(ch, layout: str | None = None) -> str:
-    """セリフの形（FULL / SUBTITLE / AUDIO）。None ならキャラの既定。素材の無いキャラは立ち絵を出せない。"""
+    """セリフの形（SUBTITLE / AUDIO）。None ならキャラの既定。前の版の FULL（立ち絵あり）は SUBTITLE。"""
     layout = layout or ch.line_layout
-    return "SUBTITLE" if layout == "FULL" and not ch.folder else layout
+    return "SUBTITLE" if layout not in ("SUBTITLE", "AUDIO") else layout
 
 
 def clip_job(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
              voice: dict | None = None, kana: str | None = None, accent: list | None = None,
-             accent_kana: str | None = None, audio: dict | None = None, layout: str = "FULL",
-             wav: bytes | None = None):
+             accent_kana: str | None = None, audio: dict | None = None, wav: bytes | None = None):
     """セリフの合成の準備（Blender に触る部分）だけをして、合成して書き出す関数を返す。返した関数は
     (RenderedClip, 書き出し先フォルダ) を返し、Blender に触らないので別スレッドで呼べる（音声合成を待つ間、画面を固めない）。
 
@@ -386,46 +388,41 @@ def clip_job(context, ch, text: str, preset: str | None = None, speaker: int | N
     `kana` は発音（AquesTalk 風記法）。None や空なら VOICEVOX が自動で付けた読み。
     `accent` は抑揚を編集した accent_phrases（kana より優先）。`accent_kana` は編集したときの発音で、
     今の発音（`kana` か自動の読み）と違えば `accent` は使わない（ユーザー辞書で自動の読みが変わったときなど）。
-    `audio` はフェードと余韻（None ならキャラクターの既定値）。`layout` が FULL 以外なら立ち絵の連番は書かない。
+    `audio` はフェードと余韻（None ならキャラクターの既定値）。立ち絵の連番は書かない（立ち絵は別に置き、
+    重なるセリフの lines/<id>.json から口パクさせる）。
     `wav` は合成済みの音声（YMM4 が保存した音声）。あれば VOICEVOX では合成しない（口パクの計算に audio_query は使う）。
     """
     audio = audio if audio is not None else character_audio(ch)
     if not ch.folder:
         preset = None  # 立ち絵の無いキャラに表情は無い（立ち絵のあるキャラで選んだ表情が残っていても使わない）
-    if layout == "FULL":
-        cache = character_cache(context, ch, preset)
-        config = CharacterConfig(name=ch.name, folder=cache.character.path, speaker=ch.speaker,
-                                 expression=cache.expression, mouth=ch.mouth)
-    else:
-        cache = None
-        config = CharacterConfig(name=ch.name, folder=None, speaker=ch.speaker,
-                                 expression=expression_of(ch, preset), mouth=ch.mouth)
+    config = CharacterConfig(name=ch.name, folder=None, speaker=ch.speaker,
+                             expression=expression_of(ch, preset), mouth=ch.mouth)
     clip_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     lines_dir = output_dir(context) / "lines"
     line = Line(0, ch.name, text, preset or None, speaker, voice if voice is not None else character_voice(ch),
                 kana or None, accent or None, accent_kana=accent_kana, fade_in=audio.get("fade_in", 0.0),
                 fade_out=audio.get("fade_out", 0.0), after=audio.get("after", 0.0), wav=wav)
-    engine, fps, character = client(context, ch), scene_fps(seq_scene(context)), cache and cache.character
+    engine, fps = client(context, ch), scene_fps(seq_scene(context))
 
     def run():
-        clip = render_line(engine, config, character, line, lines_dir, fps=fps, cache=cache, stem=clip_id)
+        clip = render_line(engine, config, None, line, lines_dir, fps=fps, cache=None, stem=clip_id)
         return clip, lines_dir
     return run
 
 
 def render_clip(context, ch, text: str, preset: str | None = None, speaker: int | None = None,
                 voice: dict | None = None, kana: str | None = None, accent: list | None = None,
-                accent_kana: str | None = None, audio: dict | None = None, layout: str = "FULL"):
+                accent_kana: str | None = None, audio: dict | None = None):
     """セリフを合成して書き出す。(RenderedClip, 書き出し先フォルダ) を返す。引数は `clip_job` と同じ。"""
-    return clip_job(context, ch, text, preset, speaker, voice, kana, accent, accent_kana, audio, layout)()
+    return clip_job(context, ch, text, preset, speaker, voice, kana, accent, accent_kana, audio)()
 
 
-def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str = "FULL",
+def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str = "SUBTITLE",
                   prefer: dict | None = None) -> dict:
-    """セリフを start に置くチャンネル {"audio", "image", "subtitle", "name"}（形 `layout` で置くものだけ）。
+    """セリフを start に置くチャンネル {"audio", "subtitle", "name"}（形 `layout` で置くものだけ）。
 
-    どれもそのキャラのレーン（`channels`）。立ち絵は同じキャラの立ち絵のあるセリフと重ねられない。音声・字幕・
-    キャラ名はレーンが埋まっていれば（同じキャラの立ち絵の無いセリフが重なるとき）レーンより上の空き。キャラ名は字幕より上。
+    どれもそのキャラのレーン（`channels`）。レーンが埋まっていれば（同じキャラのセリフが重なるとき）
+    レーンより上の空き。キャラ名は字幕より上。
     `prefer`（役割 → チャンネル。作り直すときの今のチャンネル）があり、そこが空いていればそこ（手で動かした位置を残す）。
     """
     prefer = prefer or {}
@@ -434,16 +431,6 @@ def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str =
     sed = scene.sequence_editor
     end = start + frames
     result = {}
-    if layout == "FULL":
-        image = lanes.lane(scene, "image", ch.name)
-        if prefer.get("image") and (sed is None or not _overlaps(sed, prefer["image"], start, end, ignore)):
-            image = prefer["image"]
-        if image is None:
-            raise ValueError(f"{ch.name}には立ち絵のチャンネルがありません（立ち絵の無いキャラクター）")
-        if sed is not None and (_overlaps(sed, image, start, end, ignore) or _own_overlaps(sed, ch, start, end, ignore)):
-            raise ValueError(f"{ch.name}の立ち絵（チャンネル {image}）の {start}〜{end} フレームに他のストリップが"
-                             "あります（同じキャラのセリフは重ねられません）")
-        result["image"] = image
     taken: set[int] = set()
     roles = ["audio"] + (["subtitle"] + (["name"] if ch.show_name else []) if layout != "AUDIO" else [])
     for role in roles:
@@ -461,8 +448,9 @@ def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str =
 
 def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voice: dict | None = None,
                  accent: list | None = None, audio: dict | None = None, channels: dict | None = None,
-                 layout: str = "FULL") -> list:
-    """書き出したセリフを start に置く。置いたストリップ（音声・立ち絵・字幕・キャラ名のうち形 `layout` で置くもの）を返す。
+                 layout: str = "SUBTITLE") -> list:
+    """書き出したセリフを start に置く。置いたストリップ（音声・字幕・キャラ名のうち形 `layout` で置くもの）を返す。
+    立ち絵は置かない（そのキャラの立ち絵が重なっていれば、自動の反映でその間だけ口パクする）。
 
     セリフごとの声（`voice`、None ならキャラクターの既定値）は音声ストリップの `tachie_voice_*` に持つ。
     `channels` は `line_channels` の結果（None なら設定のチャンネル）。
@@ -472,30 +460,13 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     if channels is None:  # レーンのまま（重なりは確かめない）
         lanes.ensure_layout(scene)
         lay = lanes.scene_layout(scene)
-        channels = {role: lay.channel(role, ch.name) for role in ("audio", "image", "subtitle", "name")}
+        channels = {role: lay.channel(role, ch.name) for role in ("audio", "subtitle", "name")}
         channels["name"] = channels["name"] or lanes.free_channel(None, lay, start, start + 1)
     sed = scene.sequence_editor or scene.sequence_editor_create()
-    if scene.view_settings.view_transform != "Standard":
-        # 3D 用の AgX / Filmic のままだと立ち絵の色が淡くなる
-        scene.view_settings.view_transform = "Standard"
-
     label = f"{ch.name}: " + (text if len(text) <= 16 else text[:15] + "…")
     sound = sed.strips.new_sound(name=f"音声 {label}", filepath=_path_for_blend(lines_dir / clip.wav),
                                  channel=channels["audio"], frame_start=start)
     strips = [sound]
-
-    image = None
-    if layout == "FULL":
-        frames_dir = lines_dir / clip.frames_dir
-        frame_files = sorted(os.listdir(frames_dir))
-        image = sed.strips.new_image(name=f"立ち絵 {label}", filepath=_path_for_blend(frames_dir / frame_files[0]),
-                                     channel=channels.get("image") or ch.channel, frame_start=start,
-                                     fit_method="ORIGINAL")
-        for name in frame_files[1:]:
-            image.elements.append(name)
-        image.blend_type = "ALPHA_OVER"
-        set_pose(image, None, ch)
-        strips.append(image)
 
     if layout != "AUDIO":
         subtitle = sed.strips.new_effect(name=f"字幕 {label}", type="TEXT", channel=channels["subtitle"],
@@ -527,9 +498,6 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         s["tachie_frames"] = clip.frames  # 余韻を含む長さ（音声だけのセリフは音声ストリップより長い）
     set_line_voice(sound, voice if voice is not None else character_voice(ch))
     set_line_audio(sound, audio if audio is not None else character_audio(ch))
-    if image is not None:
-        image["tachie_frames_dir"] = image.directory  # 表情ストリップが無いときの連番
-        apply_faces(context, [image])
     # 発音は音声ストリップに。自動の読みと違えば「編集した発音」として再生成でも使う
     sound["tachie_kana"] = clip.extra.get("kana", "")
     sound["tachie_kana_auto"] = clip.extra.get("kana_auto", "")
@@ -538,10 +506,6 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         sound["tachie_accent"] = json.dumps(accent, ensure_ascii=False)
         sound["tachie_accent_key"] = json.dumps([text, clip.extra.get("kana", ""), clip.speaker], ensure_ascii=False)
     return strips
-
-
-def line_image(strips):
-    return next((s for s in strips if s.type == "IMAGE"), None)
 
 
 def line_texts(strips) -> list:
@@ -556,11 +520,11 @@ def line_end(strips) -> int:
 
 
 def line_layout_of(strips) -> str:
-    """置いてあるセリフの形（印の無い古いセリフは、立ち絵があれば FULL）。"""
+    """置いてあるセリフの形（前の版の FULL と印の無い古いセリフは、字幕があれば SUBTITLE）。"""
     for s in strips:
-        if s.get("tachie_layout"):
+        if s.get("tachie_layout") in ("SUBTITLE", "AUDIO"):
             return s["tachie_layout"]
-    return "FULL" if line_image(strips) is not None else ("SUBTITLE" if line_texts(strips) else "AUDIO")
+    return "SUBTITLE" if line_texts(strips) else "AUDIO"
 
 
 def line_focus(strips):
@@ -653,7 +617,7 @@ def line_voice(strips, ch) -> dict:
 
 def shift_after(sed, frame: int, delta: int, ignore=()) -> None:
     """frame 以降に始まるストリップを delta フレームずらす。重ならない順に動かす。"""
-    targets = [s for s in sed.strips if s.left_handle >= frame and s not in ignore and not s.get("tachie_idle")]
+    targets = [s for s in sed.strips if s.left_handle >= frame and s not in ignore]
     targets.sort(key=lambda s: s.left_handle, reverse=delta > 0)
     for s in targets:
         s.frame_start += delta
@@ -714,15 +678,9 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     start = min(s.left_handle for s in old)
     old_end = line_end(old)
 
-    if layout is None:
-        old_ch = next((c for c in settings.characters if c.name == old[0]["tachie_character"]), None)
-        # 立ち絵の無いキャラの形は立ち絵を出せないためのもの。立ち絵のあるキャラに変えたらそのキャラの既定にする
-        layout = (None if old_ch is not None and old_ch.name != ch.name and not old_ch.folder
-                  else line_layout_of(old))
-    layout = line_layout(ch, layout)
+    layout = line_layout(ch, layout or line_layout_of(old))
 
-    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice, kana, accent, accent_kana, audio,
-                                  layout)
+    clip, lines_dir = render_clip(context, ch, text, preset, speaker, voice, kana, accent, accent_kana, audio)
     delta = start + clip.frames - old_end
     # 消す前に置けるか確かめる（ずらすストリップは邪魔にならない）
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
@@ -739,28 +697,19 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
         # 縮めるとき、このセリフの途中から始まって後ろまで続くストリップ（同時に喋る別のキャラのセリフなど）は
         # 動かさないので、同じチャンネルの後ろのストリップがそこへ重ならないところまでしか詰めない
         # （重なると Blender が別のチャンネルへ逃がす）
-        stay = [s for s in sed.strips if s not in old and s not in movers and not s.get("tachie_idle")
-                and s.right_handle > old_end + delta]
+        stay = [s for s in sed.strips if s not in old and s not in movers and s.right_handle > old_end + delta]
         for m in movers:
-            if m.get("tachie_idle"):
-                continue
             for s in stay:
                 if s.channel == m.channel:
                     shift = max(shift, s.right_handle - m.left_handle)
 
-    old_image = line_image(old)
-    pose = get_pose(old_image) if old_image is not None else None
     old_subtitle = line_subtitle(old)
     offset = text_offset(old_subtitle) if old_subtitle is not None else None
     for s in old:
         sed.strips.remove(s)
-    remove_idle(sed)
     if settings.ripple and shift:
         shift_after(sed, old_end, shift)
     strips = place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio, channels, layout)
-    image = line_image(strips)
-    if pose is not None and image is not None:  # セリフごとの位置・大きさは作り直しても引き継ぐ
-        set_pose(image, pose, ch)
     if offset is not None:
         for t in line_texts(strips):
             set_text_offset(t, offset)
@@ -846,24 +795,6 @@ def face_segments(sed, ch, start: int, end: int) -> list[tuple[int, int, str]]:
     return out
 
 
-def _split_by_faces(sed, ch, start: int, end: int) -> list[tuple[int, int, str]]:
-    """[start, end) を表情ストリップの境目で分け、各区間の表情（基本は ""）を付ける。"""
-    owner = [""] * (end - start)
-    for a, b, preset in face_segments(sed, ch, start, end):
-        owner[a:b] = [preset] * (b - a)
-    out = []
-    for i, preset in enumerate(owner):
-        if out and out[-1][2] == preset:
-            out[-1] = (out[-1][0], start + i + 1, preset)
-        else:
-            out.append((start + i, start + i + 1, preset))
-    return out
-
-
-def _segments_key(segments, base: str) -> str:
-    return json.dumps([base, segments], ensure_ascii=False)
-
-
 def _strip_from_paths(context, sed, ch, name: str, start: int, paths: list, folder: str, key: str,
                       channel: int | None = None):
     """画像のパスの列をハードリンクで 1 つのフォルダに並べ、立ち絵ストリップにする（既定は立ち絵のレーン）。"""
@@ -880,11 +811,12 @@ def _strip_from_paths(context, sed, ch, name: str, start: int, paths: list, fold
 
 
 def apply_faces(context, strips=None, problems: list | None = None) -> int:
-    """表情ストリップに合わせて立ち絵（セリフ・セリフなし）を描き直す。描き直した本数を返す。
+    """立ち絵（セリフなしの立ち絵）を、重なるそのキャラのセリフ（口パクと表情）と表情ストリップに合わせて
+    作り直す。作り直した本数を返す。
 
-    セリフは保存した動き（lines/<id>.json）から連番を並べ直してフォルダを差し替える（音声は合成し直さない）。
-    セリフなしの立ち絵は作り直す。待機は refresh_idle が表情ストリップの境目で分けて置く。
-    描き直せなかったもの（表情ストリップより前に作ったセリフなど）は `problems` に理由を足す。
+    鍵（`still_key`）が置いたときと違うもの（セリフや表情ストリップを足した・動かした・消したなど）と、
+    長さを変えた（ハンドルを動かした）ものを作り直す。前の版で置いたセリフの立ち絵・待機はそのまま。
+    作り直せなかったものと、口パクに使えなかったセリフは `problems` に理由を足す。
     """
     scene = seq_scene(context)
     sed = scene.sequence_editor
@@ -892,24 +824,18 @@ def apply_faces(context, strips=None, problems: list | None = None) -> int:
         return 0
     settings = scene.tachie
     if strips is None:
-        strips = [s for s in sed.strips if s.type == "IMAGE" and (s.get("tachie_id") or s.get("tachie_still"))]
+        strips = [s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_still")]
     count = 0
     for strip in list(strips):
-        name = strip.get("tachie_still") or strip.get("tachie_character")
-        ch = next((c for c in settings.characters if c.name == name), None)
-        if ch is None:
+        ch = next((c for c in settings.characters if c.name == strip.get("tachie_still")), None)
+        if ch is None or not ch.folder:
             continue
-        preset = strip.get("tachie_expression", "")
-        start = int(strip.content_start)
-        segments = face_segments(sed, ch, start, start + len(strip.elements))
-        key = _segments_key(segments, preset) if segments else ""
-        if strip.get("tachie_faced", "") == key:
+        start, end = strip.left_handle, strip.right_handle
+        stretched = int(strip.content_start) != start or len(strip.elements) != end - start
+        if not stretched and strip.get("tachie_faced", "") == still_key(context, sed, ch, strip):
             continue
         try:
-            if strip.get("tachie_still"):
-                remake_still(context, strip)
-            else:
-                _relayout_line(context, strip, ch, preset, segments, key)
+            remake_still(context, strip, problems=problems)
         except ERRORS as e:
             if problems is not None:
                 problems.append(str(e))
@@ -918,33 +844,46 @@ def apply_faces(context, strips=None, problems: list | None = None) -> int:
     return count
 
 
-def _relayout_line(context, strip, ch, preset: str, segments, key: str) -> None:
-    original = strip.get("tachie_frames_dir", strip.directory)
-    if not segments:
-        strip.directory = original
-        strip["tachie_faced"] = ""
-        return
-    motion_path = output_dir(context) / "lines" / f"{strip['tachie_id']}.json"
-    if not motion_path.is_file():
-        raise ValueError(f"{strip.name} は表情ストリップに対応する前に作ったセリフです（再生成すると使えます）")
-    motion = LineMotion.load(motion_path)
-    if motion.frames != len(strip.elements):
-        raise ValueError(f"{strip.name} の長さが書き出したときと違います（再生成してください）")
-    base = character_cache(context, ch, preset)
-    caches = {p: character_cache(context, ch, p) for _, _, p in segments}
-    paths = segment_frames(motion, [(0, motion.frames, base)] + [(a, b, caches[p]) for a, b, p in segments])
-    directory = output_dir(context) / "lines" / f"{strip['tachie_id']}_f{hashlib.sha1(key.encode()).hexdigest()[:10]}"
-    link_frames(paths, directory)
-    strip.directory = _path_for_blend(directory) + "/"
-    strip["tachie_faced"] = key
+def line_sounds(sed, name: str) -> list:
+    """キャラ `name` のセリフの音声ストリップ（ミュートは除く。始まりの順）。"""
+    return sorted((s for s in sed.strips if s.type == "SOUND" and s.get("tachie_id")
+                   and s.get("tachie_character") == name and not s.mute), key=lambda s: s.left_handle)
+
+
+def _talking_lines(sed, ch, start: int, end: int) -> list[tuple]:
+    """[start, end) に重なるそのキャラのセリフ [(id, 動きの頭のずれ, 表情, 長さ)]（ずれは start から）。
+
+    動きの頭は音声ストリップの中身の頭（content_start）、長さは余韻を含む `tachie_frames`。セリフの表情が
+    キャラに無い（消した・名前を変えた）ときと "" のときは立ち絵の表情のまま（None）。
+    """
+    names = {e.name for e in ch.expressions}
+    out = []
+    for sound in line_sounds(sed, ch.name):
+        head = int(sound.content_start)
+        frames = int(sound.get("tachie_frames", 0)) or (sound.right_handle - head)
+        if head + frames <= start or end <= head:
+            continue
+        preset = sound.get("tachie_expression", "")
+        out.append((sound["tachie_id"], head - start, preset if preset in names else None, frames))
+    return out
+
+
+def still_key(context, sed, ch, strip) -> str:
+    """立ち絵の作り直しの鍵（表情・表情ストリップの区間・重なるセリフ）。置いたときと違えば作り直す。"""
+    start, end = strip.left_handle, strip.right_handle
+    return _still_key(strip.get("tachie_expression", ""), face_segments(sed, ch, start, end),
+                      _talking_lines(sed, ch, start, end))
+
+
+def _still_key(preset: str, segments, talking) -> str:
+    if not segments and not talking:
+        return ""
+    return json.dumps([preset, segments, talking], ensure_ascii=False)
 
 
 def set_line_expression(context, clip_id: str, preset: str) -> list:
-    """セリフの表情を変える。保存した動き（lines/<id>.json）から立ち絵の連番を並べ直すので、音声は合成し直さない。
-
-    動きの無い古いセリフ・長さが書き出したときと違うセリフは作り直す（`regenerate`）。表情ストリップは呼び出し側で
-    `refresh_faces` する（ここでは立ち絵の元の連番を差し替えて、表情ストリップの区間を当て直すだけ）。
-    """
+    """セリフの表情を変える（音声は合成し直さない）。重なる立ち絵は自動の反映で描き直す（呼び出し側で
+    `refresh_faces` してもよい）。"""
     sed = seq_scene(context).sequence_editor
     strips = line_strips(sed, clip_id)
     if not strips:
@@ -952,35 +891,17 @@ def set_line_expression(context, clip_id: str, preset: str) -> list:
     ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
     if preset and preset not in {e.name for e in ch.expressions}:
         raise ValueError(f"{ch.name} に表情 {preset!r} がありません")
-    image = line_image(strips)
-    if image is not None:
-        motion_path = output_dir(context) / "lines" / f"{clip_id}.json"
-        motion = LineMotion.load(motion_path) if motion_path.is_file() else None
-        if motion is None or motion.frames != len(image.elements):
-            return regenerate(context, clip_id, preset=preset)
-        paths = segment_frames(motion, [(0, motion.frames, character_cache(context, ch, preset))])
-        key = hashlib.sha1(json.dumps(["expression", preset], ensure_ascii=False).encode()).hexdigest()[:10]
-        directory = output_dir(context) / "lines" / f"{clip_id}_e{key}"
-        link_frames(paths, directory)
-        image.directory = _path_for_blend(directory) + "/"
-        image["tachie_frames_dir"] = image.directory
-        image["tachie_faced"] = ""  # 表情ストリップの区間は新しい連番の上に当て直す
     for s in strips:
         s["tachie_expression"] = preset
-    if image is not None:
-        apply_faces(context, [image])
     return strips
 
 
 def refresh_faces(context, problems: list | None = None) -> int:
-    """全体を表情ストリップに合わせる（立ち絵の描き直しと待機の作り直し）。"""
+    """全体を合わせる（立ち絵の作り直しと、動き・ダッキングの作り直し）。作り直した立ち絵の本数を返す。"""
     count = apply_faces(context, problems=problems)
-    if seq_scene(context).tachie.auto_idle:
-        refresh_idle(context)  # 最後に動きとダッキングも作り直す
-    else:
-        # 呼び出し側は反映済みとして署名を記録するので、待機を作らないときも動きとダッキングは作り直す
-        # （まとめて変えるで読み上げ速度を変えるなど、セリフの長さが変わったとき）
-        refresh_motion_now(seq_scene(context))
+    # 呼び出し側は反映済みとして署名を記録するので、動きとダッキングも作り直す
+    # （まとめて変えるで読み上げ速度を変えるなど、セリフの長さが変わったとき）
+    refresh_motion_now(seq_scene(context))
     return count
 
 
@@ -1002,21 +923,26 @@ def refresh_motion_now(scene) -> int:
 
 
 def faces_signature(scene) -> str:
-    """表情ストリップと、それが効く立ち絵の位置・表情。変わったら描き直す（待機は作り直すので含めない）。"""
+    """立ち絵の作り直しに関わる値（表情ストリップ、セリフの位置・長さ・表情、立ち絵の位置・長さ・表情）。"""
     sed = scene.sequence_editor
     if sed is None:
         return ""
     items = []
+    stills = False
     for s in sed.strips:
         if s.get("tachie_face"):
             items.append(("face", s.name, s.channel, s.left_handle, s.right_handle, s["tachie_face"],
                           s.get("tachie_expression", "")))
-        elif s.type == "IMAGE" and (s.get("tachie_id") or s.get("tachie_still")):
-            items.append(("image", s.name, int(s.content_start), len(s.elements), s.get("tachie_faced", "")))
-    if not any(i[0] == "face" for i in items) and not any(
-            s.get("tachie_faced") for s in sed.strips if s.type == "IMAGE"):
-        return ""  # 表情ストリップが無く、描き直した立ち絵も無い
-    return json.dumps(sorted(items), ensure_ascii=False)
+        elif s.type == "SOUND" and s.get("tachie_id"):
+            items.append(("line", s.name, s.get("tachie_character", ""), int(s.content_start),
+                          int(s.get("tachie_frames", 0)), s.get("tachie_expression", ""), s.mute))
+        elif s.type == "IMAGE" and s.get("tachie_still"):
+            stills = True
+            items.append(("still", s.name, int(s.content_start), s.left_handle, s.right_handle, len(s.elements),
+                          s.get("tachie_expression", ""), s.get("tachie_faced", "")))
+    if not stills:
+        return ""  # 作り直す立ち絵が無い
+    return json.dumps(sorted(items, key=repr), ensure_ascii=False)
 
 
 _applied_signatures: dict[str, tuple[str, str, str]] = {}
@@ -1098,74 +1024,10 @@ class _nullcontext:
         return False
 
 
-def remove_idle(sed) -> None:
-    for s in [s for s in sed.strips if s.get("tachie_idle")]:
-        sed.strips.remove(s)
-
-
-def refresh_idle(context) -> int:
-    """待機ストリップを作り直す。各キャラの立ち絵チャンネルの隙間を、シーンの開始から最後のセリフ
-    （か手動の立ち絵）の終わりまで、まばたきだけの立ち絵で埋める。置いた本数を返す。
-
-    そのキャラの立ち絵の無いセリフ（音声と字幕・音声だけ）の間は埋めない（立ち絵を消す）。"""
-    scene = seq_scene(context)
-    sed = scene.sequence_editor
-    if sed is None:
-        return 0
-    lanes.ensure_layout(scene)  # 待機は立ち絵のレーン（ch.channel）に置く
-    remove_idle(sed)
-    line_ends = [s.right_handle for s in sed.strips if s.get("tachie_id") or s.get("tachie_still")]
-    if not line_ends:
-        return 0
-    start, end = scene.frame_start, max(line_ends)
-    fps = scene_fps(scene)
-    count = 0
-    for ch in scene.tachie.characters:
-        if not ch.show_idle or not ch.folder:
-            continue
-        # そのキャラの立ち絵（手で別のチャンネルに動かしたものも）と、立ち絵のチャンネルに実際にあるもの
-        # （新しく作るストリップは重なっても Blender が逃がさないので、そこには置かない）
-        busy = [(s.left_handle, s.right_handle) for s in sed.strips
-                if s.channel == ch.channel or _own_image(s, ch.name)]
-        busy += [(s.left_handle, max(s.right_handle, s.left_handle + int(s.get("tachie_frames", 0))))
-                 for s in sed.strips  # 余韻の分まで（音声だけのセリフは音声ストリップより長い）
-                 if s.get("tachie_character") == ch.name and s.get("tachie_id")
-                 and s.get("tachie_layout", "FULL") != "FULL"]
-        busy.sort()
-        gaps, cursor = [], start
-        for left, right in busy:
-            if left > cursor:
-                gaps.append((cursor, min(left, end)))
-            cursor = max(cursor, right)
-        if cursor < end:
-            gaps.append((cursor, end))
-        gaps = [(a, b) for a, b in gaps if b > a]
-        if not gaps:
-            continue
-        caches = {}
-        for gap_a, gap_b in gaps:
-            # 表情ストリップの境目でも分け、その区間の表情で置く
-            for a, b, preset in _split_by_faces(sed, ch, gap_a, gap_b):
-                if preset not in caches:
-                    caches[preset] = character_cache(context, ch, preset)
-                strip = _blink_strip(sed, ch, caches[preset], f"待機 {ch.name}", a, b - a, fps)
-                strip["tachie_idle"] = ch.name
-                count += 1
-    refresh_motion_now(scene)
-    return count
-
-
-def _own_image(strip, name: str) -> bool:
-    """キャラ `name` のセリフかセリフなしの立ち絵（待機は除く）。置いてあるチャンネルは問わない。"""
-    from .motion import owner
-
-    return not strip.get("tachie_idle") and owner(strip) == name
-
-
-def _own_overlaps(sed, ch, start: int, end: int, ignore=()) -> bool:
+def _still_overlaps(sed, ch, start: int, end: int, ignore=()) -> bool:
     """キャラ `ch` の立ち絵（手で別のチャンネルに動かしたものも）が [start, end) に重なるか。"""
-    return any(_own_image(s, ch.name) and s.left_handle < end and start < s.right_handle and s not in ignore
-               for s in sed.strips)
+    return any(s.type == "IMAGE" and s.get("tachie_still") == ch.name and s not in ignore
+               and s.left_handle < end and start < s.right_handle for s in sed.strips)
 
 
 def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int, fps: float,
@@ -1182,30 +1044,50 @@ def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int,
 
 
 def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None,
-                channel: int | None = None):
-    """セリフなしの立ち絵（まばたきのみ）を置く。待機ストリップと違い、作り直しでは消えない。"""
+                channel: int | None = None, problems: list | None = None):
+    """立ち絵（`tachie_still`）を置く。まばたきし、重なるそのキャラのセリフの間だけ口パクしてセリフの表情に
+    なる（表情ストリップが重なればその表情）。口パクに使えなかったセリフ（動きの json が無い前の版のセリフなど）は
+    `problems` に理由を足し、その間は口を閉じる。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
     lanes.ensure_layout(scene)  # 立ち絵のレーン（ch.channel）に置く
     if scene.view_settings.view_transform != "Standard":
+        # 3D 用の AgX / Filmic のままだと立ち絵の色が淡くなる
         scene.view_settings.view_transform = "Standard"
     cache = character_cache(context, ch, preset)
     name = f"立ち絵 {ch.name}" + (f"({preset})" if preset else "")
     if not channel or _overlaps(sed, channel, start, start + frames):  # 作り直す前のチャンネルが埋まっていればレーン
         channel = ch.channel
-    segments = face_segments(sed, ch, start, start + frames)
-    if segments:
-        # 表情ストリップと重なる: 区間ごとに表情を変えた連番を faces/ に並べる
-        caches = {p: character_cache(context, ch, p) for _, _, p in segments}
-        paths = blink_segment_frames([(0, frames, cache)] + [(a, b, caches[p]) for a, b, p in segments],
-                                     frames, scene_fps(scene), seed=(ch.name, start))
+    end = start + frames
+    segments = face_segments(sed, ch, start, end)
+    talking = _talking_lines(sed, ch, start, end)
+    lines = []
+    lines_dir = output_dir(context) / "lines"
+    caches = {preset or "": cache}
+
+    def cache_of(p: str):
+        if p not in caches:
+            caches[p] = character_cache(context, ch, p)
+        return caches[p]
+
+    for clip_id, offset, line_preset, length in talking:
+        path = lines_dir / f"{clip_id}.json"
+        motion = LineMotion.load(path) if path.is_file() else None
+        if motion is None or motion.frames != length:
+            if problems is not None:
+                problems.append(f"{ch.name}のセリフ {clip_id} の口の動きがありません（再生成すると口パクします）")
+            continue
+        lines.append((offset, motion, cache_of(line_preset if line_preset is not None else preset or "")))
+    if segments or lines:
+        paths = still_frames(cache, [(a, b, cache_of(p)) for a, b, p in segments], lines, frames,
+                             scene_fps(scene), seed=(ch.name, start))
         # フォルダはキャラ・位置・長さごと（同じ区間の別の立ち絵と連番を取り合わないように）
         strip = _strip_from_paths(context, sed, ch, name, start, paths, "faces",
-                                  json.dumps([ch.name, start, frames, _segments_key(segments, preset)],
+                                  json.dumps([ch.name, start, frames, _still_key(preset, segments, talking)],
                                              ensure_ascii=False), channel)
     else:
         strip = _blink_strip(sed, ch, cache, name, start, frames, scene_fps(scene), channel)
-    strip["tachie_faced"] = _segments_key(segments, preset) if segments else ""
+    strip["tachie_faced"] = _still_key(preset, segments, talking)
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
     strip["tachie_expression"] = preset or ""
@@ -1215,8 +1097,8 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     return strip
 
 
-def remake_still(context, strip, preset: str | None = None):
-    """手動の立ち絵を今の位置・長さ・キャラクター設定で作り直す。新しいストリップを返す。"""
+def remake_still(context, strip, preset: str | None = None, problems: list | None = None):
+    """立ち絵を今の位置・長さ・キャラクター設定・重なるセリフで作り直す。新しいストリップを返す。"""
     settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
     ch = find_character(settings, strip["tachie_still"])
@@ -1226,9 +1108,12 @@ def remake_still(context, strip, preset: str | None = None):
     start, frames = strip.left_handle, strip.right_handle - strip.left_handle
     character_cache(context, ch, preset)  # 素材が読めないときは消す前に失敗させる
     pose = get_pose(strip)
-    channel = strip.channel  # 今のチャンネル（空いていれば、そこに置き直す）
+    # 今のチャンネル（空いていれば、そこに置き直す）。先にレーンを合わせる（古いレーンのチャンネルを持ったまま
+    # 置き直すと、手で動かしたものに見えてレーンに戻らない）
+    lanes.ensure_layout(seq_scene(context))
+    channel = strip.channel
     sed.strips.remove(strip)
-    return place_still(context, ch, preset, start, frames, pose, channel)
+    return place_still(context, ch, preset, start, frames, pose, channel, problems)
 
 
 def connect(context, strips) -> None:
@@ -1252,7 +1137,7 @@ def active_line_id(context) -> str | None:
 # ---- オペレーター ----
 
 class TACHIE_OT_add_line(bpy.types.Operator):
-    """選択中のキャラクターでセリフを合成し、音声・口パク立ち絵・字幕を再生位置に置く"""
+    """選択中のキャラクターでセリフを合成し、音声と字幕を再生位置に置く（重なる立ち絵が口パクする）"""
 
     bl_idname = "tachie.add_line"
     bl_label = "セリフを追加"
@@ -1272,13 +1157,10 @@ class TACHIE_OT_add_line(bpy.types.Operator):
         start = seq_scene(context).frame_current
         layout = line_layout(ch)
         try:
-            clip, lines_dir = render_clip(context, ch, text, settings.expression, kana=kana, layout=layout)
+            clip, lines_dir = render_clip(context, ch, text, settings.expression, kana=kana)
             channels = line_channels(context, ch, start, clip.frames, layout=layout)
-            if seq_scene(context).sequence_editor:
-                remove_idle(seq_scene(context).sequence_editor)
             strips = place_strips(context, ch, clip, lines_dir, text, start, channels=channels, layout=layout)
-            if settings.auto_idle:
-                refresh_idle(context)
+            refresh_faces(context)  # 重なる立ち絵を口パクさせる
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -1296,7 +1178,7 @@ class TACHIE_OT_add_line(bpy.types.Operator):
 
 
 class TACHIE_OT_add_still(bpy.types.Operator):
-    """選択中のキャラクターの立ち絵（まばたきのみ）を、セリフなしで再生位置に置く"""
+    """選択中のキャラクターの立ち絵を再生位置に置く（まばたきし、重なるそのキャラのセリフの間だけ口パクする）"""
 
     bl_idname = "tachie.add_still"
     bl_label = "立ち絵だけを置く"
@@ -1318,29 +1200,29 @@ class TACHIE_OT_add_still(bpy.types.Operator):
         sed = scene.sequence_editor
         lanes.ensure_layout(scene)  # ch.channel を今のレーンにしてから確かめる
         if sed and (_overlaps(sed, ch.channel, start, start + frames)
-                    or _own_overlaps(sed, ch, start, start + frames)):
+                    or _still_overlaps(sed, ch, start, start + frames)):
             self.report({"ERROR"}, f"チャンネル {ch.channel} の {start}〜{start + frames} フレームに"
                                    "他のストリップがあります")
             return {"CANCELLED"}
+        problems = []
         try:
-            character_cache(context, ch, settings.expression)  # 待機を消す前に素材を確かめる
-            if sed:
-                remove_idle(sed)
-            strip = place_still(context, ch, settings.expression, start, frames)
-            if settings.auto_idle:
-                refresh_idle(context)
+            strip = place_still(context, ch, settings.expression, start, frames, problems=problems)
+            refresh_motion_now(scene)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         scene.sequence_editor.active_strip = strip
         if settings.advance:
             scene.frame_current = strip.right_handle
-        self.report({"INFO"}, f"{ch.name}の立ち絵を {frames} フレーム置きました")
+        if problems:
+            self.report({"WARNING"}, f"{ch.name}の立ち絵を {frames} フレーム置きました（{problems[0]}）")
+        else:
+            self.report({"INFO"}, f"{ch.name}の立ち絵を {frames} フレーム置きました")
         return {"FINISHED"}
 
 
 class TACHIE_OT_remake_still(bpy.types.Operator):
-    """選択中の立ち絵を、今の位置・長さ・キャラクター設定で作り直す（伸ばしたあとなど）"""
+    """選択中の立ち絵を、今の位置・長さ・キャラクター設定・重なるセリフで作り直す"""
 
     bl_idname = "tachie.remake_still"
     bl_label = "作り直す"
@@ -1354,13 +1236,8 @@ class TACHIE_OT_remake_still(bpy.types.Operator):
     def execute(self, context):
         sed = seq_scene(context).sequence_editor
         try:
-            strip = sed.active_strip
-            ch = find_character(seq_scene(context).tachie, strip["tachie_still"])
-            character_cache(context, ch, strip.get("tachie_expression", ""))  # 待機を消す前に素材を確かめる
-            remove_idle(sed)
-            strip = remake_still(context, strip)
-            if seq_scene(context).tachie.auto_idle:
-                refresh_idle(context)
+            strip = remake_still(context, sed.active_strip)
+            refresh_motion_now(seq_scene(context))
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -1386,8 +1263,7 @@ class TACHIE_OT_regenerate(bpy.types.Operator):
         preset = sed.active_strip.get("tachie_expression", "")
         try:
             strips = regenerate(context, active_line_id(context), text, preset)
-            if seq_scene(context).tachie.auto_idle:
-                refresh_idle(context)
+            refresh_faces(context)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -1403,8 +1279,7 @@ def _regenerate_active(op, context, **kwargs):
     try:
         strips = regenerate(context, active_line_id(context), active["tachie_text"],
                             active.get("tachie_expression", ""), **kwargs)
-        if seq_scene(context).tachie.auto_idle:
-            refresh_idle(context)
+        refresh_faces(context)
     except ERRORS as e:
         op.report({"ERROR"}, str(e))
         return {"CANCELLED"}
@@ -1830,9 +1705,9 @@ class TACHIE_OT_add_face(bpy.types.Operator):
         sed = scene.sequence_editor or scene.sequence_editor_create()
         start = scene.frame_current
         # 再生位置にこのキャラのセリフがあれば、その終わりまで
-        line = next((s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_id")
-                     and s.get("tachie_character") == ch.name and s.left_handle <= start < s.right_handle), None)
-        end = line.right_handle if line else start + max(1, round(settings.face_seconds * scene_fps(scene)))
+        line = next((strips for s in line_sounds(sed, ch.name) if s.left_handle <= start
+                     for strips in [line_strips(sed, s["tachie_id"])] if start < line_end(strips)), None)
+        end = line_end(line) if line else start + max(1, round(settings.face_seconds * scene_fps(scene)))
         preset = settings.expression
         face = sed.strips.new_effect(name=_face_name(ch.name, preset), type="COLOR",
                                      channel=_free_face_channel(sed, settings, start, end, ch.name),
@@ -2204,8 +2079,7 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
                 connect(context, regenerate(context, cid, **kwargs))
                 count += 1
                 wm.progress_update(count)
-            # 手動の立ち絵はずらし終わった位置で作り直す
-            remove_idle(sed)
+            # 立ち絵はずらし終わった位置と、作り直したセリフで作り直す
             for s in stills:
                 remake_still(context, s)
         except ERRORS as e:
@@ -2213,8 +2087,8 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
             return {"FINISHED"} if count else {"CANCELLED"}
         finally:
             wm.progress_end()
-            if (count or stills) and settings.auto_idle:
-                refresh_idle(context)
+            if count or stills:
+                refresh_faces(context)
         self.report({"INFO"}, f"{count} 件のセリフ" + (f"と {len(stills)} 本の立ち絵" if stills else "") + "を作り直しました")
         return {"FINISHED"}
 
@@ -2284,15 +2158,16 @@ class TACHIE_OT_change_material(bpy.types.Operator):
         except (*ERRORS, OSError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        try:  # 素材はもう変えたので、待機を作り直せなくても FINISHED にする（CANCELLED だと元に戻すの段が積まれない）
-            if seq_scene(context).tachie.auto_idle:
-                refresh_idle(context)
+        sed = seq_scene(context).sequence_editor
+        try:  # 素材はもう変えたので、立ち絵を作り直せなくても FINISHED にする（CANCELLED だと元に戻すの段が積まれない）
+            for s in [s for s in sed.strips if s.get("tachie_still") == ch.name] if sed else []:
+                remake_still(context, s)
+            refresh_motion_now(seq_scene(context))
         except ERRORS as e:
-            self.report({"WARNING"}, f"{ch.name}の素材を変えましたが、待機の立ち絵を作り直せません: {e}")
+            self.report({"WARNING"}, f"{ch.name}の素材を変えましたが、立ち絵を作り直せません: {e}")
             return {"FINISHED"}
         note = f"（素材に無いパーツ・レイヤー {removed} 個を既定に戻しました）" if removed else ""
-        self.report({"WARNING"} if removed else {"INFO"},
-                    f"{ch.name}の素材を変えました{note}。置いてあるセリフは「全セリフを再生成」で反映されます")
+        self.report({"WARNING"} if removed else {"INFO"}, f"{ch.name}の素材を変えました{note}")
         return {"FINISHED"}
 
 
@@ -2316,13 +2191,10 @@ def fit_to_material(item, material) -> int:
 def change_material(context, ch, source: str) -> int:
     """キャラクターの素材を `source` に変える。素材に無いパーツ・レイヤーは外し、その数を返す。"""
     material = load_material(source)
-    had_material = bool(ch.folder)
     ch.folder = source
     removed = fit_to_material(ch, material) + sum(fit_to_material(e, material) for e in ch.expressions)
     if material.is_psd and not item_layers(ch):
         psd_default_mouth(ch, material)
-    if not had_material and ch.line_layout == "SUBTITLE":
-        ch.line_layout = "FULL"  # 立ち絵の無いキャラに素材を付けたら、新しいセリフは立ち絵ありに
     return removed
 
 
@@ -2347,8 +2219,6 @@ def add_voice_character(context, name: str):
     except (TypeError, ValueError, KeyError) as e:  # 手で書いた値の型や範囲が合わない
         settings.characters.remove(len(settings.characters) - 1)
         raise ValueError(f"{base} の初期値を当てはめられません: {e}") from None
-    if ch.line_layout == "FULL":  # 立ち絵が無いので、保存していなければ「音声と字幕」
-        ch.line_layout = "SUBTITLE"
     lanes.ensure_layout(seq_scene(context))  # チャンネルはキャラ × 役割のレーンで決まる
     try:  # エンジンが止まっていても追加は待たせない
         ch.speaker_name = dict(client(context, ch, timeout=3.0).styles()).get(ch.speaker, "")
@@ -2384,7 +2254,7 @@ class TACHIE_OT_character_add_voice(bpy.types.Operator):
         except ValueError as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        layout = next(label for key, label, *_ in LINE_LAYOUTS if key == ch.line_layout)
+        layout = next(label for key, label, *_ in LINE_LAYOUTS if key == line_layout(ch))
         note = "アドオン設定の初期値を使いました" if saved else f"セリフの形は「{layout}」"
         self.report({"INFO"}, f"{ch.name} を追加しました（{note}）")
         return {"FINISHED"}
@@ -2791,13 +2661,13 @@ class TACHIE_OT_reload_character(bpy.types.Operator):
         _caches.clear()
         load_image.cache_clear()
         shutil.rmtree(output_dir(context) / "cache", ignore_errors=True)
-        # 待機と手動の立ち絵はキャッシュの画像を直接指しているので作り直す
+        # 立ち絵はキャッシュの画像を直接指しているので作り直す
         sed = seq_scene(context).sequence_editor
         try:
             if sed is not None:
                 for s in [s for s in sed.strips if s.get("tachie_still")]:
                     remake_still(context, s)
-            refresh_idle(context)
+            refresh_motion_now(seq_scene(context))
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
         return {"FINISHED"}
@@ -3308,13 +3178,11 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
         placed = 0
         wm = context.window_manager
         wm.progress_begin(0, len(lines))
-        if scene.sequence_editor:
-            remove_idle(scene.sequence_editor)
         try:
             for line in lines:
                 ch = find_character(settings, line.character)
                 layout = line_layout(ch)
-                clip, lines_dir = render_clip(context, ch, line.text, line.expression, kana=line.kana, layout=layout)
+                clip, lines_dir = render_clip(context, ch, line.text, line.expression, kana=line.kana)
                 channels = line_channels(context, ch, cursor, clip.frames, layout=layout)
                 strips = place_strips(context, ch, clip, lines_dir, line.text, cursor, channels=channels,
                                       layout=layout)
@@ -3326,8 +3194,8 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
             self.report({"ERROR"}, f"{placed + 1} 個目のセリフ（{line.character}: {line.text}）で止まりました: {e}")
         finally:
             wm.progress_end()
-            if settings.auto_idle:
-                refresh_idle(context)  # 1 本も置けなくても、消した待機を戻す
+            if placed:
+                refresh_faces(context)
         if placed and settings.advance:
             scene.frame_current = cursor
         if placed == len(lines):
@@ -3368,7 +3236,9 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
             return {"CANCELLED"}
         if ch is None:
             return {"CANCELLED"}
-        _expression_items = [(NONE, "（基本）", "")] + [(e.name, e.name, "") for e in ch.expressions]
+        # セリフの "" は重なる立ち絵の表情のまま
+        _expression_items = [(NONE, "（立ち絵のまま）" if self.target == "LINE" else "（基本）", "")] + [
+            (e.name, e.name, "") for e in ch.expressions]
         context.window_manager.invoke_search_popup(self)
         return {"RUNNING_MODAL"}
 
@@ -3391,11 +3261,10 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
                 return {"CANCELLED"}
             sed.active_strip = strip
             return {"FINISHED"}
-        # 選択中のセリフはその表情で作り直す
+        # 選択中のセリフの表情（音声は合成し直さない。重なる立ち絵をその間だけその表情にする）
         try:
-            strips = regenerate(context, active_line_id(context), sed.active_strip["tachie_text"], preset=value)
-            if seq_scene(context).tachie.auto_idle:
-                refresh_idle(context)
+            strips = set_line_expression(context, active_line_id(context), value)
+            refresh_faces(context)
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -3443,23 +3312,6 @@ class TACHIE_OT_expression_remove(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class TACHIE_OT_refresh_idle(bpy.types.Operator):
-    """喋っていない間の立ち絵（まばたきのみ）を作り直す。ストリップを手で動かしたあとに使う"""
-
-    bl_idname = "tachie.refresh_idle"
-    bl_label = "待機を更新"
-    bl_options = {"REGISTER", "UNDO"}
-
-    def execute(self, context):
-        try:
-            count = refresh_idle(context)
-        except ERRORS as e:
-            self.report({"ERROR"}, str(e))
-            return {"CANCELLED"}
-        self.report({"INFO"}, f"待機ストリップを {count} 本置きました")
-        return {"FINISHED"}
-
-
 _classes = (
     TACHIE_OT_add_line,
     TACHIE_OT_add_still,
@@ -3468,7 +3320,6 @@ _classes = (
     TACHIE_OT_pick_expression,
     TACHIE_OT_expression_add,
     TACHIE_OT_expression_remove,
-    TACHIE_OT_refresh_idle,
     TACHIE_OT_regenerate,
     TACHIE_OT_regenerate_all,
     TACHIE_OT_character_add,
