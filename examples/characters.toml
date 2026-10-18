@@ -50,7 +50,6 @@ outline_width = 0.2
 ["四国めたん".layout]
 position = -0.28
 flip = true
-channel = 4
 
 ["四国めたん".expressions."おこ"]
 "眉" = "おこ"

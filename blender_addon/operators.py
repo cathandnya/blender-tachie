@@ -12,6 +12,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
+from . import channels as lanes
 from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, place_text, system_fonts, text_offset
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
@@ -149,7 +150,7 @@ def config_of(ch) -> CharacterConfig:
         expression=base[ch.name].expression, mouth=ch.mouth,
         voice=_config_voice(ch),
         expressions={e.name: _parts_dict(e) for e in ch.expressions},
-        layout={"position": ch.position_x, "flip": ch.flip_x, "height": ch.height, "channel": ch.channel,
+        layout={"position": ch.position_x, "flip": ch.flip_x, "height": ch.height,
                 **({"position_y": round(ch.position_y, 6)} if ch.position_y else {}),
                 **_config_motion(ch)},
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
@@ -238,7 +239,8 @@ def apply_config(ch, config: CharacterConfig) -> None:
             for prop, v in zip(PART_PROPS[category], values):
                 setattr(item, prop, v)
     layout, sub = config.layout, config.subtitle
-    for prop, key in (("position_x", "position"), ("flip_x", "flip"), ("height", "height"), ("channel", "channel")):
+    # チャンネルはキャラ × 役割のレーンで決まるので、古い設定の channel は読まない
+    for prop, key in (("position_x", "position"), ("flip_x", "flip"), ("height", "height")):
         if key in layout:
             setattr(ch, prop, layout[key])
     ch.position_y = layout.get("position_y", 0.0)
@@ -310,7 +312,7 @@ def _defaults_texts() -> dict:
 def voice_defaults_config(ch) -> CharacterConfig:
     """立ち絵の無いキャラの初期値として保存する設定（立ち絵に関係する位置・大きさ・表情・動きは持たない）。"""
     config = config_of(ch)
-    layout = {k: v for k, v in config.layout.items() if k in ("channel", "lines")}
+    layout = {k: v for k, v in config.layout.items() if k == "lines"}
     return dataclasses.replace(config, folder=None, expression=Expression(), expressions={}, layout=layout)
 
 
@@ -321,15 +323,6 @@ def material_key(folder: str) -> str:
     if name.lower().endswith(".psd"):
         name = name[:-4]
     return unicodedata.normalize("NFC", name)
-
-
-def _free_channel(settings, ch, wanted: int | None = None) -> int:
-    """他のキャラ・音声・字幕・キャラ名・見出しと重ならないチャンネル。`wanted` が空いていればそれ。"""
-    used = {c.channel for c in settings.characters if c != ch}
-    used |= {settings.audio_channel, settings.subtitle_channel, settings.name_channel, settings.headline_channel}
-    if wanted is not None and wanted not in used:
-        return wanted
-    return next(c for c in range(min(used | {wanted or 3, 3}), 129) if c not in used)
 
 
 def psd_default_mouth(ch, character) -> None:
@@ -351,9 +344,7 @@ def find_character(settings, name: str):
 # ---- ストリップ ----
 
 def _overlaps(sed, channel: int, start: int, end: int, ignore=()) -> bool:
-    # 待機ストリップは作り直すので邪魔にならない
-    return any(s.channel == channel and s.left_handle < end and start < s.right_handle and s not in ignore
-               and not s.get("tachie_idle") for s in sed.strips)
+    return lanes.overlaps(sed, channel, start, end, ignore)
 
 
 def _path_for_blend(path: Path) -> str:
@@ -428,43 +419,30 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
 
 
 def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str = "FULL") -> dict:
-    """セリフを start に置くチャンネル {"audio", "subtitle", "name"}（形 `layout` で置くものだけ）。
+    """セリフを start に置くチャンネル {"audio", "image", "subtitle", "name"}（形 `layout` で置くものだけ）。
 
-    立ち絵はキャラのチャンネル（同じキャラの立ち絵のあるセリフは重ねられない）。音声・字幕・キャラ名は設定の
-    チャンネルが埋まっていれば、そこから上で空いていて、立ち絵・見出し・他の役割の設定でないチャンネル（別のキャラの
-    セリフと同時に喋るとき）。字幕・キャラ名は上にしか行かないので、立ち絵より手前に描かれる。
+    どれもそのキャラのレーン（`channels`）。立ち絵は同じキャラの立ち絵のあるセリフと重ねられない。音声・字幕・
+    キャラ名はレーンが埋まっていれば（同じキャラの立ち絵の無いセリフが重なるとき）レーンより上の空き。キャラ名は字幕より上。
     """
-    settings = seq_scene(context).tachie
-    sed = seq_scene(context).sequence_editor
-    roles = {"audio": settings.audio_channel}
-    if layout != "AUDIO":
-        roles["subtitle"] = settings.subtitle_channel
-        if ch.show_name:
-            roles["name"] = settings.name_channel
-    channels = (*roles.values(), *((ch.channel,) if layout == "FULL" else ()))
-    if len(set(channels)) < len(channels):
-        raise ValueError("音声・立ち絵・字幕（・キャラ名）のチャンネルは別々にしてください")
-    if sed is None:
-        return roles
+    scene = seq_scene(context)
+    lanes.ensure_layout(scene)
+    sed = scene.sequence_editor
     end = start + frames
-    if layout == "FULL" and (_overlaps(sed, ch.channel, start, end, ignore)
-                             or _own_overlaps(sed, ch, start, end, ignore)):
-        raise ValueError(f"{ch.name}の立ち絵（チャンネル {ch.channel}）の {start}〜{end} フレームに他のストリップが"
-                         "あります（同じキャラのセリフは重ねられません）")
-    reserved = {settings.audio_channel, settings.subtitle_channel, settings.name_channel, settings.headline_channel}
-    reserved |= {c.channel for c in settings.characters}
-    taken: set[int] = set()
     result = {}
-    for role, channel in roles.items():
-        if role == "name":
-            channel = max(channel, result["subtitle"] + 1)  # キャラ名は字幕より上
-        while channel in taken or _overlaps(sed, channel, start, end, ignore) or (
-                channel != roles[role] and channel in reserved):
-            channel += 1
-            if channel > 128:
-                raise ValueError(f"{start}〜{end} フレームに空いているチャンネルがありません")
-        taken.add(channel)
-        result[role] = channel
+    if layout == "FULL":
+        image = lanes.lane(scene, "image", ch.name)
+        if image is None:
+            raise ValueError(f"{ch.name}には立ち絵のチャンネルがありません（立ち絵の無いキャラクター）")
+        if sed is not None and (_overlaps(sed, image, start, end, ignore) or _own_overlaps(sed, ch, start, end, ignore)):
+            raise ValueError(f"{ch.name}の立ち絵（チャンネル {image}）の {start}〜{end} フレームに他のストリップが"
+                             "あります（同じキャラのセリフは重ねられません）")
+        result["image"] = image
+    taken: set[int] = set()
+    roles = ["audio"] + (["subtitle"] + (["name"] if ch.show_name else []) if layout != "AUDIO" else [])
+    for role in roles:
+        first = result["subtitle"] + 1 if role == "name" else None  # キャラ名は字幕より上
+        result[role] = lanes.role_channel(scene, role, ch.name, start, end, taken, ignore, first)
+        taken.add(result[role])
     return result
 
 
@@ -478,8 +456,11 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     """
     scene = seq_scene(context)
     settings = scene.tachie
-    channels = channels or {"audio": settings.audio_channel, "subtitle": settings.subtitle_channel,
-                            "name": settings.name_channel}
+    if channels is None:  # レーンのまま（重なりは確かめない）
+        lanes.ensure_layout(scene)
+        lay = lanes.scene_layout(scene)
+        channels = {role: lay.channel(role, ch.name) for role in ("audio", "image", "subtitle", "name")}
+        channels["name"] = channels["name"] or lanes.free_channel(None, lay, start, start + 1)
     sed = scene.sequence_editor or scene.sequence_editor_create()
     if scene.view_settings.view_transform != "Standard":
         # 3D 用の AgX / Filmic のままだと立ち絵の色が淡くなる
@@ -495,7 +476,8 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         frames_dir = lines_dir / clip.frames_dir
         frame_files = sorted(os.listdir(frames_dir))
         image = sed.strips.new_image(name=f"立ち絵 {label}", filepath=_path_for_blend(frames_dir / frame_files[0]),
-                                     channel=ch.channel, frame_start=start, fit_method="ORIGINAL")
+                                     channel=channels.get("image") or ch.channel, frame_start=start,
+                                     fit_method="ORIGINAL")
         for name in frame_files[1:]:
             image.elements.append(name)
         image.blend_type = "ALPHA_OVER"
@@ -1054,6 +1036,9 @@ def _apply_faces_later():
         scene = seq_scene(bpy.context)
         _applying_faces = True
         try:
+            # キャラの名前を変えたなど、きっかけの無い変化でもレーンを合わせる（undo の段は積まない）
+            for p in lanes.ensure_layout(scene):
+                print("チャンネルを整理できません:", p)
             # プレビューで動かした字幕は、ずらす量に書き戻してから（動きの作り直しで元の位置に戻さないため）
             sync_text_offsets(scene)
             signature = auto_signature(scene)
@@ -1106,6 +1091,7 @@ def refresh_idle(context) -> int:
     sed = scene.sequence_editor
     if sed is None:
         return 0
+    lanes.ensure_layout(scene)  # 待機は立ち絵のレーン（ch.channel）に置く
     remove_idle(sed)
     line_ends = [s.right_handle for s in sed.strips if s.get("tachie_id") or s.get("tachie_still")]
     if not line_ends:
@@ -1177,6 +1163,7 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     """セリフなしの立ち絵（まばたきのみ）を置く。待機ストリップと違い、作り直しでは消えない。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
+    lanes.ensure_layout(scene)  # 立ち絵のレーン（ch.channel）に置く
     if scene.view_settings.view_transform != "Standard":
         scene.view_settings.view_transform = "Standard"
     cache = character_cache(context, ch, preset)
@@ -1303,6 +1290,7 @@ class TACHIE_OT_add_still(bpy.types.Operator):
         start = scene.frame_current
         frames = max(1, round(settings.still_seconds * scene_fps(scene)))
         sed = scene.sequence_editor
+        lanes.ensure_layout(scene)  # ch.channel を今のレーンにしてから確かめる
         if sed and (_overlaps(sed, ch.channel, start, start + frames)
                     or _own_overlaps(sed, ch, start, start + frames)):
             self.report({"ERROR"}, f"チャンネル {ch.channel} の {start}〜{start + frames} フレームに"
@@ -1782,13 +1770,11 @@ class TACHIE_OT_dict_remove(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _free_face_channel(sed, settings, start: int, end: int) -> int:
-    # 字幕・キャラ名・見出しのチャンネルより上で空いているところ
-    channel = max(settings.subtitle_channel, settings.name_channel, settings.headline_channel) + 1
-    while channel < 128 and any(s.channel == channel and s.left_handle < end and start < s.right_handle
-                                for s in sed.strips):
-        channel += 1
-    return channel
+def _free_face_channel(sed, settings, start: int, end: int, char: str) -> int:
+    """キャラ `char` の表情ストリップのチャンネル（表情のレーン。重なる表情があればその上）。"""
+    scene = settings.id_data
+    lanes.ensure_layout(scene)
+    return lanes.face_channel(scene, char, start, end)
 
 
 def _face_name(character: str, preset: str) -> str:
@@ -1823,7 +1809,7 @@ class TACHIE_OT_add_face(bpy.types.Operator):
         end = line.right_handle if line else start + max(1, round(settings.face_seconds * scene_fps(scene)))
         preset = settings.expression
         face = sed.strips.new_effect(name=_face_name(ch.name, preset), type="COLOR",
-                                     channel=_free_face_channel(sed, settings, start, end),
+                                     channel=_free_face_channel(sed, settings, start, end, ch.name),
                                      frame_start=start, length=end - start)
         face.color = (0.95, 0.6, 0.25)
         face.color_tag = "COLOR_02"
@@ -2337,7 +2323,7 @@ def add_voice_character(context, name: str):
         raise ValueError(f"{base} の初期値を当てはめられません: {e}") from None
     if ch.line_layout == "FULL":  # 立ち絵が無いので、保存していなければ「音声と字幕」
         ch.line_layout = "SUBTITLE"
-    ch.channel = _free_channel(settings, ch, config.layout.get("channel"))
+    lanes.ensure_layout(seq_scene(context))  # チャンネルはキャラ × 役割のレーンで決まる
     try:  # エンジンが止まっていても追加は待たせない
         ch.speaker_name = dict(client(context, ch, timeout=3.0).styles()).get(ch.speaker, "")
     except (VoicevoxError, OSError):
@@ -2405,9 +2391,7 @@ def add_character(context, source: str):
     # 立ち位置が決まっていなければ、2 人目以降は左右を入れ替える
     if "position" not in config.layout and n > 1:
         ch.position_x = -0.3 if n % 2 == 0 else 0.3
-    # チャンネルは他のキャラと重なるなら空いている番号へ
-    if n > 1 or "channel" in config.layout:
-        ch.channel = _free_channel(settings, ch, config.layout.get("channel"))
+    lanes.ensure_layout(seq_scene(context))  # チャンネルはキャラ × 役割のレーンで決まる
     try:  # エンジンが止まっていても追加は待たせない
         names = client(context, ch, timeout=3.0).styles()
         ch.speaker_name = dict(names).get(ch.speaker, "")
@@ -2516,6 +2500,34 @@ class TACHIE_OT_character_remove(bpy.types.Operator):
         settings = seq_scene(context).tachie
         settings.characters.remove(settings.active_character)
         settings.active_character = max(0, min(settings.active_character, len(settings.characters) - 1))
+        for p in lanes.ensure_layout(seq_scene(context)):  # 残ったストリップは「未登録」のレーンへ
+            self.report({"WARNING"}, p)
+        return {"FINISHED"}
+
+
+class TACHIE_OT_character_move(bpy.types.Operator):
+    """選択中のキャラクターを一覧の上・下へ動かす（下のキャラほど立ち絵が手前に描かれる）"""
+
+    bl_idname = "tachie.character_move"
+    bl_label = "キャラクターを動かす"
+    bl_options = {"REGISTER", "UNDO"}
+
+    direction: bpy.props.EnumProperty(items=[("UP", "上へ", ""), ("DOWN", "下へ", "")])
+
+    @classmethod
+    def poll(cls, context):
+        return seq_scene(context).tachie.character() is not None
+
+    def execute(self, context):
+        settings = seq_scene(context).tachie
+        i = settings.active_character
+        j = i - 1 if self.direction == "UP" else i + 1
+        if not 0 <= j < len(settings.characters):
+            return {"CANCELLED"}
+        settings.characters.move(i, j)
+        settings.active_character = j
+        for p in lanes.ensure_layout(seq_scene(context)):
+            self.report({"WARNING"}, p)
         return {"FINISHED"}
 
 
@@ -2794,6 +2806,7 @@ class TACHIE_OT_import_characters(bpy.types.Operator, ImportHelper):
                 except (VoicevoxError, OSError):
                     names_by_engine[url] = {}  # エンジンが動いていなければ話者名は空のまま（ID で表示）
             ch.speaker_name = names_by_engine[url].get(config.speaker, "")
+        lanes.ensure_layout(seq_scene(context))
         self.report({"INFO"}, f"{len(configs)} 人のキャラクター設定を読み込みました")
         return {"FINISHED"}
 
@@ -2948,6 +2961,7 @@ class TACHIE_OT_add_headline(bpy.types.Operator):
             return {"CANCELLED"}
         ensure_sequencer_scene(context)
         sed = scene.sequence_editor or scene.sequence_editor_create()
+        lanes.ensure_layout(scene)  # 見出しのレーン（headline_channel）
         start = scene.frame_current
         frames = max(1, round(settings.headline_seconds * scene_fps(scene)))
         if _overlaps(sed, settings.headline_channel, start, start + frames):
@@ -3081,13 +3095,8 @@ class TACHIE_OT_remove_sound_effect(bpy.types.Operator):
 
 
 def _se_channel(sed, settings, start: int, end: int) -> int:
-    """効果音を置くチャンネル: `se_channel` から上で、その範囲が空いていて、アドオンが使うチャンネルでないところ。"""
-    reserved = {settings.audio_channel, settings.subtitle_channel, settings.name_channel, settings.headline_channel}
-    reserved |= {c.channel for c in settings.characters}
-    channel = settings.se_channel
-    while channel < 128 and (channel in reserved or _overlaps(sed, channel, start, end)):
-        channel += 1
-    return channel
+    """効果音を置くチャンネル: レーンより下（1 番から上）の空き。無ければレーンより上。"""
+    return lanes.sound_channel(settings.id_data, start, end)
 
 
 class TACHIE_OT_add_sound_effect(bpy.types.Operator):
@@ -3458,6 +3467,7 @@ _classes = (
     TACHIE_OT_save_defaults,
     TACHIE_OT_remove_defaults,
     TACHIE_OT_character_remove,
+    TACHIE_OT_character_move,
     TACHIE_OT_pick_speaker,
     TACHIE_OT_pick_part,
     TACHIE_OT_psd_choose,

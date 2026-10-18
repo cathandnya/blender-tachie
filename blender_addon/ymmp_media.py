@@ -3,10 +3,9 @@
 座標: YMM4 の X / Y は画面中央からのピクセル（下が正）、Zoom は %（100 で素材の 1 ピクセルが出力の 1 ピクセル）。
 Blender の画像・動画は `fit_method="ORIGINAL"` で置き、transform の offset（ピクセル）・scale・rotation（反時計回り）に写す。
 
-チャンネル: YMM4 で立ち絵より奥のレイヤー（`front_layer` より下）の画像・動画は、アドオンのチャンネル（効果音・音声・
-立ち絵・字幕・キャラ名・見出し）より下に、レイヤーの順で 1 本ずつ置く。下に空きが足りなければ、アドオンのチャンネルと
-そこから上のストリップをまとめて上へずらす（`shift_addon_channels`）。手前のレイヤーは見出しなどより上、音声は
-効果音と同じく空いているチャンネル。
+チャンネル: YMM4 で立ち絵より奥のレイヤー（`front_layer` より下）の画像・動画は、アドオンのレーン（`channels`、
+`channel_base` から上）より下に、レイヤーの順で 1 本ずつ置く。下に空きが足りなければ、レーンとそこから上のストリップを
+まとめて上へずらす（`shift_layout`）。手前のレイヤーはレーンより上、音声は効果音と同じくレーンより下の空き。
 
 動画: Blender の動画ストリップは素材の 1 フレームをシーンの 1 フレームで再生する（フレームレートを合わせない）。
 素材とシーンのフレームレートが違うか、再生速度が 100% でなければ、スピードコントロールのストリップ
@@ -25,6 +24,7 @@ from pathlib import Path, PureWindowsPath
 
 import bpy
 
+from . import channels as lanes
 from .motion import _channelbag, _key
 from .operators import _overlaps, _path_for_blend, _sound_error, output_dir, seq_scene
 from .tachie_studio.media_effects import outline_image
@@ -95,28 +95,30 @@ class MediaFinder:
         return self._index.get(_nfc(name))
 
 
-def addon_channels(settings) -> list[int]:
-    return [settings.se_channel, settings.audio_channel, settings.subtitle_channel, settings.name_channel,
-            settings.headline_channel, *(c.channel for c in settings.characters)]
-
-
-def shift_addon_channels(scene, n: int) -> None:
-    """アドオンのチャンネル（設定と各キャラ）と、その一番下から上にあるストリップを `n` 上へずらす。"""
+def shift_layout(scene, n: int) -> None:
+    """レーン（`channel_base` から上）と、そこから上にあるストリップ・チャンネルの名前などを `n` 上へずらす。"""
     if n <= 0:
         return
     settings = scene.tachie
-    base = min(addon_channels(settings))
+    lanes.ensure_layout(scene)
+    base = settings.channel_base
     sed = scene.sequence_editor
     strips = [s for s in sed.strips if s.channel >= base] if sed else []
-    top = max([s.channel for s in strips] + addon_channels(settings))
+    top = max([s.channel for s in strips] + [lanes.scene_layout(scene).top])
     if top + n > 128:
         raise ValueError(f"チャンネルが足りません（{n} 本ずらすと 128 を超えます）")
     for s in sorted(strips, key=lambda s: -s.channel):  # 上から動かす（重なると Blender が別のチャンネルへ逃がす）
         s.channel += n
-    for prop in ("se_channel", "audio_channel", "subtitle_channel", "name_channel", "headline_channel"):
-        setattr(settings, prop, getattr(settings, prop) + n)
-    for c in settings.characters:
-        c.channel += n
+    if sed is not None:  # チャンネルの名前・ミュート・ロックも一緒に
+        channels = sed.channels
+        for c in range(top, base - 1, -1):
+            src, dst = channels[c], channels[c + n]
+            dst.name, dst.mute, dst.lock = src.name, src.mute, src.lock
+        for c in range(base, base + n):
+            channels[c].name, channels[c].mute, channels[c].lock = lanes.DEFAULT_NAME.format(c), False, False
+    # ずらし終わったレイアウトを当てたことにしてから base を変える（update で並べ直さない）
+    settings.applied_layout = lanes.channel_layout(base + n, lanes.scene_chars(scene)).to_json()
+    settings.channel_base = base + n
 
 
 def _keyframes(scene, strip, attr: str):
@@ -238,7 +240,7 @@ class MediaPlacer:
 
     def _lanes(self, layers: dict[int, list], start: int, fixed: bool) -> dict[int, int]:
         """レイヤー → チャンネル（下から順）。`fixed` なら start から詰めて、そうでなければ空いているところ。"""
-        lanes, cursor = {}, start
+        lane_of, cursor = {}, start
         sed = self.scene.sequence_editor
         for layer in sorted(layers):
             width = max(w for _, _, w in layers[layer])
@@ -247,9 +249,9 @@ class MediaPlacer:
                 cursor += 1
             if cursor + width - 1 > 128:
                 raise ValueError("チャンネルが足りません")
-            lanes[layer] = cursor
+            lane_of[layer] = cursor
             cursor += width
-        return lanes
+        return lane_of
 
     def _free_below(self, base: int, a: int, b: int) -> int:
         """`base` のすぐ下から、[a, b) にストリップの無いチャンネルが続く本数。"""
@@ -262,12 +264,7 @@ class MediaPlacer:
         return n
 
     def _sound_channel(self, a: int, b: int) -> int:
-        settings = self.scene.tachie
-        reserved = set(addon_channels(settings))
-        channel = settings.se_channel
-        while channel < 128 and (channel in reserved or _overlaps(self.scene.sequence_editor, channel, a, b)):
-            channel += 1
-        return channel
+        return lanes.sound_channel(self.scene, a, b)
 
     # ---- 置く ----
 
@@ -284,25 +281,21 @@ class MediaPlacer:
             # テンプレートの「立ち絵より奥」は画像・動画・カラーだけ（テキストは見出しなどなので手前に置く）
             behind = m.layer < front if self.behind is None else (self.behind and m.kind != "text")
             (back if behind else fore).setdefault(m.layer, []).append(entry)
+        settings = self.scene.tachie
+        lanes.ensure_layout(self.scene)
         if back:
             need = sum(max(w for _, _, w in v) for v in back.values())
-            settings = self.scene.tachie
-            base = min(addon_channels(settings))
             a, b = self.frame(0), self.frame(project.length) + 1
-            shift_addon_channels(self.scene, max(0, need - self._free_below(base, a, b)))
-            base = min(addon_channels(settings))
-            back_lanes = self._lanes(back, base - need, fixed=True)
+            shift_layout(self.scene, max(0, need - self._free_below(settings.channel_base, a, b)))
+            back_lanes = self._lanes(back, settings.channel_base - need, fixed=True)
         else:
             back_lanes = {}
-        settings = self.scene.tachie
-        top = max(settings.subtitle_channel, settings.name_channel, settings.headline_channel,
-                  *(c.channel for c in settings.characters))
-        fore_lanes = self._lanes(fore, top + 1, fixed=False)
-        for lanes, groups in ((back_lanes, back), (fore_lanes, fore)):
+        fore_lanes = self._lanes(fore, lanes.scene_layout(self.scene).top + 1, fixed=False)
+        for lane_of, groups in ((back_lanes, back), (fore_lanes, fore)):
             for layer, entries in groups.items():
                 for m, path, _ in entries:
                     try:
-                        self._place_visual(sed, m, path, lanes[layer])
+                        self._place_visual(sed, m, path, lane_of[layer])
                     except (RuntimeError, ValueError, OSError) as e:
                         self.problems.append(f"{KIND_LABELS[m.kind]} {PureWindowsPath(m.file).name or m.text[:20]}: {e}")
         for m in items:

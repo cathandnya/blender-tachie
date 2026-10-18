@@ -152,7 +152,7 @@ def apply_outcomes(context, plan: Plan, results: list, target: str) -> tuple[int
                             if not same:
                                 face = sed.strips.new_effect(
                                     name=ops._face_name(job.character, preset), type="COLOR",
-                                    channel=ops._free_face_channel(sed, settings, start, end),
+                                    channel=ops._free_face_channel(sed, settings, start, end, job.character),
                                     frame_start=start, length=end - start)
                                 face.color = (0.95, 0.6, 0.25)
                                 face.color_tag = "COLOR_02"

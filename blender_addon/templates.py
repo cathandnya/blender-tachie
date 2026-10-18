@@ -27,7 +27,8 @@ from .tachie_studio.templates import (
     dumps, end_frame, load_ymm4_templates, loads, media_from_dict, media_to_dict, normalize,
 )
 from .tachie_studio.ymmp import Media, Project, overlay
-from .ymmp_media import MediaFinder, MediaPlacer, addon_channels, box_height
+from . import channels as lanes
+from .ymmp_media import MediaFinder, MediaPlacer, box_height
 
 REPORT_TEXT = "YMM4 のテンプレートの読み込み結果"
 
@@ -191,7 +192,7 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
             if m.kind in ("image", "video", "color"):
                 visual_channels.append(s.channel)
     normalize(items)
-    behind = bool(visual_channels) and max(visual_channels) < min(addon_channels(settings))
+    behind = bool(visual_channels) and max(visual_channels) < settings.channel_base  # レーンより下＝立ち絵より奥
     render = scene.render
     return {"fps": fps, "width": render.resolution_x, "height": render.resolution_y, "items": items}, behind, skipped
 
@@ -304,7 +305,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             continue
         a, b = frame(item["frame"]), max(frame(item["frame"]) + 1, frame(item["frame"] + item["length"]))
         face = sed.strips.new_effect(name=_face_name(ch.name, preset), type="COLOR",
-                                     channel=_free_face_channel(sed, settings, a, b), frame_start=a, length=b - a)
+                                     channel=_free_face_channel(sed, settings, a, b, ch.name), frame_start=a, length=b - a)
         face.color, face.color_tag, face.mute = (0.95, 0.6, 0.25), "COLOR_02", True
         face["tachie_face"] = ch.name
         face["tachie_expression"] = preset

@@ -27,6 +27,12 @@ sed = scene.sequence_editor_create()
 bg = sed.strips.new_effect(name="背景", type="COLOR", channel=1, frame_start=1, length=900)
 bg.color = (0.55, 0.7, 0.85)
 s = scene.tachie
+from bl_ext.user_default.blender_tachie import channels as chmod  # noqa: E402
+
+
+def lane(role, char=None):
+    """そのキャラ × 役割のレーン（チャンネル）。"""
+    return chmod.lane(scene, role, char)
 
 
 def run(op, **kwargs):
@@ -74,7 +80,14 @@ run(bpy.ops.tachie.import_characters, filepath=str(characters_toml))
 assert [c.name for c in s.characters] == ["ずんだもん", "四国めたん"], [c.name for c in s.characters]
 zunda, metan = s.characters
 assert zunda.part_other1 == "左腕_基本" and metan.part_body == "白ロリ服"
-assert metan.flip_x and metan.channel == 4 and abs(metan.position_x + 0.28) < 1e-6
+assert metan.flip_x and abs(metan.position_x + 0.28) < 1e-6
+# チャンネルはキャラ × 役割のレーン（10 番から、役割ごとに並べる）。チャンネルに名前が付く
+assert [(x.channel, x.label) for x in chmod.scene_layout(scene).lanes] == [
+    (10, "ずんだもん 音声"), (11, "四国めたん 音声"), (12, "ずんだもん 立ち絵"), (13, "ずんだもん 表情"),
+    (14, "四国めたん 立ち絵"), (15, "四国めたん 表情"), (16, "ずんだもん 字幕"), (17, "四国めたん 字幕"), (18, "見出し")]
+assert (zunda.channel, metan.channel, s.headline_channel) == (12, 14, 18)
+assert sed.channels[14].name == "四国めたん 立ち絵" and sed.channels[18].name == "見出し"
+assert bg.channel == 1  # レーンより下（背景など）は動かさない
 metan.flip_x = False
 zunda.position_x = 0.28
 
@@ -313,7 +326,7 @@ scene.frame_current = mid
 run(bpy.ops.tachie.add_face)
 face = sed.active_strip
 assert face["tachie_face"] == "ずんだもん" and face.mute and (face.left_handle, face.right_handle) == (mid, r)
-assert face.channel > s.subtitle_channel
+assert face.channel == lane("face", "ずんだもん") and sed.channels[face.channel].name == "ずんだもん 表情"
 img = image_of(zunda_id)
 assert img.directory != orig_dir and img["tachie_faced"]
 doya, base = cache_inodes(zunda, "ドヤ"), cache_inodes(zunda, "")
@@ -332,7 +345,7 @@ run(bpy.ops.tachie.add_face)
 face2 = sed.active_strip
 face2.duration = 3
 run(bpy.ops.tachie.apply_faces)
-assert face2.channel > face.channel
+assert face2.channel > face.channel  # 重なる表情は上（あふれ）に置き、後から置いたほうが優先
 img = image_of(zunda_id)
 komari = cache_inodes(zunda, "困り")
 assert frame_inode(img, 0) in komari and frame_inode(img, 3) in doya
@@ -492,7 +505,10 @@ mid = sed.active_strip["tachie_id"]
 mstrips = ops.line_strips(sed, mid)
 name_strip = next(x for x in mstrips if x.get("tachie_role") == "name")
 msub = next(x for x in mstrips if x.type == "TEXT" and x.get("tachie_role") != "name")
-assert name_strip.text == "四国めたん" and name_strip.channel == s.name_channel
+assert name_strip.text == "四国めたん" and name_strip.channel == lane("name", "四国めたん")
+# キャラ名を出すとキャラ名のレーンが増え、見出しは上へずれる
+assert sed.channels[lane("name", "四国めたん")].name == "四国めたん キャラ名" and lane("headline") == 19
+assert msub.channel == lane("subtitle", "四国めたん") < name_strip.channel
 assert name_strip.location[1] > msub.location[1] and name_strip.left_handle == msub.left_handle
 assert [v for _, v in keyed(msub, "blend_alpha")] == [0.0, 1.0] and keyed(name_strip, "blend_alpha")
 assert all(c.text != "四国めたん" for c in ops.subtitle_cues(scene))  # キャラ名は字幕ファイルに入らない
@@ -572,9 +588,8 @@ s.se_at_lines = False
 scene.frame_current = 5
 run(bpy.ops.tachie.add_sound_effect, index=se_index)
 se_strip = sed.active_strip
-reserved = {s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel} | {c.channel for c in s.characters}
 assert se_strip["tachie_se"] == "se" and se_strip.left_handle == 5 and abs(se_strip.volume - 0.7) < 1e-6
-assert se_strip.channel not in reserved
+assert se_strip.channel == 2  # 効果音はレーンより下の空き（1 番は背景）
 s.se_at_lines = True
 heads = sorted(v[0] for v in lines().values())[:2]
 for x in sed.strips_all:
@@ -585,7 +600,7 @@ for cid, (left, _, sts) in lines().items():
 run(bpy.ops.tachie.add_sound_effect, index=se_index)
 placed = sorted(x.left_handle for x in sed.strips if x.get("tachie_se") and x.select)
 assert placed == heads, (placed, heads)
-assert all(x.channel not in reserved for x in sed.strips if x.get("tachie_se"))
+assert all(x.channel < s.channel_base for x in sed.strips if x.get("tachie_se"))
 for x in [x for x in sed.strips if x.get("tachie_se")]:
     sed.strips.remove(x)
 run(bpy.ops.tachie.remove_sound_effect, index=se_index)
@@ -606,12 +621,11 @@ both = {sts[0]["tachie_text"]: sts for _, (_, _, sts) in lines().items() if sts[
 zsts, msts = both["同時に喋るのだ。"], both["同時に喋りますわね、ずんだもんさん。"]
 role = lambda sts, kind: next(x for x in sts if (x.type, x.get("tachie_role")) == kind)
 SOUND, SUB, NAME = ("SOUND", None), ("TEXT", None), ("TEXT", "name")
-assert role(zsts, SOUND).channel == s.audio_channel and role(zsts, SUB).channel == s.subtitle_channel
-reserved = {s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel} | {c.channel for c in s.characters}
+# キャラごとのレーンなので、同時に喋ってもそれぞれのレーンのまま（あふれない）
+assert role(zsts, SOUND).channel == lane("audio", "ずんだもん") and role(zsts, SUB).channel == lane("subtitle", "ずんだもん")
 msound, msub, mname = role(msts, SOUND), role(msts, SUB), role(msts, NAME)
-assert msound.channel != s.audio_channel and msound.channel not in reserved, msound.channel
-assert msub.channel > s.subtitle_channel and msub.channel not in reserved, msub.channel
-assert mname.channel == s.name_channel or (mname.channel > msub.channel and mname.channel not in reserved)
+assert (msound.channel, msub.channel, mname.channel) == (
+    lane("audio", "四国めたん"), lane("subtitle", "四国めたん"), lane("name", "四国めたん"))
 assert msound.left_handle == t0 + 5 and msound.left_handle < role(zsts, SOUND).right_handle
 scene.frame_current = t0 + 10  # 同じキャラは重ねられない
 s.active_character, s.text = 0, "かぶせるのだ。"
@@ -645,7 +659,7 @@ run(bpy.ops.tachie.regenerate)
 msts = ops.line_strips(sed, sed.active_strip["tachie_id"])
 msub = role(msts, SUB)
 assert abs(msub["tachie_sub_y"] - 0.3) < 1e-6 and abs(msub.location[1] - (metan.subtitle_y + 0.3)) < 1e-6
-assert role(msts, SOUND).channel not in reserved and msub.channel not in reserved
+assert role(msts, SOUND).channel == lane("audio", "四国めたん") and msub.channel == lane("subtitle", "四国めたん")
 metan.font_size += 2
 assert abs(msub.location[1] - (metan.subtitle_y + 0.3)) < 1e-6 and abs(role(msts, NAME).location[0] - 0.4) < 1e-6
 metan.font_size -= 2
@@ -803,8 +817,7 @@ if has_ffmpeg:  # 30fps の素材を 2 倍速、0.5 秒目から（スピード�
     ymm_media.append({"$type": YMM_ITEM + "VideoItem, YukkuriMovieMaker", "FilePath": "C:\\clip.mp4",
                       "PlaybackRate": 200.0, "ContentOffset": "00:00:00.5000000", "Volume": 0.0,
                       "Frame": ymm_base + 200, "Layer": 0, "Length": 120})
-addon_before = (s.se_channel, s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel,
-                zunda.channel, metan.channel)
+base_before = s.channel_base
 first_sound = next(x for x in sed.strips if x.type == "SOUND" and x.get("tachie_id"))
 first_sound_channel = first_sound.channel
 ymmp.write_text(json.dumps({
@@ -852,14 +865,15 @@ report = bpy.data.texts["YMM4 の読み込み結果"].as_string()
 print(report)
 assert "セリフ 4 / 4 個" in report and "missing.png" in report and "存在しないフォント" in report, report
 assert "画像 1" in report and "音声 1" in report and "テキスト 1" in report, report
-# 立ち絵より奥（レイヤー 0）は、アドオンのチャンネルを上へずらした下に置く（置いてあったセリフも一緒にずれる）
-shift = 2 if has_ffmpeg else 1  # レイヤー 0 に動画（スピードコントロールで 2 本）
-assert (s.se_channel, s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel, zunda.channel,
-        metan.channel) == tuple(c + shift for c in addon_before)
-assert first_sound.channel == first_sound_channel + shift
+# 立ち絵より奥（レイヤー 0）は、レーンより下（1〜9 番）の空きに置く（空いているのでレーンはずらさない）。
+# 読み込んだキャラのレーンが増え、置いてあったセリフもそのキャラのレーンのまま
+assert s.channel_base == base_before and first_sound.channel == lane("audio", "ずんだもん")
+assert all(x.channel == lane(*chmod.lane_key(x)) or x.channel > chmod.scene_layout(scene).top
+           for x in sed.strips if chmod.lane_key(x)), "レーンに置かれていないストリップがある"
+assert sed.channels[lane("audio", "めたん（YMM4）")].name == "めたん（YMM4） 音声"
 ymm = {x.get("tachie_ymmp"): x for x in sed.strips if x.get("tachie_ymmp") and x.type != "MOVIE"}
 bg = ymm["image"]
-assert bg.channel < min(addon_before) + shift and bg.left_handle == scene.frame_start + ymm_base // 2
+assert bg.channel < s.channel_base and bg.left_handle == scene.frame_start + ymm_base // 2
 assert bg.right_handle == bg.left_handle + 50 and abs(bg.transform.scale_x - 0.5) < 1e-6
 assert (bg.transform.offset_x, bg.transform.offset_y) == (100.0, 50.0)
 assert [v for _, v in keyed(bg, "blend_alpha")] == [1.0, 0.0]
@@ -868,7 +882,7 @@ assert [round(v, 4) for _, v in keyed(bgm_strip, "volume")] == [0.1, 0.0] and bg
 title = ymm["text"]
 assert title.text == "タイトル\n2 行目" and title.use_bold and title.anchor_x == "CENTER" and title.anchor_y == "TOP"
 assert abs(title.location[0] - (0.5 - 100 / 1920)) < 1e-6 and abs(title.location[1] - (0.5 + 500 / 1080)) < 1e-6
-assert title.channel > s.headline_channel
+assert title.channel > s.headline_channel == chmod.scene_layout(scene).top
 if has_ffmpeg:
     speed = ymm["video"]
     assert speed.type == "SPEED" and speed.input_1.type == "MOVIE" and speed.channel == speed.input_1.channel + 1
@@ -900,14 +914,10 @@ for x in [x for x in sed.strips if x.get("tachie_ymmp") and x.type == "SPEED"]:
     sed.strips.remove(x)
 for x in [x for x in sed.strips if x.get("tachie_ymmp")]:
     sed.strips.remove(x)
-for x in sorted(sed.strips, key=lambda x: x.channel):  # ずらしたチャンネルを戻す（下から）
-    x.channel -= shift
-for prop in ("se_channel", "audio_channel", "subtitle_channel", "name_channel", "headline_channel"):
-    setattr(s, prop, getattr(s, prop) - shift)
-for c in s.characters:
-    c.channel -= shift
 s.characters.remove(n_chars + 1)
 s.characters.remove(n_chars)
+lay_problems = chmod.ensure_layout(scene)
+assert not lay_problems and (zunda.channel, metan.channel) == (12, 14), (lay_problems, zunda.channel, metan.channel)  # レーンは元に戻る
 for i in reversed(range(len(zunda.expressions))):
     if zunda.expressions[i].name not in zunda_presets:
         zunda.expressions.remove(i)
@@ -950,16 +960,23 @@ offset = min(t_base, src_left)  # テンプレートの頭（いちばん早い�
 assert p_img.left_handle == t_at + (t_base + 5 - offset) and p_img.right_handle - p_img.left_handle == 60
 assert abs(p_img.transform.offset_x - 120.0) < 1e-3 and abs(p_img.transform.scale_x - 2.0) < 1e-6
 assert p_txt.text == "テンプレの見出し" and abs(p_txt.location[0] - 0.3) < 1e-6 and p_txt.anchor_x == "LEFT"
-# 立ち絵より奥（背景）にすると、アドオンのチャンネルをずらして下に置く
-channels_before = (s.se_channel, s.audio_channel, s.subtitle_channel, s.name_channel, s.headline_channel,
-                   *(c.channel for c in s.characters))
+# 立ち絵より奥（背景）にすると、レーンより下に置く
+base_before = s.channel_base
 tpl.behind = True
 t_at2 = max(x.right_handle for x in sed.strips) + 20
 scene.frame_current = t_at2
 run(bpy.ops.tachie.insert_template, index=list(templates).index(tpl))
 p_img2 = next(x for x in sed.strips if x.get("tachie_ymmp") == "image" and x.left_handle >= t_at2)
-assert p_img2.channel < min(s.se_channel, s.audio_channel, *(c.channel for c in s.characters))
-tpl_shift = s.se_channel - channels_before[0]
+assert p_img2.channel < s.channel_base == base_before  # 下が空いているのでレーンはずらさない
+# いちばん下のチャンネルを変えると、レーンと置いてあるストリップがまとめてずれる（下の背景などは動かない）
+zimg_ch = image_of(next(iter(lines()))).channel
+s.channel_base = 12
+back_color = sed.strips["背景"]
+assert image_of(next(iter(lines()))).channel == zimg_ch + 2 and back_color.channel == 1 and p_img2.channel < 10, (
+    image_of(next(iter(lines()))).channel, zimg_ch, back_color.channel, p_img2.channel)
+assert sed.channels[zunda.channel].name == "ずんだもん 立ち絵" and sed.channels[10].name == "Channel 10"
+s.channel_base = 10
+assert image_of(next(iter(lines()))).channel == zimg_ch
 # YMM4 のテンプレート（ItemSettings.json）を読み込む: セリフと画像は置ける、トランジション・立ち絵アイテムは読まない
 YMM_ITEM2 = "YukkuriMovieMaker.Project.Items."
 item_settings = out / "YukkuriMovieMaker.Settings.ItemSettings.json"
@@ -1004,13 +1021,6 @@ for i in reversed(range(len(templates))):
 for i in reversed(range(len(zunda.expressions))):  # 読み込みで作った表情プリセット
     if zunda.expressions[i].name not in zunda_presets_t:
         zunda.expressions.remove(i)
-if tpl_shift:
-    for x in sorted(sed.strips, key=lambda x: x.channel):
-        x.channel -= tpl_shift
-    for prop in ("se_channel", "audio_channel", "subtitle_channel", "name_channel", "headline_channel"):
-        setattr(s, prop, getattr(s, prop) - tpl_shift)
-    for c in s.characters:
-        c.channel -= tpl_shift
 ops.refresh_idle(bpy.context)
 scene.frame_end = frame_end_before
 
@@ -1114,7 +1124,7 @@ run(bpy.ops.tachie.export_characters, filepath=str(exported))
 from bl_ext.user_default.blender_tachie.tachie_studio.pipeline import load_characters  # noqa: E402
 
 again = load_characters(exported)
-assert again["ずんだもん"].expression.eye == "ジト目" and again["四国めたん"].layout["channel"] == 4
+assert again["ずんだもん"].expression.eye == "ジト目" and "channel" not in again["四国めたん"].layout  # チャンネルは書かない
 assert again["ずんだもん"].voice == {"speedScale": 1.1} and again["四国めたん"].voice == {}, again["ずんだもん"].voice
 assert abs(again["ずんだもん"].audio["after"] - 0.3) < 1e-6 and again["四国めたん"].audio["volume"] == 1.0
 assert again["ずんだもん"].layout["period"] == 0.5 and "enter" not in again["ずんだもん"].layout
@@ -1251,6 +1261,37 @@ run(bpy.ops.tachie.regenerate_all, character_only=False)
 assert [(x.left_handle, x.right_handle) for x in stills()] == [(last_end, last_end + 90)]
 s.expression = ""
 
+# チャンネル: キャラを並べ替えるとレーンが入れ替わり、置いたストリップとチャンネルのミュートもついてくる
+def on_lanes():
+    lay = chmod.scene_layout(scene)
+    return all(x.channel == lay.channel(*chmod.lane_key(x)) or x.channel > lay.top
+               for x in sed.strips if chmod.lane_key(x))
+
+
+zsub = lane("subtitle", "ずんだもん")
+sed.channels[zsub].mute = True
+s.active_character = 0
+run(bpy.ops.tachie.character_move, direction="DOWN")  # 並べ替えると zunda などの参照は別のキャラを指すので名前で取る
+char = lambda name: next(c for c in s.characters if c.name == name)
+assert s.characters[1].name == "ずんだもん" and char("ずんだもん").channel > char("四国めたん").channel and on_lanes()
+assert sed.channels[lane("subtitle", "ずんだもん")].mute and not sed.channels[lane("subtitle", "四国めたん")].mute
+assert all(x.channel == char("ずんだもん").channel for x in stills())
+run(bpy.ops.tachie.character_move, direction="UP")
+zunda, metan = s.characters[0], s.characters[1]
+assert zunda.name == "ずんだもん" and lane("subtitle", "ずんだもん") == zsub and on_lanes()
+sed.channels[zsub].mute = False
+# 手で動かした立ち絵は「チャンネルを整理する」でレーンに戻る
+moved = image_of(next(iter(lines())))
+moved.channel = 90
+run(bpy.ops.tachie.relayout)
+assert moved.channel == zunda.channel and on_lanes()
+# 古い .blend（レーンに並べ直す前）: 開いたときに並べ直す
+s.applied_layout, s.layout_version = "", 0
+moved.channel = 91
+chmod._on_load(None)
+assert s.layout_version == 1 and moved.channel == zunda.channel and on_lanes()
+assert sed.channels[zunda.channel].name == "ずんだもん 立ち絵"
+
 scene.render.image_settings.file_format = "PNG"
 spans = [(l, r) for l, r, _ in lines().values()] + [(last_end, last_end + 90)]
 for i, (l, r) in enumerate(spans):
@@ -1303,7 +1344,7 @@ if partial is not None:
     e = ops.expression_of(new, partial.name)
     assert e.others[0] == "左腕_基本" and e.others[1] == partial.part_other2, e.others
 s.expression = ""
-assert new.channel not in {c.channel for c in s.characters if c != new} | {s.audio_channel, s.subtitle_channel}
+assert new.channel == lane("image", new.name) and len({c.channel for c in s.characters}) == len(s.characters)
 new.height = 0.7
 run(bpy.ops.tachie.save_defaults, target="PREFS")
 saved = ops.load_character_defaults()["ずんだもん2"]
@@ -1325,7 +1366,7 @@ run(bpy.ops.tachie.save_defaults, target="PREFS")
 assert ops.load_character_defaults() == {"語り手": {"speaker": 9}}
 voice = ops.load_voice_defaults()["語り手"]
 assert voice["speaker"] == 8 and voice["speed"] == 1.2 and voice["subtitle"]["size"] == 40, voice
-assert "parts" not in voice and set(voice["layout"]) == {"channel", "lines"}, voice
+assert "parts" not in voice and set(voice["layout"]) == {"lines"}, voice  # チャンネルはレーンで決まるので保存しない
 try:
     bpy.ops.tachie.save_defaults(target="MATERIAL")
     raise AssertionError("立ち絵の無いキャラの初期値を素材フォルダに書けた")
@@ -1334,7 +1375,8 @@ except RuntimeError as e:
 run(bpy.ops.tachie.character_add_voice, name="語り手")  # 同じ名前があれば番号を付け、初期値は元の名前で探す
 narr2 = s.characters[-1]
 assert narr2.name == "語り手 2" and narr2.speaker == 8 and abs(narr2.speed_scale - 1.2) < 1e-6
-assert narr2.font_size == 40 and narr2.line_layout == "AUDIO" and narr2.channel != narr.channel
+assert narr2.font_size == 40 and narr2.line_layout == "AUDIO"
+assert lane("audio", narr2.name) != lane("audio", narr.name) and lane("image", narr2.name) is None  # 立ち絵のレーンは無い
 run(bpy.ops.tachie.remove_defaults, key="語り手", voice=True)
 assert ops.load_voice_defaults() == {} and ops.load_character_defaults() == {"語り手": {"speaker": 9}}
 run(bpy.ops.tachie.remove_defaults, key="語り手")
@@ -1410,7 +1452,7 @@ else:
     run(bpy.ops.tachie.add_line)
     cid = list(lines())[-1]
     img = image_of(cid)
-    assert img.channel == pch.channel
+    assert img.channel == pch.channel == lane("image", pch.name)
     inodes = {os.stat(Path(bpy.path.abspath(img.directory)) / e.filename).st_ino for e in img.elements}
     assert len(inodes) >= 3, inodes  # 口パク（3 段）とまばたき
     # まばたきは目のセット（フォルダ）ではなく中の部品のレイヤーで指す（YMM4 はフォルダの組を使わない）

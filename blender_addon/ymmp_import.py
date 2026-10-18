@@ -726,7 +726,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 if end <= start:
                     return
                 face = sed.strips.new_effect(name=_face_name(name, preset), type="COLOR",
-                                             channel=_free_face_channel(sed, settings, start, end),
+                                             channel=_free_face_channel(sed, settings, start, end, name),
                                              frame_start=start, length=end - start)
                 face.color, face.color_tag, face.mute = (0.95, 0.6, 0.25), "COLOR_02", True
                 face["tachie_face"] = name

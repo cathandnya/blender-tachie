@@ -401,6 +401,14 @@ LINE_LAYOUTS = [
 ]
 
 
+def _update_lanes(self, context):
+    """キャラ × 役割のレーンを当て直す（いちばん下のチャンネル・キャラ名を出すかを変えたとき）。"""
+    from .channels import ensure_layout
+
+    for problem in ensure_layout(self.id_data):
+        print("チャンネルを整理できません:", problem)
+
+
 class TachieCharacter(bpy.types.PropertyGroup):
     # name は PropertyGroup が持っている
     folder: StringProperty(name="素材フォルダ", subtype="DIR_PATH",
@@ -427,6 +435,7 @@ class TachieCharacter(bpy.types.PropertyGroup):
                          description="立ち絵を左右反転する")
     height: FloatProperty(name="高さ", default=0.9, min=0.1, max=3.0,
                           description="画面の高さに対する立ち絵の高さ")
+    # 立ち絵のレーン（チャンネル）。キャラ × 役割のレーンから自動で決まる（channels.ensure_layout が書く）
     channel: IntProperty(name="立ち絵チャンネル", default=3, min=1, max=128)
     talk_bounce: FloatProperty(name="跳ねる高さ", default=0.0, min=0.0, max=0.2, step=0.1, precision=3,
                                subtype="FACTOR", update=_update_motion,
@@ -465,7 +474,7 @@ class TachieCharacter(bpy.types.PropertyGroup):
                               update=_update_subtitle)
     box_roundness: FloatProperty(name="帯の角の丸み", default=0.4, min=0.0, max=1.0, subtype="FACTOR",
                                  update=_update_subtitle)
-    show_name: BoolProperty(name="キャラ名を出す", default=False,
+    show_name: BoolProperty(name="キャラ名を出す", default=False, update=_update_lanes,
                             description="字幕の上にキャラ名（縁取りの色の帯）を出す。変えたら全セリフを再生成で反映")
     subtitle_fade: FloatProperty(name="字幕のフェードイン", default=0.0, min=0.0, max=2.0, step=1, precision=2,
                                  unit="TIME_ABSOLUTE", update=_update_subtitle_fade,
@@ -546,6 +555,13 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     line_gap: FloatProperty(name="セリフの間隔", default=0.2, min=0.0, max=10.0, unit="TIME_ABSOLUTE",
                             description="台本を流し込むときのセリフとセリフの間（秒）")
 
+    # レーン（キャラ × 役割のチャンネル）のいちばん下。下の番号は動画・背景・効果音・BGM の場所
+    channel_base: IntProperty(name="いちばん下のチャンネル", default=10, min=1, max=128, update=_update_lanes,
+                              description="アドオンが使うチャンネル（キャラ × 役割のレーン）を、この番号から上に並べる。"
+                                          "下の番号は動画・背景・効果音・BGM を置く場所")
+    applied_layout: StringProperty(default="")  # 前に当てたレーン（JSON）
+    layout_version: IntProperty(default=0)  # 0 は古い .blend（レーンに並べ直す前）
+    # 以下の *_channel は古い .blend の設定で、使わない（見出しの headline_channel だけレーンから自動で書く）
     audio_channel: IntProperty(name="音声", default=2, min=1, max=128)
     name_channel: IntProperty(name="キャラ名", default=11, min=1, max=128,
                               description="字幕の上に出すキャラ名のチャンネル（キャラ名を出すキャラのみ）")

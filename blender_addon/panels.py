@@ -58,6 +58,9 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         col.operator("tachie.character_remove", text="", icon="REMOVE")
         col.separator()
         col.menu("TACHIE_MT_characters", text="", icon="DOWNARROW_HLT")
+        col.separator()
+        col.operator("tachie.character_move", text="", icon="TRIA_UP").direction = "UP"
+        col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
 
         ch = s.character()
         layout.prop(s, "text", text="")
@@ -514,7 +517,7 @@ class TACHIE_PT_placement(_WithTachie, _Panel, bpy.types.Panel):
         row.prop(ch, "flip_x", text="", icon="MOD_MIRROR")
         col.prop(ch, "position_y")
         col.prop(ch, "height")
-        col.prop(ch, "channel")
+        draw_char_lanes(self.layout, seq_scene(context), ch.name)
 
 
 class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
@@ -663,15 +666,59 @@ class TACHIE_PT_channels(_Panel, bpy.types.Panel):
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
-        s = seq_scene(context).tachie
-        row = self.layout.row(align=True)
-        row.prop(s, "subtitle_channel")
-        row.prop(s, "audio_channel")
-        row = self.layout.row(align=True)
-        row.prop(s, "name_channel")
-        row.prop(s, "headline_channel")
-        self.layout.prop(s, "se_channel")
-        self.layout.label(text="立ち絵のチャンネルはキャラクターごとに設定")
+        from .channels import scene_layout
+
+        scene = seq_scene(context)
+        s = scene.tachie
+        layout = self.layout
+        layout.prop(s, "channel_base")
+        try:
+            lay = scene_layout(scene)
+        except ValueError as e:
+            layout.label(text=str(e), icon="ERROR")
+            return
+        if s.applied_layout != lay.to_json():
+            layout.label(text="置いてあるストリップがチャンネルの並びと合っていません", icon="ERROR")
+        sed = scene.sequence_editor
+        col = layout.column(align=True)
+        for lane in reversed(lay.lanes):  # 上から（シーケンサーと同じ向き）
+            row = col.row(align=True)
+            row.label(text=f"{lane.channel}  {lane.label}", icon=LANE_ICONS.get(lane.role, "DOT"))
+            if sed is not None:
+                row.prop(sed.channels[lane.channel], "mute", text="", emboss=False)
+                row.prop(sed.channels[lane.channel], "lock", text="", emboss=False)
+        if sed is not None:
+            over = sum(1 for x in sed.strips if x.channel > lay.top and _addon_strip(x))
+            if over:
+                layout.label(text=f"重なってチャンネルからあふれたストリップ {over} 本（{lay.top + 1} 番から上）", icon="INFO")
+        layout.label(text=f"1〜{s.channel_base - 1} 番は動画・背景・効果音・BGM の場所です", icon="INFO")
+        row = layout.row()
+        row.scale_y = 1.2
+        row.operator("tachie.relayout", icon="SORTALPHA")
+
+
+LANE_ICONS = {"audio": "SPEAKER", "image": "IMAGE_DATA", "face": "SHADERFX", "subtitle": "FONT_DATA",
+              "name": "USER", "headline": "SMALL_CAPS"}
+
+
+def _addon_strip(strip) -> bool:
+    from .channels import lane_key
+
+    return lane_key(strip) is not None
+
+
+def draw_char_lanes(layout, scene, name: str) -> None:
+    """キャラのレーン（チャンネル）の表示（キャラ × 役割で自動で決まる）。"""
+    from .channels import scene_layout
+
+    try:
+        lay = scene_layout(scene)
+    except ValueError:
+        return
+    lanes = [lane for lane in lay.lanes if lane.char == name]
+    if lanes:
+        layout.label(text="チャンネル: " + "、".join(f"{lane.label.split(' ')[-1]} {lane.channel}" for lane in lanes),
+                     icon="SEQ_STRIP_DUPLICATE")
 
 
 _classes = (

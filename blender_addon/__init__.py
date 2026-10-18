@@ -2,9 +2,9 @@
 
 import bpy
 
-from . import faceassign, operators, panels, properties, templates, ymmp_import
+from . import channels, faceassign, operators, panels, properties, templates, ymmp_import
 
-_modules = (properties, operators, ymmp_import, templates, faceassign, panels)
+_modules = (properties, operators, channels, ymmp_import, templates, faceassign, panels)
 
 
 def register():

@@ -21,7 +21,6 @@
     position_y = 0.0                # 上下にずらす量（画面の高さに対する割合、上が正）
     flip = false                    # 左右反転
     height = 0.9                    # 画面の高さに対する立ち絵の高さ
-    channel = 3                     # 立ち絵のチャンネル
     bounce = 0.02                   # 喋っている間に跳ねる高さ（画面の高さに対する割合）、sway は揺れる角度（度）
     period = 0.3                    # 跳ねる・揺れる 1 往復の秒数
     enter = "FADE"                  # 登場・退場（exit）の効果 NONE / FADE / SLIDE、effect_seconds はその長さ
@@ -104,7 +103,7 @@ class CharacterConfig:
     mouth: str = "auto"
     voice: dict[str, float] = field(default_factory=dict)  # audio_query のキーで持つ
     expressions: dict[str, dict[str, Any]] = field(default_factory=dict)  # プリセット名 → 上書きするパーツ
-    layout: dict[str, Any] = field(default_factory=dict)  # position / flip / height / channel
+    layout: dict[str, Any] = field(default_factory=dict)  # position / flip / height など（channel は古い設定で、使わない）
     subtitle: dict[str, Any] = field(default_factory=dict)  # font / size / color / outline_color / outline_width / line_spacing / y
     audio: dict[str, float] = field(default_factory=dict)  # volume / pan / fade_in / fade_out / after
     engine: str = ""  # 声のエンジンの URL（VOICEVOX 互換）。空なら既定のエンジン
