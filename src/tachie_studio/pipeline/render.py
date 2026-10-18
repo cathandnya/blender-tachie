@@ -285,6 +285,45 @@ def blink_segment_frames(segments: list[tuple[int, int, FrameCache]], frames: in
     return out
 
 
+def still_frames(base: FrameCache, faces: list[tuple[int, int, FrameCache]],
+                 lines: list[tuple[int, LineMotion, FrameCache]], frames: int, fps: float,
+                 seed: object = None) -> list[Path]:
+    """立ち絵（`frames` コマ）を、重なるセリフの間だけ口パクさせて並べる。
+
+    `faces` は表情ストリップの [(開始, 終わり, キャッシュ)]、`lines` は重なるセリフの [(ずれ, 動き, キャッシュ)]
+    （どちらも立ち絵の頭が 0。セリフのキャッシュはセリフの表情）。表情は 立ち絵 < セリフ < 表情ストリップ
+    （後ろほど優先）、口は重なるセリフのうち後から始まるものの口の動き（それ以外は閉じ）、目は立ち絵自身の
+    まばたき（`blink_segment_frames` と同じ seed で、セリフの間も続ける）。セリフが無ければ `blink_segment_frames` と同じ。
+    """
+    owner = [base] * frames
+    talker: list[int | None] = [None] * frames  # そのコマの口を持つセリフ（lines の番号）
+    order = sorted(range(len(lines)), key=lambda k: lines[k][0])  # 後から始まるセリフほど優先
+    for k in order:
+        offset, motion, cache = lines[k]
+        for j in range(max(0, offset), min(frames, offset + motion.frames)):
+            owner[j] = cache
+            talker[j] = k
+    for start, end, cache in faces:
+        for j in range(max(0, start), min(frames, end)):
+            owner[j] = cache
+    eye_seed = _seed("idle", seed)
+    eyes_by: dict[int, list[int]] = {}
+    states_by: dict[tuple[int, int], list[MouthState]] = {}
+    out = []
+    for j, cache in enumerate(owner):
+        if id(cache) not in eyes_by:
+            eyes_by[id(cache)] = eye_frames(frames, fps, eye_seed, cache.character, cache.expression)
+        mouth: MouthState = ("level", 0)
+        k = talker[j]
+        if k is not None:
+            offset, motion, _ = lines[k]
+            if (k, id(cache)) not in states_by:  # セリフ全体で計算する（音量の正規化を保つ）。口のパーツはそのコマの表情
+                states_by[(k, id(cache))] = mouth_states(motion, cache.character, cache.expression)[1]
+            mouth = states_by[(k, id(cache))][j - offset]
+        out.append(cache.get(eyes_by[id(cache)][j], mouth))
+    return out
+
+
 def render_idle(config: CharacterConfig, character: Character, out_dir: Path, *, seconds: float, fps: float,
                 cache: FrameCache) -> RenderedClip:
     """喋っていない区間用（まばたきのみ、口は閉じ）。"""

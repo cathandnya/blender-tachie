@@ -635,3 +635,46 @@ def test_render_line_uses_given_wav(tmp_path: Path, char_dir: Path):
                        fps=10, cache=cache)
     assert clip.frames == 15 and abs(clip.duration - 1.5) < 1e-6
     assert (tmp_path / "o" / clip.wav).read_bytes()[:4] == b"RIFF"
+
+
+def test_still_frames(tmp_path: Path, char_dir: Path):
+    """立ち絵は重なるセリフの間だけ口パクし、表情は 立ち絵 < セリフ < 表情ストリップ。"""
+    from tachie_studio.pipeline.render import (FrameCache, LineMotion, blink_segment_frames, mouth_states,
+                                               render_line, still_frames)
+    from tachie_studio.pipeline.script import Line
+    from tachie_studio.tachie import Expression
+
+    _png(char_dir / "口" / "む.png", (0, 0, 90, 255), (0, 5, 8, 6))
+    cfg = parse_characters({"テスト": {"folder": str(char_dir), "speaker": 1}}, tmp_path)["テスト"]
+    character = load_character(char_dir)
+    base = FrameCache(character, cfg.expression, tmp_path / "cache", 1.0)
+    talk = FrameCache(character, cfg.expression, tmp_path / "cache2", 1.0)  # 別の表情のつもり（置き場所で区別）
+    face = FrameCache(character, Expression(mouth="む"), tmp_path / "cache3", 1.0)
+    out = tmp_path / "o"
+    render_line(FakeClient(), cfg, character, Line(1, "テスト", "かむ"), out, fps=10, cache=None, stem="x")
+    motion = LineMotion.load(out / "x.json")
+    n = motion.frames + 20
+    # セリフが無ければ blink_segment_frames と同じ
+    assert still_frames(base, [], [], n, 10, seed="s") == blink_segment_frames([(0, n, base)], n, 10, "s")
+    frames = still_frames(base, [], [(5, motion, talk)], n, 10, seed="s")
+    plain = blink_segment_frames([(0, n, base)], n, 10, "s")
+    inside = range(5, 5 + motion.frames)
+    assert all(frames[j] == plain[j] for j in range(n) if j not in inside)  # 外は閉じた口・同じまばたき
+    assert all(frames[j].parent == talk.directory for j in inside)  # セリフの間はセリフの表情
+    states = mouth_states(motion, character, talk.expression)[1]
+    assert [frames[j].name.split("_", 1)[1] for j in inside] == \
+        [f"{k[0]}{v}.png" for k, v in states]
+    assert len({frames[j].name.split("_", 1)[1] for j in inside}) > 1  # 口が動く
+    # 表情ストリップはセリフより優先
+    frames = still_frames(base, [(6, 8, face)], [(5, motion, talk)], n, 10, seed="s")
+    assert [frames[j].parent for j in (5, 6, 7, 8)] == [talk.directory, face.directory, face.directory,
+                                                         talk.directory]
+    # 重なるセリフは後から始まるものが口を持つ（始まりの順に関係なく）
+    frames = still_frames(base, [], [(8, motion, base), (5, motion, talk)], n, 10, seed="s")
+    assert frames[7].parent == talk.directory and frames[8].parent == base.directory
+    first = mouth_states(motion, character, base.expression)[1][0]
+    assert frames[8].name.split("_", 1)[1] == f"{first[0][0]}{first[1]}.png"
+    # 立ち絵の外にはみ出したセリフは立ち絵の区間で切る
+    frames = still_frames(base, [], [(-2, motion, talk)], 4, 10, seed="s")
+    states = mouth_states(motion, character, talk.expression)[1]
+    assert [f.name.split("_", 1)[1] for f in frames] == [f"{k[0]}{v}.png" for k, v in states[2:6]]
