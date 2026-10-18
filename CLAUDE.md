@@ -36,9 +36,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   画面があるときはセリフの音声合成を別スレッドで回す（`operators.clip_job` が Blender に触る準備だけして、合成する関数を返す。
   `_LineJob`）。modal のタイマーで合成し終わったものから順に置き、ステータスバーに「合成中 n / N 本」、Esc でやめる
   （合成中の 1 本は終わるまで待つ。置いたセリフは残す）。画面が無い（smoke）ときは待ちながら合成する。
-  pino の VOICEVOX は 1 本約 2.6 秒で、並べて頼んでも速くならない（エンジンが 1 本ずつ合成する）。既にあるキャラは設定を変えない。
+  VOICEVOX は 1 本約 2.6 秒（手元の計測）で、並べて頼んでも速くならない（エンジンが 1 本ずつ合成する）。既にあるキャラは設定を変えない。
   新しく追加したキャラの基本の表情・位置は、いちばん長く出ている立ち絵アイテム（`_base_span`）から取る。キャラの既定のパーツ
-  （TachieDefaultItemParameter）は新しく置くアイテムの初期値で、表情プリセットを当てて口・体が空になっていることがある（naspc）。
+  （TachieDefaultItemParameter）は新しく置くアイテムの初期値で、表情プリセットを当てて口・体が空になっていることがある（実際のプロジェクトで確認）。
   表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
   最後のセリフより後ろの立ち絵アイテムはセリフなしの立ち絵（`place_still`）にする（待機は最後のセリフの終わりまでなので、
@@ -135,7 +135,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
   キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。
   字幕の装飾（#12）: テキストストリップの box（`use_box` / `box_color` / `box_margin` / `box_roundness`）。キャラ名は
-  セリフの 4 本目のストリップ（`tachie_role = "name"`、`name_channel`、字幕の行数から高さを見積もる `properties.apply_name`）で、
+  セリフの 4 本目のストリップ（`tachie_role = "name"`、キャラ名のレーン、字幕の行数から高さを見積もる `properties.apply_name`）で、
   字幕ファイル（`subtitle_cues`）には入れない。字幕のフェードインは `motion.refresh_motion` が blend_alpha に打つ。
   見出しテロップは `tachie_headline` のテキストストリップ（`headline_channel`、スタイルはシーンの `headline_*` で即反映）。
   1 文字ずつ出す字幕は作っていない
@@ -201,7 +201,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   立ち位置は指定が無いときだけ左右交互（チャンネルはレーンで決まる）。
   メニューの「初期値として保存」で両方に書ける（tachie.toml にある声のキーは残す）。
   立ち絵の無いキャラは**キャラ名**で `character_defaults.toml` の `["立ち絵なし"."名前"]`（`VOICE_DEFAULTS_TABLE`、
-  `load_voice_defaults`）に保存する（声・字幕・音量など。layout は channel と lines だけ。tachie.toml には書けない）。
+  `load_voice_defaults`）に保存する（声・字幕・音量など。layout は lines だけ。tachie.toml には書けない）。
   `add_voice_character` は番号を付ける前の名前で探し、YMM4 の読み込みはその上に YMM4 の設定を重ねる。CLI の `parse_characters` も tachie.toml で補う。
   書き出し（キャラ設定・初期値）は空のパーツも `"目" = ""` / `"他" = []` と明示し、tachie.toml の値で補われないようにする。
   消した表情プリセットは書けないので、tachie.toml にあるプリセットは戻る（仕様）。
@@ -214,7 +214,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   Linux x64（画面なしで smoke.sh）。
   Windows ではドライブをまたぐと `bpy.path.relpath` が ValueError を出すので、`_path_for_blend` は絶対パスに戻す。
 - `scripts/smoke.sh` + `scripts/blender_smoke.py` — 一時ユーザーフォルダ（`BLENDER_USER_RESOURCES`）に入れて 2 キャラ分置き、フレームを `out/smoke/` に書き出す結合テスト。
-  エンジンが別のマシンなら `VOICEVOX_URL=http://pino.local:50021 scripts/smoke.sh`。
+  エンジンが別のマシンなら `VOICEVOX_URL=http://<host>:50021 scripts/smoke.sh`。
 - `scripts/blender_screenshot.py` — smoke.sh のあとに、Blender を画面ありで起動して 立ち絵パネルとシーケンサーを
   `out/screenshots/sequencer.png` に撮る（`bpy.ops.screen.screenshot`。画面収録の許可は不要）。コマンドはファイル冒頭。
 - `char/` — 手元の立ち絵素材（ずんだもん、四国めたん）。利用規約があるので git 管理外。テストは無ければ skip する。
@@ -279,13 +279,13 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - ファイル名は NFC に正規化して比較する（macOS の NFD 対策）。
 - 既定のパーツは、連番のあるものを優先して名前順の最初。
 - キャラ設定の TOML は日本語キーを `"ずんだもん"` のように引用符で囲む（TOML 1.0 の決まり）。
-  `[キャラ.parts]`（表情）、`[キャラ.expressions.名前]`（表情プリセット）、`[キャラ.layout]`（position / flip / height / channel）、
+  `[キャラ.parts]`（表情）、`[キャラ.expressions.名前]`（表情プリセット）、`[キャラ.layout]`（position / flip / height。channel は書かず読まない）、
   `[キャラ.subtitle]`（font / size / color …）。
 - 表情プリセットは基本の表情から変えるパーツだけを持つ。他・後は**スロットごと**に置き換える（YMM4 と同じ。
   `"他" = ["", "右腕_指差す"]` は他2 だけ。"" のスロットは基本のまま、消すときは素材の透明なパーツ `_` などを選ぶ）。
   `Expression.others` / `backs` は位置を保ったリストで "" は空きスロット（`config.merge_slots`、合成では飛ばす）。
   YMM4 の並びは 他1 = 左腕、他2 = 右腕（実物の preset.ini から）。基本の表情もこの順にしないとプリセットで腕が重なる。
-  重ねるのは `CharacterConfig.expression_for`。台本では `キャラ名(表情): セリフ`（`（）` `[]` も可）。
+  重ねるのは `CharacterConfig.expression_for`。台本では `キャラ名(表情): セリフ`（`（）` `[]` も可。YMM4 の台本・CSV のキャラ名の欄でも同じ）。
   ストリップには `tachie_expression` を付け、再生成はそれを使う。待機ストリップは基本の表情。
 - YMM4 の表情プリセットは素材フォルダの `preset.ini`（UTF-8 BOM、`[名前]` に `眉=x.png`、`他1=x.png` …）。
   `tachie.presets.load_presets` で読み、素材に無いパーツは警告して飛ばす。`config.load_material_defaults` が
