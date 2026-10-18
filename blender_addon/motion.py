@@ -8,6 +8,7 @@ blend_alpha にキーフレームを打つ（連番には焼き込まない）�
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from pathlib import Path
@@ -18,7 +19,8 @@ from .properties import apply_placement, name_height, place_text, text_offset
 
 # 声が出ているとみなす音量（lipsync.mouth の無音のしきい値と同じ）
 VOICED_RMS = 0.02
-MANAGED = ("transform.offset_x", "transform.offset_y", "transform.rotation", "blend_alpha")
+MANAGED = ("transform.offset_x", "transform.offset_y", "transform.rotation", "blend_alpha",
+           "transform.scale_x", "transform.scale_y")
 _PATH_RE = re.compile(r'^sequence_editor\.strips_all\["(?P<name>(?:[^"\\]|\\.)*)"\]\.(?P<attr>.+)$')
 
 
@@ -150,6 +152,50 @@ def _edge(strip, ch, effect: str, frame_from: int, frame_to: int, appearing: boo
         _key(strip, "transform.offset_x", frame_to, base if hidden_first else off)
 
 
+def jump_of(strip) -> dict | None:
+    """立ち絵の跳ねながら登場退場（`tachie_jump`。YMM4 の立ち絵アイテムの映像エフェクトから）。"""
+    try:
+        return json.loads(strip["tachie_jump"]) if strip.get("tachie_jump") else None
+    except ValueError:
+        return None
+
+
+def _jump(strip, ch, jump: dict, fps: float, width: int, height: int, appearing: bool) -> None:
+    """跳ねながら登場（appearing）・退場のキーフレーム（YMM4 の InOutJumpEffect に近い動き。正確な動きは資料が無い）。
+
+    登場は `x` / `y`（画面に対する割合、上が正。`in_reverse` なら逆向き）だけずれた位置から、退場は元の位置からそこへ
+    （`out_reverse` でなければ逆向き）、`seconds` 秒かけて移りながら、`period` 秒ごとに跳ねる（高さは立ち絵の高さの
+    `height` %、空中では縦に `stretch` % 伸びる）。着地（登場の終わり）では一度つぶれて戻る。"""
+    length = strip.right_handle - 1 - strip.left_handle
+    if jump.get("in") and jump.get("out"):  # 登場と退場が重なると、同じフレームのキーが上書きされて片方が消える
+        length //= 2
+    n = max(2, min(round(jump["seconds"] * fps), length))
+    hops = max(1, round(jump["seconds"] / max(jump.get("period") or jump["seconds"], 1e-3)))
+    sign = (-1 if jump.get("in_reverse") else 1) if appearing else (1 if jump.get("out_reverse") else -1)
+    flip = -1 if strip.use_flip_x else 1  # 反転したストリップは offset の向きも逆
+    # 大きさは apply_placement の値（登場の着地でつぶしたままの scale を退場の基準にしない）
+    base_x, base_y, base_s = strip.transform.offset_x, strip.transform.offset_y, float(strip.get("tachie_scale", 1.0))
+    dx, dy = sign * jump["x"] * width * flip, sign * jump["y"] * height
+    hop_px = jump.get("height", 0.0) / 100 * ch.height * height * base_s
+    stretch = jump.get("stretch", 0.0) / 100
+    start = strip.left_handle if appearing else strip.right_handle - 1 - n
+    for k in range(n + 1):
+        t = k / n
+        rest = 1 - t if appearing else t  # 残りのずれ
+        phase = (t * hops) % 1.0 if k < n else 0.0
+        hop = 4 * phase * (1 - phase)
+        _key(strip, "transform.offset_x", start + k, base_x + dx * rest)
+        _key(strip, "transform.offset_y", start + k, base_y + dy * rest + hop_px * hop)
+        _key(strip, "transform.scale_y", start + k, base_s * (1 + stretch * hop))
+        _key(strip, "transform.scale_x", start + k, base_s * (1 - stretch * hop / 2))
+    squash = max(1, round(0.1 * fps))
+    end = strip.right_handle - 1 - (n + 1 if jump.get("out") else 0)  # 退場の動きより前（戻るキーまで打てるときだけ）
+    if appearing and stretch and start + n + 2 * squash < end:  # 着地でつぶれて戻る
+        for f, sy in ((start + n + squash, 1 - stretch), (start + n + 2 * squash, 1.0)):
+            _key(strip, "transform.scale_y", f, base_s * sy)
+            _key(strip, "transform.scale_x", f, base_s * (2 - sy))
+
+
 def refresh_motion(scene, lines_dir: Path) -> int:
     """立ち絵の動きのキーフレームを作り直す。動きを付けたストリップの数を返す。"""
     sed = scene.sequence_editor
@@ -209,6 +255,14 @@ def refresh_motion(scene, lines_dir: Path) -> int:
                         if head < s.right_handle and s.left_handle < end:
                             _talk(s, ch, lines_dir / f"{clip_id}.json", fps, height, head)
                             count += 1
+        # 跳ねながら登場退場（YMM4 の立ち絵アイテムごとの映像エフェクト）。付いている側はキャラの登場・退場の代わり
+        jumps = {s.name: j for s in mine if (j := jump_of(s))}
+        for s in mine:
+            j = jumps.get(s.name)
+            for appearing in (True, False):
+                if j and j.get("in" if appearing else "out"):
+                    _jump(s, ch, j, fps, width, height, appearing)
+                    count += 1
         duration = max(1, round(ch.effect_seconds * fps))
         for group in spans(mine):
             first, last = group[0], group[-1]
@@ -216,11 +270,11 @@ def refresh_motion(scene, lines_dir: Path) -> int:
             if len(group) == 1 and ch.enter_effect != "NONE" and ch.exit_effect != "NONE":
                 # 1 本だけのまとまりで登場と退場が重なると、同じフレームのキーが上書きされて片方が消える
                 d = min(d, max(1, (first.right_handle - 1 - first.left_handle) // 2))
-            if ch.enter_effect != "NONE":
+            if ch.enter_effect != "NONE" and not (jumps.get(first.name) or {}).get("in"):
                 end = min(first.left_handle + d, first.right_handle - 1)
                 _edge(first, ch, ch.enter_effect, first.left_handle, end, True, width)
                 count += 1
-            if ch.exit_effect != "NONE":
+            if ch.exit_effect != "NONE" and not (jumps.get(last.name) or {}).get("out"):
                 begin = max(last.right_handle - 1 - d, last.left_handle)
                 _edge(last, ch, ch.exit_effect, begin, last.right_handle - 1, False, width)
                 count += 1
@@ -299,8 +353,8 @@ def motion_signature(scene) -> str:
         if owner(s) is None:
             continue
         pose = (round(s.get("tachie_pos_x", 0.0), 4), round(s.get("tachie_pos_y", 0.0), 4),
-                round(s.get("tachie_scale", 1.0), 4))
-        active = active or pose != (0.0, 0.0, 1.0)
+                round(s.get("tachie_scale", 1.0), 4), s.get("tachie_flip"), s.get("tachie_jump", ""))
+        active = active or pose != (0.0, 0.0, 1.0, None, "")
         items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, pose))
     if not active:
         return ""

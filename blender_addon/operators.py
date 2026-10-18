@@ -15,7 +15,7 @@ from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import channels as lanes
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, place_text, system_fonts, text_offset
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, place_text, still_flip, system_fonts, text_offset
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, link_frames, still_frames
@@ -1061,10 +1061,14 @@ def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int,
 
 
 def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None,
-                channel: int | None = None, problems: list | None = None):
+                channel: int | None = None, problems: list | None = None, flip: bool | None = None,
+                jump: dict | None = None):
     """立ち絵（`tachie_still`）を置く。まばたきし、重なるそのキャラのセリフの間だけ口パクしてセリフの表情に
     なる（表情ストリップが重なればその表情）。口パクに使えなかったセリフ（動きの json が無い前の版のセリフなど）は
-    `problems` に理由を足し、その間は口を閉じる。"""
+    `problems` に理由を足し、その間は口を閉じる。
+
+    `flip` は立ち絵ごとの左右反転（`tachie_flip`、YMM4 の立ち絵アイテムと同じ。None ならキャラの設定に従う）、
+    `jump` は跳ねながら登場退場（`tachie_jump`、`ymmp.jump_on_screen` の形。動きは motion が打つ）。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
     lanes.ensure_layout(scene)  # 立ち絵のレーン（ch.channel）に置く
@@ -1108,10 +1112,27 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
     strip["tachie_expression"] = preset or ""
+    if flip is not None:
+        strip["tachie_flip"] = bool(flip)
+    if jump:
+        strip["tachie_jump"] = json.dumps(jump, ensure_ascii=False)
     set_pose(strip, pose, ch)
     if strip.right_handle - 1 > scene.frame_end:
         scene.frame_end = strip.right_handle - 1
     return strip
+
+
+def item_still_pose(ch, x: float, y: float, zoom: float, width: float, height: float) -> dict:
+    """YMM4 の立ち絵アイテムの X / Y（画面中央からのピクセル、下が正）と Zoom（素材の高さに対する %）を、キャラの立ち位置・
+    高さとの差（立ち絵ごとの位置・大きさ）にする（.ymmp の読み込みでキャラに写すのと同じ換算）。"""
+    material = load_material(ch.folder)
+    pose = {"tachie_pos_x": x / width - ch.position_x, "tachie_pos_y": -y / height - ch.position_y,
+            "tachie_scale": material.height * zoom / 100 / height / ch.height}
+    for key, (_, lo, hi, default, _) in POSE_PROPS.items():
+        # 丸めの誤差（キャラの設定と同じ位置・大きさ）は既定値に。範囲（パネルで編集できる値）に収める
+        value = default if abs(pose[key] - default) < 1e-3 else pose[key]
+        pose[key] = min(hi, max(lo, value))
+    return pose
 
 
 def remake_still(context, strip, preset: str | None = None, problems: list | None = None):
@@ -1129,8 +1150,13 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
     # 置き直すと、手で動かしたものに見えてレーンに戻らない）
     lanes.ensure_layout(seq_scene(context))
     channel = strip.channel
+    flip = strip.get("tachie_flip")
+    from .motion import jump_of
+
+    jump = jump_of(strip)
     sed.strips.remove(strip)
-    return place_still(context, ch, preset, start, frames, pose, channel, problems)
+    return place_still(context, ch, preset, start, frames, pose, channel, problems,
+                       None if flip is None else bool(flip), jump)
 
 
 def connect(context, strips) -> None:
@@ -1259,6 +1285,35 @@ class TACHIE_OT_remake_still(bpy.types.Operator):
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         sed.active_strip = strip
+        return {"FINISHED"}
+
+
+class TACHIE_OT_flip_still(bpy.types.Operator):
+    """選択中の立ち絵を左右反転する（立ち絵ごと。キャラクターの設定と同じ向きに戻すと、キャラクターの設定に従う）"""
+
+    bl_idname = "tachie.flip_still"
+    bl_label = "左右反転"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        sed = seq_scene(context).sequence_editor
+        return bool(sed and sed.active_strip and sed.active_strip.get("tachie_still"))
+
+    def execute(self, context):
+        strip = seq_scene(context).sequence_editor.active_strip
+        try:
+            ch = find_character(seq_scene(context).tachie, strip["tachie_still"])
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        flip = not still_flip(strip, ch)
+        if flip == ch.flip_x:
+            if "tachie_flip" in strip:
+                del strip["tachie_flip"]
+        else:
+            strip["tachie_flip"] = flip
+        refresh_motion_now(seq_scene(context))  # 位置を当て直し、動き（スライド・ジャンプの向き）も作り直す
         return {"FINISHED"}
 
 
@@ -3333,6 +3388,7 @@ _classes = (
     TACHIE_OT_add_line,
     TACHIE_OT_add_still,
     TACHIE_OT_remake_still,
+    TACHIE_OT_flip_still,
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,
     TACHIE_OT_expression_add,

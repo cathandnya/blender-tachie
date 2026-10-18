@@ -2,7 +2,7 @@ import bpy
 
 from .operators import (line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
                         prefs, selected_targets, seq_scene)
-from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS
+from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
 
 
 class _Panel:
@@ -119,6 +119,16 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row = layout.row(align=True)
             row.label(text="表情")
             row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "STILL"
+            owner = seq_scene(context).tachie.characters.get(strip["tachie_still"])
+            flipped = bool(owner and still_flip(strip, owner))
+            row = layout.row(align=True)
+            row.label(text="左右反転")
+            row.operator("tachie.flip_still", text="反転" if flipped else "反転しない", icon="MOD_MIRROR",
+                         depress=flipped)
+            if "tachie_flip" not in strip:
+                row.label(text="（キャラの設定）")
+            if strip.get("tachie_jump"):
+                layout.label(text="跳ねながら登場退場（YMM4 の映像エフェクト）", icon="ANIM")
             draw_pose(layout, strip)
             layout.operator("tachie.remake_still", icon="FILE_REFRESH")
         elif strip is None or not strip.get("tachie_id"):

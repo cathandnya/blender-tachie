@@ -15,10 +15,10 @@ from pathlib import Path
 import bpy
 from bpy_extras.io_utils import ImportHelper
 
-from .motion import _channelbag
+from .motion import _channelbag, jump_of
 from .operators import (
-    ERRORS, POSE_PROPS, _applied_signatures, _face_name, _free_face_channel, _still_overlaps, auto_signature,
-    character_audio, character_voice, get_pose, load_material, place_still,
+    ERRORS, _applied_signatures, _face_name, _free_face_channel, _still_overlaps, auto_signature,
+    character_audio, character_voice, get_pose, place_still, item_still_pose,
     ensure_sequencer_scene, line_accent, line_audio, line_channels, line_end, line_kana, line_layout,
     line_layout_of, line_sound, line_strips, line_subtitle, line_text, line_texts, line_voice, place_strips, prefs,
     refresh_faces, render_clip, scene_fps, seq_scene, set_text_offset,
@@ -178,7 +178,9 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
         elif s.get("tachie_still"):
             items.append({"kind": "still", "frame": s.left_handle - t0, "length": s.right_handle - s.left_handle,
                           "layer": s.channel, "character": s["tachie_still"],
-                          "expression": s.get("tachie_expression", ""), "parts": None, "pose": get_pose(s)})
+                          "expression": s.get("tachie_expression", ""), "parts": None, "pose": get_pose(s),
+                          "flip": s.get("tachie_flip"),
+                          "jump": jump_of(s)})
         elif s.get("tachie_idle"):
             skipped.append(f"前の版の待機の立ち絵（{s.name}）")
         else:
@@ -226,20 +228,13 @@ def _resolve_expression(ch, item: dict, problems: list[str], tachie: dict | None
 
 
 def _still_pose(ch, item: dict, data: dict) -> dict | None:
-    """立ち絵の位置・大きさ（立ち絵ごとの値）。YMM4 の立ち絵アイテムは X / Y（画面中央からのピクセル、下が正）と
-    Zoom（素材の高さに対する %）を、キャラの立ち位置・高さとの差にする（.ymmp の読み込みでキャラに写すのと同じ換算）。"""
+    """立ち絵の位置・大きさ（立ち絵ごとの値）。登録した立ち絵は `pose`、YMM4 の立ち絵アイテムは X / Y / Zoom から。"""
     if item.get("pose"):
         return item["pose"]
     if "x" not in item:
         return None
-    width, height = float(data.get("width") or 1920), float(data.get("height") or 1080)
-    material = load_material(ch.folder)
-    pose = {"tachie_pos_x": item["x"] / width - ch.position_x, "tachie_pos_y": -item["y"] / height - ch.position_y,
-            "tachie_scale": material.height * item.get("zoom", 100.0) / 100 / height / ch.height}
-    for key, (_, lo, hi, base, _) in POSE_PROPS.items():
-        # 丸めの誤差（キャラの設定と同じ位置・大きさ）は 0 / 1 にし、パネルで編集できる範囲に収める
-        pose[key] = base if abs(pose[key] - base) < 1e-3 else max(lo, min(hi, pose[key]))
-    return pose
+    return item_still_pose(ch, item["x"], item["y"], item.get("zoom", 100.0),
+                          float(data.get("width") or 1920), float(data.get("height") or 1080))
 
 
 def _tachie_parts(items: list[dict], item: dict) -> dict | None:
@@ -358,7 +353,9 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             continue
         try:
             preset = _resolve_expression(ch, item, problems)
-            place_still(context, ch, preset, a, b - a, _still_pose(ch, item, data), problems=problems)
+            flip = item.get("flip")  # YMM4 と同じく立ち絵ごと。キャラの設定と同じならキャラに従う
+            place_still(context, ch, preset, a, b - a, _still_pose(ch, item, data), problems=problems,
+                        flip=None if flip is None or bool(flip) == ch.flip_x else bool(flip), jump=item.get("jump"))
         except ERRORS as e:
             problems.append(f"{ch.name} の立ち絵: {e}")
             continue

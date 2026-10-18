@@ -23,7 +23,7 @@ from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
     auto_signature, character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_layout,
     line_texts, load_material, place_still, place_strips, refresh_faces, render_clip, scene_fps, seq_scene,
-    set_text_offset, subtitle_clashes,
+    set_text_offset, subtitle_clashes, item_still_pose,
 )
 from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
@@ -31,7 +31,7 @@ from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, place_text, sy
 from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
 from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
 from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary, overlay,
-                                 preset_name, voice_wav)
+                                 jump_on_screen, preset_name, voice_wav)
 
 REPORT_TEXT = "YMM4 の読み込み結果"
 # YMM4 の音量（セリフ・キャラの既定は 50）→ Blender の音量。50 を等倍とみなす（YMM4 での意味は未確認）
@@ -735,7 +735,11 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                     try:
                         preset = presets[name].name_for(
                             _valid_parts(ch, span.parts, problems, _base_parts(ch))) if span.parts else ""
-                        place_still(context, ch, preset, a, b - a, problems=problems)
+                        # 位置・大きさ・左右反転は立ち絵アイテムごと（キャラの設定と同じなら立ち絵ごとの値は持たない）
+                        place_still(context, ch, preset, a, b - a,
+                                    item_still_pose(ch, span.x, span.y, span.zoom, project.width, project.height),
+                                    problems=problems, flip=span.inverted if span.inverted != ch.flip_x else None,
+                                    jump=jump_on_screen(span.jump, project.width, project.height))
                     except ERRORS as e:
                         problems.append(f"{a} フレームの {name} の立ち絵: {e}")
                         continue

@@ -259,16 +259,23 @@ def character_image_strips(ch):
             and ch.name in (s.get("tachie_character"), s.get("tachie_idle"), s.get("tachie_still"))]
 
 
+def still_flip(strip, ch) -> bool:
+    """立ち絵の左右反転。立ち絵ごとの `tachie_flip`（YMM4 の立ち絵アイテムと同じ）が無ければキャラの設定。"""
+    flip = strip.get("tachie_flip")
+    return ch.flip_x if flip is None else bool(flip)
+
+
 def apply_placement(strip, ch) -> None:
-    """立ち位置・左右反転と、セリフごとの位置・大きさ（tachie_pos_x / tachie_pos_y / tachie_scale）を設定する。
+    """立ち位置・左右反転（`still_flip`）と、立ち絵ごとの位置・大きさ（tachie_pos_x / tachie_pos_y / tachie_scale）を設定する。
 
     use_flip_x はずらした位置ごと画面中央で反転するので、反転するときは位置の符号を逆にしておく。
     拡大・回転の中心は足元（下の中央）にする（大きさを変えても足の位置が動かず、揺れは足元が軸になる）。
     """
     render = ch.id_data.render
-    strip.use_flip_x = ch.flip_x
+    flip = still_flip(strip, ch)
+    strip.use_flip_x = flip
     offset = (ch.position_x + strip.get("tachie_pos_x", 0.0)) * render.resolution_x
-    strip.transform.offset_x = -offset if ch.flip_x else offset
+    strip.transform.offset_x = -offset if flip else offset
     strip.transform.offset_y = (ch.position_y + strip.get("tachie_pos_y", 0.0)) * render.resolution_y
     scale = strip.get("tachie_scale", 1.0)
     strip.transform.scale_x = strip.transform.scale_y = scale

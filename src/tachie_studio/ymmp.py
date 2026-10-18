@@ -260,6 +260,7 @@ class Span:
     effects: list[str] = field(default_factory=list)
     hidden: bool = False
     inverted: bool = False  # 左右反転（IsInverted）
+    jump: dict | None = None  # 映像エフェクト「跳ねながら登場退場」（`_jump`、X / Y はピクセルのまま）
 
 
 # 画像・動画・音声・テキストのアイテム → Media.kind
@@ -412,11 +413,40 @@ def _effects(item: dict, *keys: str) -> list[str]:
 
 
 def _span(item: dict, parts: dict) -> Span:
-    return Span(character=item.get("CharacterName") or "", frame=int(item.get("Frame", 0)),
+    span = Span(character=item.get("CharacterName") or "", frame=int(item.get("Frame", 0)),
                 length=int(item.get("Length", 0)), layer=int(item.get("Layer", 0)), parts=parts,
                 x=value(item.get("X")), y=value(item.get("Y")), zoom=value(item.get("Zoom"), 100.0),
                 effects=_effects(item, "VideoEffects", "TachieFaceEffects"), hidden=bool(item.get("IsHidden")),
                 inverted=bool(item.get("IsInverted")))
+    _jump(span, item)
+    return span
+
+
+def _jump(span: Span, item: dict) -> None:
+    """映像エフェクト「跳ねながら登場退場」（InOutJumpEffect）を Span.jump にする（写したものはエフェクトの一覧から外す）。
+
+    X / Y は登場の始め（退場の終わり）の位置のずれ（ピクセル、下が正）、JumpHeight はジャンプの高さ・Stretch は伸び縮み
+    （どちらも %）、Period は 1 回のジャンプの長さ（秒）。YMM4 の正確な動きは資料が無いので、アドオンは近い動きにする
+    （歪み Distortion・間隔 Interval は使わない）。"""
+    for e in item.get("VideoEffects") or []:
+        if _type(e) != "InOutJumpEffect" or not e.get("IsEnabled", True):
+            continue
+        if not (e.get("IsInEffect") or e.get("IsOutEffect")):
+            continue
+        span.jump = {"in": bool(e.get("IsInEffect")), "out": bool(e.get("IsOutEffect")),
+                     "in_reverse": bool(e.get("IsInReverse")), "out_reverse": bool(e.get("IsOutReverse")),
+                     "seconds": float(e.get("EffectTimeSeconds") or 0.5), "height": float(e.get("JumpHeight") or 0.0),
+                     "stretch": float(e.get("Stretch") or 0.0), "period": float(e.get("Period") or 0.5),
+                     "x": float(e.get("X") or 0.0), "y": float(e.get("Y") or 0.0)}
+        span.effects.remove("InOutJumpEffect")
+        return
+
+
+def jump_on_screen(jump: dict | None, width: float, height: float) -> dict | None:
+    """Span.jump の X / Y（ピクセル、下が正）を画面に対する割合（上が正）にする（アドオンが立ち絵に持たせる形）。"""
+    if not jump:
+        return None
+    return {**jump, "x": jump["x"] / width, "y": -jump["y"] / height}
 
 
 def _slide(m: Media, item: dict) -> None:

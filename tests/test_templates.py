@@ -34,7 +34,11 @@ def ymm4_settings() -> dict:
              "Frame": 500, "Layer": 0, "Length": 300}]},
         {"Name": "立ち絵", "Path": [], "Items": [
             {"$type": ITEM + "TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん", "Frame": 0,
-             "Layer": 1, "Length": 60, "X": anim(769.0), "Y": anim(530.0), "Zoom": anim(80.0),
+             "Layer": 1, "Length": 60, "X": anim(769.0), "Y": anim(540.0), "Zoom": anim(80.0), "IsInverted": True,
+             "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
+                               "IsInEffect": True, "IsOutEffect": False, "IsOutReverse": True, "EffectTimeSeconds": 0.5,
+                               "JumpHeight": 10.0, "Stretch": 10.0, "Period": 0.5, "X": 0.0, "Y": 900.0,
+                               "IsEnabled": True}],
              "TachieItemParameter": {"Eye": "C:\\char\\ずんだもん\\目\\なごみ目.png"}},
             {"$type": ITEM + "TachieItem, YukkuriMovieMaker", "CharacterName": "めたん", "Frame": 0,
              "Layer": 2, "Length": 60, "IsHidden": True}]},
@@ -65,7 +69,11 @@ def test_from_ymm4(tmp_path: Path):
     # 立ち絵アイテムは立ち絵（位置・大きさは YMM4 の値のまま持ち、置くときにキャラとの差にする）。非表示は読まない
     (still,) = t["items"]
     assert still["kind"] == "still" and still["character"] == "ずんだもん" and (still["frame"], still["length"]) == (0, 60)
-    assert (still["x"], still["y"], still["zoom"]) == (769.0, 530.0, 80.0) and still["parts"]["目"] == "なごみ目"
+    assert (still["x"], still["y"], still["zoom"]) == (769.0, 540.0, 80.0) and still["parts"]["目"] == "なごみ目"
+    # 左右反転は立ち絵ごと、跳ねながら登場退場は画面に対する割合（上が正）で持つ
+    assert still["flip"] is True and still["jump"]["in"] and not still["jump"]["out"] and still["jump"]["out_reverse"]
+    assert still["jump"]["y"] == pytest.approx(-900 / 1080) and still["jump"]["x"] == 0.0
+    assert (still["jump"]["seconds"], still["jump"]["height"], still["jump"]["period"]) == (0.5, 10.0, 0.5)
     assert not t_skipped
     # .ymmp の読み込みと同じく、写せない合成モード・アニメーションは報告する
     image = {**ymm4_settings()["Templates"][1]["Items"][0], "Blend": "Add", "X": anim(0.0, "反復移動", (100.0,))}

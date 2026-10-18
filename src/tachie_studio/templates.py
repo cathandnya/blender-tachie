@@ -8,9 +8,10 @@
 - `{"kind": "line", "character", "text", "kana", "accent", "accent_kana", "style", "voice", "audio", "expression",
   "layout", "subtitle_offset", "subtitle_hidden", "face_parts"}` — セリフ（置くときに合成し直す）
 - `{"kind": "face", "character", "expression", "parts"}` — 表情ストリップ
-- `{"kind": "still", "character", "expression", "parts", "pose"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
+- `{"kind": "still", "character", "expression", "parts", "pose", "flip", "jump"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
   `{"tachie_pos_x", "tachie_pos_y", "tachie_scale"}`。YMM4 の立ち絵アイテムは代わりに `x` / `y` / `zoom` を持ち、置くときに
-  キャラの立ち位置・高さとの差にする）
+  キャラの立ち位置・高さとの差にする。`flip` は左右反転（None ならキャラの設定）、`jump` は跳ねながら登場退場
+  （`ymmp.jump_on_screen` の形））
 
 YMM4 のテンプレートは `user/setting/<版>/YukkuriMovieMaker.Settings.ItemSettings.json` の `Templates`
 （`{Name, Path: [フォルダ…], FPS, Width, Height, Items: [...]}`、Items は .ymmp のアイテムと同じ形）。
@@ -26,7 +27,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from .ymmp import ITEM_LABELS, MEDIA_KINDS, Media, _media, _note_unsupported, _span, _type, _voice, parts_of
+from .ymmp import (ITEM_LABELS, MEDIA_KINDS, Media, _media, _note_unsupported, _span, _type, _voice, jump_on_screen,
+                   parts_of)
 
 VERSION = 1
 # YMM4 の音量（50 が等倍）
@@ -127,13 +129,13 @@ def from_ymm4(template: dict) -> tuple[dict, bool, Counter]:
             span = _span(item, parts_of(item.get("TachieItemParameter"), full=True))
             if span.hidden:
                 continue
+            width, height = float(template.get("Width") or 1920), float(template.get("Height") or 1080)
             items.append({"kind": "still", "frame": span.frame, "length": span.length, "layer": span.layer,
                           "character": span.character, "expression": "", "parts": span.parts,
-                          "x": span.x, "y": span.y, "zoom": span.zoom})
+                          "x": span.x, "y": span.y, "zoom": span.zoom, "flip": span.inverted,
+                          "jump": jump_on_screen(span.jump, width, height)})
             for e in span.effects:
                 skipped[f"立ち絵アイテムのエフェクト {e}"] += 1
-            if span.inverted:  # 左右反転はキャラごと（キャラの設定で変える）
-                skipped["立ち絵アイテムの左右反転"] += 1
         elif kind == "TachieFaceItem":
             span = _span(item, parts_of(item.get("TachieFaceParameter"), full=False))
             if not span.hidden:

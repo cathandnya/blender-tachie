@@ -946,6 +946,13 @@ ymmp.write_text(json.dumps({
          "TachieItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png",
                                  "Mouth": metan_dir + "\\口\\ほほえみ.png"}, "X": -770.0, "Y": 600.0,
          "Zoom": 80.0, "Frame": ymm_base, "Layer": 1, "Length": 700},
+        # 立ち絵アイテムごとの左右反転・位置・跳ねながら登場退場（ずんだもんのキャラの設定は反転しない）
+        {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん",
+         "X": 300.0, "Y": 300.0, "Zoom": 100.0, "IsInverted": True, "Frame": ymm_base + 560, "Layer": 1, "Length": 120,
+         "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
+                           "IsInEffect": True, "IsOutEffect": True, "IsOutReverse": True, "EffectTimeSeconds": 0.5,
+                           "JumpHeight": 10.0, "Stretch": 10.0, "Period": 0.25, "X": 0.0, "Y": 900.0,
+                           "IsEnabled": True}]},
         {"$type": "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker", "CharacterName": "ずんだもん",
          "TachieFaceParameter": {"Eyebrow": YMM_CHAR + "ずんだもん\\眉\\怒り眉.png"}, "Frame": ymm_base + 600,
          "Layer": 4, "Length": 60},
@@ -1004,7 +1011,26 @@ assert zpreset not in zunda_presets and next(e for e in zunda.expressions if e.n
 ystill, = [x for x in sed.strips if x.get("tachie_still") == "めたん（YMM4）"]
 assert (ystill.left_handle, ystill.right_handle) == (zl, zl + 350) and ystill.channel == ymetan.channel
 assert len({mouth(ystill, f) for f in range(ml, ml + 30)}) > 1 and mouth(ystill, ml - 5) == "l0"
-assert not [x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.right_handle > zl]  # 立ち絵アイテムが無い
+zstill, = [x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.right_handle > zl]
+assert (zstill.left_handle, zstill.right_handle) == (zl + 280, zl + 340) and not zunda.flip_x
+assert zstill["tachie_flip"] and zstill.use_flip_x  # 反転は立ち絵ごと（キャラの設定は変えない）
+assert abs(zstill["tachie_pos_x"] - (300 / 1920 - zunda.position_x)) < 1e-6
+assert abs(zstill["tachie_pos_y"] - (-300 / 1080 - zunda.position_y)) < 1e-6
+jumps = keyed(zstill, "transform.offset_y")
+base_y = (zunda.position_y + zstill["tachie_pos_y"]) * scene.render.resolution_y
+assert jumps and jumps[0][0] == zstill.left_handle and abs(jumps[0][1] - (base_y - 900)) < 1e-3  # 下から登場
+assert keyed(zstill, "transform.scale_y") and max(v for _, v in keyed(zstill, "transform.scale_y")) > zstill["tachie_scale"]
+assert keyed(zstill, "transform.offset_y")[-1][0] == zstill.right_handle - 1  # 退場も跳ねる
+# 立ち絵ごとの反転はキャラの反転を切り替えても変わらず、ボタンでキャラの設定に戻せる
+zunda.flip_x = True
+assert zstill.use_flip_x
+sed.active_strip = zstill
+run(bpy.ops.tachie.flip_still)
+assert not zstill.use_flip_x and "tachie_flip" in zstill and not zstill["tachie_flip"]
+run(bpy.ops.tachie.flip_still)
+assert zstill.use_flip_x and "tachie_flip" not in zstill  # キャラの設定と同じ向きに戻すと、キャラの設定に従う
+zunda.flip_x = False
+assert not zstill.use_flip_x
 yfaces = [x for x in sed.strips if x.get("tachie_face") == "ずんだもん" and x.left_handle == zl + 300]
 assert yfaces and next(e for e in zunda.expressions
                        if e.name == yfaces[0]["tachie_expression"]).part_eyebrow == "怒り眉"
@@ -1014,7 +1040,7 @@ assert ynar.speaker == 2 and ynar.font_size == 50 and ynar.subtitle_box  # YMM4 
 _, nsts = ylines["読み込んだナレーション"]
 assert sorted(x.type for x in nsts) == ["SOUND", "TEXT"] and nsts[0]["tachie_layout"] == "SUBTITLE"
 # 片付け（あとのテストに影響しないように）
-for x in [x for x in sed.strips if (x.get("tachie_text", "").startswith("読み込んだ") or x in yfaces
+for x in [x for x in sed.strips if (x.get("tachie_text", "").startswith("読み込んだ") or x in yfaces or x == zstill
                                     or x.get("tachie_character") in (ymetan.name, ynar.name))]:
     sed.strips.remove(x)
 for x in [x for x in sed.strips if x.get("tachie_ymmp") and x.type == "SPEED"]:
@@ -1103,7 +1129,9 @@ item_settings.write_text(json.dumps({"Templates": [
         {"$type": YMM_ITEM2 + "TransitionItem, YukkuriMovieMaker", "Frame": 100, "Layer": 2, "Length": 30}]},
     {"Name": "立ち絵だけ", "Path": [], "Items": [
         {"$type": YMM_ITEM2 + "TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん", "Frame": 0, "Layer": 1,
-         "Length": 60}]},
+         "Length": 60, "IsInverted": True,
+         "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
+                           "IsInEffect": True, "EffectTimeSeconds": 0.3, "JumpHeight": 10.0, "Y": 500.0}]}]},
 ]}, ensure_ascii=False), encoding="utf-8-sig")
 n_templates = len(templates)
 run(bpy.ops.tachie.import_ymm4_templates, filepath=str(item_settings))
@@ -1125,6 +1153,7 @@ scene.frame_current = t_at4
 run(bpy.ops.tachie.insert_template, index=list(templates).index(next(t for t in templates if t.name == "立ち絵だけ")))
 tstill, = [x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.left_handle >= t_at4]
 assert (tstill.left_handle, tstill.right_handle, tstill.channel) == (t_at4, t_at4 + 30, zunda.channel)
+assert tstill.use_flip_x and tstill["tachie_flip"] and keyed(tstill, "transform.offset_y")[0][0] == t_at4
 scene.frame_current = t_at4 + 10
 assert bpy.ops.tachie.insert_template(  # 何も置けなければ CANCELLED
     index=list(templates).index(next(t for t in templates if t.name == "立ち絵だけ"))) == {"CANCELLED"}

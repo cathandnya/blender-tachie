@@ -41,7 +41,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （TachieDefaultItemParameter）は新しく置くアイテムの初期値で、表情プリセットを当てて口・体が空になっていることがある（実際のプロジェクトで確認）。
   表情は 立ち絵アイテムの基本 + ボイス／表情アイテムの差分 を
   キャラの基本との差分にして、同じ中身のプリセットを使うか作る（`preset_name`）。YMM4 の空のパーツは素材の「(非表示)」「_」にする。
-  立ち絵アイテムはその区間の立ち絵（`place_still`、重なるセリフの間だけ口パク）にし、立ち絵アイテムの基本がキャラの基本と
+  立ち絵アイテムはその区間の立ち絵（`place_still`、重なるセリフの間だけ口パク。位置・大きさは `item_still_pose` でキャラとの差の
+  立ち絵ごとの値に、左右反転 IsInverted はキャラと違えば `tachie_flip`、跳ねながら登場退場は `tachie_jump`）にし、立ち絵アイテムの基本がキャラの基本と
   違えばそのプリセットの立ち絵にする（同じキャラの立ち絵アイテムが重なれば先のものを優先）。ボイスの表情は 立ち絵アイテムの基本 +
   差分 なので、セリフの間もその立ち絵アイテムの見た目のまま。表情アイテムは表情ストリップ。余韻は次のセリフに 1 フレーム
   あけて重ならないように縮める（声の終わりより `SIMULTANEOUS_FRAMES` 以上前から始まる別のキャラのセリフは同時に喋るので相手にしない）。YMM4 の音量 50 = 等倍（未確認）、立ち絵の X/Y は画像の中心（`position_x`/`position_y`）、
@@ -158,7 +159,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   テンプレート（#14、`blender_addon/templates.py`、形式は `tachie_studio/templates.py`）: アドオン設定の `templates`
   （`TachieTemplate`: name / data = JSON / behind）。JSON のアイテムは media（`ymmp.Media` の値、YMM4 と同じ座標）・line・face・still
   （立ち絵。登録した立ち絵は `pose`、YMM4 の立ち絵アイテムは x / y / zoom を持ち、置くときにキャラの立ち位置・高さとの差の
-  `tachie_pos_*` / `tachie_scale` にする（`_still_pose`）。左右反転はキャラごとなので写さない。同じキャラの立ち絵に重なれば置かない）。
+  `tachie_pos_*` / `tachie_scale` にする（`_still_pose`）。左右反転（`flip`）と跳ねながら登場退場（`jump`）も持つ。同じキャラの立ち絵に重なれば置かない）。
   登録は選んだストリップから（`template_from_strips`、transform は `MediaPlacer` の逆、スピードコントロールはキーフレームから
   再生速度を戻す。写せるのはフレーム番号の速度だけ）、置くのは `insert_template`（media は `MediaPlacer(behind=…)`、
   behind はテキスト以外だけ。セリフは `render_clip` → `place_strips`、同じキャラの次のセリフに重なれば余韻を縮めて合成し直す。
@@ -260,6 +261,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   - サイドバーのタブ（`Region.active_panel_category`）は読み取り専用。
   - 画像ストリップの `use_flip_x` は `transform.offset_x` ごと画面中央で反転する。左右反転したキャラは
     offset の符号を逆にする（`properties.apply_placement`）。立ち位置と反転は置いてあるストリップに即反映する。
+    左右反転は YMM4 と同じく立ち絵ごとにも持てる（`tachie_flip`、`properties.still_flip`。無ければキャラの `flip_x`。
+    ボタン `tachie.flip_still` はキャラの設定と同じ向きに戻すとキーを消してキャラに従わせる）。
+  - 跳ねながら登場退場（YMM4 の InOutJumpEffect、`ymmp._jump` → `jump_on_screen` で画面に対する割合）は立ち絵の `tachie_jump` に
+    持ち、`motion._jump` が offset と scale にキーを打つ（付いている側はキャラの登場・退場の代わり）。YMM4 の正確な動きは
+    資料が無く近い動き（`seconds` 秒でずれた位置から移りながら `period` ごとに立ち絵の高さの `height` % 跳ね、空中で `stretch` %
+    縦に伸び、着地でつぶれる。歪み・間隔は使わない。Reverse は向きの反転と解釈）。`motion.MANAGED` に scale を含む。
   - 字幕のスタイル（フォント・サイズ・色・縁取り・高さ）もキャラクターごとで、変えると置いてある字幕に即反映する
     （`properties.apply_subtitle`、改行も入れ直す）。フォントは `system_fonts()` の一覧から選べる。
     `bpy.data.fonts` の名前は英語表記（例: ヒラギノ丸ゴ → "Hiragino Maru Gothic Pro W4"）。
