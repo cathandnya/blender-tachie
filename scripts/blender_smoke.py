@@ -24,6 +24,7 @@ scene = bpy.context.scene
 scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = 1920, 1080, 50
 scene.render.fps = 30
 sed = scene.sequence_editor_create()
+sed.use_prefetch = True  # アドオンの操作の間だけ止めて、終わったら戻すこと（最後に確かめる）
 bg = sed.strips.new_effect(name="背景", type="COLOR", channel=1, frame_start=1, length=900)
 bg.color = (0.55, 0.7, 0.85)
 s = scene.tachie
@@ -1488,4 +1489,5 @@ else:
     run(bpy.ops.tachie.export_characters, filepath=str(exported2))
     again2 = load_characters(exported2)
     assert again2["ずんだもんPSD"].expression.layers["!目/*ジト目"] is True
+assert sed.use_prefetch, "プリフェッチが戻っていない"
 print("OK")

@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
 import bpy
+
+from . import prefetch
 from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
@@ -470,9 +472,11 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             return {"RUNNING_MODAL"}
         else:
             # 合成し終わったものを順に置く（置くのはメインスレッドだけ）
-            while state["next"] < len(state["results"]):
-                state["place"](state["jobs"][state["next"]], state["results"][state["next"]])
-                state["next"] += 1
+            if state["next"] < len(state["results"]):
+                with prefetch.paused():  # 置く間だけ（待っている間は止めない）
+                    while state["next"] < len(state["results"]):
+                        state["place"](state["jobs"][state["next"]], state["results"][state["next"]])
+                        state["next"] += 1
             if state["next"] < len(state["jobs"]):
                 self._status()
                 for area in context.screen.areas if context.screen else []:
@@ -480,7 +484,8 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                         area.tag_redraw()
                 return {"RUNNING_MODAL"}
         self._cleanup(context)
-        return state["finish"](cancelled=len(state["jobs"]) - state["next"])
+        with prefetch.paused():
+            return state["finish"](cancelled=len(state["jobs"]) - state["next"])
 
     def draw(self, context):
         self.layout.prop(self, "match_video")

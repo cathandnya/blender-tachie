@@ -13,6 +13,7 @@ from bpy.props import (
     StringProperty,
 )
 
+from . import prefetch
 from .tachie_studio.subtitle import chars_per_line, wrap
 from .tachie_studio.pipeline.config import VOICE_DEFAULTS
 from .tachie_studio.voicevox import DEFAULT_URL
@@ -362,35 +363,39 @@ def _update_subtitle(self, context):
     sed = self.id_data.sequence_editor
     if sed is None:
         return
-    for strip in sed.strips:
-        if strip.type == "TEXT" and strip.get("tachie_character") == self.name:
-            text = strip.get("tachie_placed_text", strip.get("tachie_text", strip.text))
-            try:
-                if strip.get("tachie_role") == "name":
-                    apply_name(strip, self, text)
-                else:
-                    apply_subtitle(strip, self, text)
-            except RuntimeError:
-                pass  # フォントが読めないときは今の見た目のまま
+    with prefetch.paused():
+        for strip in sed.strips:
+            if strip.type == "TEXT" and strip.get("tachie_character") == self.name:
+                text = strip.get("tachie_placed_text", strip.get("tachie_text", strip.text))
+                try:
+                    if strip.get("tachie_role") == "name":
+                        apply_name(strip, self, text)
+                    else:
+                        apply_subtitle(strip, self, text)
+                except RuntimeError:
+                    pass  # フォントが読めないときは今の見た目のまま
 
 
 def _update_motion(self, context):
     from .operators import refresh_motion_now
 
-    refresh_motion_now(self.id_data)
+    with prefetch.paused():  # プロパティの即反映もストリップ・F カーブを書き換える
+        refresh_motion_now(self.id_data)
 
 
 def _update_ducking(self, context):
     from .ducking import refresh_ducking
 
-    refresh_ducking(self.id_data)
+    with prefetch.paused():
+        refresh_ducking(self.id_data)
 
 
 def _update_placement(self, context):
     # 置いてあるストリップにもすぐ反映する（作り直さなくてよい）。登場・退場のスライドも位置に合わせて作り直す
-    for strip in character_image_strips(self):
-        apply_placement(strip, self)
-    _update_motion(self, context)
+    with prefetch.paused():
+        for strip in character_image_strips(self):
+            apply_placement(strip, self)
+        _update_motion(self, context)
 
 
 # セリフの形（セリフごとにストリップの tachie_layout に持つ。キャラの line_layout は新しく置くセリフの既定）
@@ -405,8 +410,9 @@ def _update_lanes(self, context):
     """キャラ × 役割のレーンを当て直す（いちばん下のチャンネル・キャラ名を出すかを変えたとき）。"""
     from .channels import ensure_layout
 
-    for problem in ensure_layout(self.id_data):
-        print("チャンネルを整理できません:", problem)
+    with prefetch.paused():
+        for problem in ensure_layout(self.id_data):
+            print("チャンネルを整理できません:", problem)
 
 
 class TachieCharacter(bpy.types.PropertyGroup):
@@ -520,12 +526,13 @@ def apply_headline(strip, settings) -> None:
 
 def _update_headlines(self, context):
     sed = self.id_data.sequence_editor
-    for strip in sed.strips if sed else []:
-        if strip.type == "TEXT" and strip.get("tachie_headline"):
-            try:
-                apply_headline(strip, self)
-            except RuntimeError:
-                pass
+    with prefetch.paused():
+        for strip in sed.strips if sed else []:
+            if strip.type == "TEXT" and strip.get("tachie_headline"):
+                try:
+                    apply_headline(strip, self)
+                except RuntimeError:
+                    pass
 
 
 def _update_ymmp_folder(self, context):

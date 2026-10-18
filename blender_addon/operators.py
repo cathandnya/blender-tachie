@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 
 import bpy
+
+from . import prefetch
 from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
@@ -1047,7 +1049,7 @@ def _apply_faces_later():
         return 0.3  # まだ動かしている
     _face_timer_running = False
     window = wm.windows[0] if wm and wm.windows else None
-    with bpy.context.temp_override(window=window) if window else _nullcontext():
+    with bpy.context.temp_override(window=window) if window else _nullcontext(), prefetch.paused():
         # refresh_faces は seq_scene(context) を描き直すので、そのシーンだけを見る（他のシーンは
         # シーケンサーに映ったときに反映する）
         from .motion import sync_text_offsets

@@ -256,6 +256,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
     `bpy.data.fonts` の名前は英語表記（例: ヒラギノ丸ゴ → "Hiragino Maru Gothic Pro W4"）。
   - `bpy.ops.sequencer.connect` はシーケンサーの画面のコンテキストが必要（バックグラウンドでは使えない）。
   - API で `frame_start` を動かして他と重なると、Blender が勝手に別チャンネルへ逃がす。ずらすときは順序に注意。
+  - シーケンサーのプリフェッチ（`sequence_editor.use_prefetch`）が裏で描いている間に Python からストリップを消す・作ると、
+    消えたストリップを読みに行って Blender ごと落ちる（ドラッグ直後の自動の反映で起きた。Blender 自身の操作は止めてから
+    書き換える）。`blender_addon/prefetch.py` の `paused()` で止めてから書き換える。オペレーターは `__init__.register` で
+    execute / modal を包む（`guard_class`）。待っている間もタイマーで呼ばれる modal（YMM4 の読み込み・AI での表情の割り当て）と
+    自動の反映（`_apply_faces_later`）は、書き換えるところだけ止める（止めるたびに先読みしたフレームが捨てられるため）。
   - 既定のビュー変換 AgX だと立ち絵の色が淡くなるので、セリフ追加時に Standard へ切り替える。
   - 日本語フォントは `/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc`（ファイル名が NFD なので glob で探す）。
 - VOICEVOX エンジンは `http://127.0.0.1:50021`（0.25.2）。

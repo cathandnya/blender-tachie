@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 
 import bpy
 
+from . import prefetch
+
 from . import operators as ops
 from .tachie_studio import faceassign as fa
 
@@ -283,6 +285,7 @@ class TACHIE_OT_assign_faces(bpy.types.Operator):
             return {"CANCELLED"}
         return self.finish_results(context, state["plan"], state["results"])
 
+    @prefetch.guarded  # 書き込む間だけ止める（LLM を待っている間の modal では止めない）
     def finish_results(self, context, plan, results):
         target = ops.prefs(context).faceassign_target
         changed, rows = apply_outcomes(context, plan, results, target)
