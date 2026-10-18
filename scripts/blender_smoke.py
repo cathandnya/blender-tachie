@@ -171,6 +171,17 @@ dump("ずんだもんの表情を変えて再生成")
 check_stills()
 assert [(l, r) for l, r, _ in lines().values()] == spans
 assert expression_dir(still("ずんだもん"), 1) == ops.character_cache(bpy.context, zunda, "").directory.name
+# パーツを選び直すと、自動の反映で立ち絵を作り直す（画面ではハンドラがやる）
+signature, old_dir = ops.faces_signature(scene), cache_dir(zunda, "")
+zunda.part_eyebrow = "怒り眉"
+assert ops.faces_signature(scene) != signature
+ops._apply_faces_later()
+check_stills()
+assert expression_dir(still("ずんだもん"), 1) == cache_dir(zunda, "") != old_dir
+assert len({mouth(still("ずんだもん"), f) for f in range(*list(lines().values())[0][:2])}) > 1  # 口パクはそのまま
+zunda.part_eyebrow = "困り眉1"
+ops._apply_faces_later()
+assert expression_dir(still("ずんだもん"), 1) == old_dir
 
 # セリフごとの声: 置いたときのキャラの既定値が音声ストリップにコピーされ、あとで既定値を変えても変わらない
 zunda.speed_scale = 1.1
@@ -1343,7 +1354,7 @@ scene.frame_current = last_end
 run(bpy.ops.tachie.add_still)
 (tail_still,) = tail()
 assert (tail_still.left_handle, tail_still.right_handle, tail_still.channel) == (last_end, last_end + 60, zunda.channel)
-assert tail_still["tachie_expression"] == "困り" and not tail_still.use_flip_x and not tail_still["tachie_faced"]
+assert tail_still["tachie_expression"] == "困り" and not tail_still.use_flip_x
 assert scene.frame_end == tail_still.right_handle - 1
 # 同じキャラの立ち絵に重ねては置けない
 scene.frame_current = list(lines().values())[0][0]

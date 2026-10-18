@@ -868,17 +868,29 @@ def _talking_lines(sed, ch, start: int, end: int) -> list[tuple]:
     return out
 
 
+def appearance_key(ch, presets=None) -> list:
+    """立ち絵の見た目に関わるキャラの設定（素材・高さ・基本の表情・表情プリセット）。変われば立ち絵を作り直す。
+
+    `presets` を渡すとその表情プリセットだけ（立ち絵で使っていない表情を変えても作り直さない）。口パクの方式
+    （`ch.mouth`）はセリフの動きの json に入っているので含めない。
+    """
+    def parts(item) -> list:
+        return [getattr(item, prop) for props in PART_PROPS.values() for prop in props] + [item.psd_layers]
+
+    expressions = [e for e in ch.expressions if presets is None or e.name in presets]
+    return [ch.folder, round(ch.height, 6), parts(ch), [[e.name, *parts(e)] for e in expressions]]
+
+
 def still_key(context, sed, ch, strip) -> str:
-    """立ち絵の作り直しの鍵（表情・表情ストリップの区間・重なるセリフ）。置いたときと違えば作り直す。"""
+    """立ち絵の作り直しの鍵（キャラの見た目・表情・表情ストリップの区間・重なるセリフ）。置いたときと違えば作り直す。"""
     start, end = strip.left_handle, strip.right_handle
-    return _still_key(strip.get("tachie_expression", ""), face_segments(sed, ch, start, end),
+    return _still_key(ch, strip.get("tachie_expression", ""), face_segments(sed, ch, start, end),
                       _talking_lines(sed, ch, start, end))
 
 
-def _still_key(preset: str, segments, talking) -> str:
-    if not segments and not talking:
-        return ""
-    return json.dumps([preset, segments, talking], ensure_ascii=False)
+def _still_key(ch, preset: str, segments, talking) -> str:
+    used = {preset} | {p for _, _, p in segments} | {p for _, _, p, _ in talking if p is not None}
+    return json.dumps([appearance_key(ch, used), preset, segments, talking], ensure_ascii=False)
 
 
 def set_line_expression(context, clip_id: str, preset: str) -> list:
@@ -923,12 +935,14 @@ def refresh_motion_now(scene) -> int:
 
 
 def faces_signature(scene) -> str:
-    """立ち絵の作り直しに関わる値（表情ストリップ、セリフの位置・長さ・表情、立ち絵の位置・長さ・表情）。"""
+    """立ち絵の作り直しに関わる値（表情ストリップ、セリフの位置・長さ・表情、立ち絵の位置・長さ・表情、
+    立ち絵のあるキャラの見た目）。"""
     sed = scene.sequence_editor
     if sed is None:
         return ""
     items = []
     stills = False
+    still_chars: set[str] = set()
     for s in sed.strips:
         if s.get("tachie_face"):
             items.append(("face", s.name, s.channel, s.left_handle, s.right_handle, s["tachie_face"],
@@ -938,10 +952,13 @@ def faces_signature(scene) -> str:
                           int(s.get("tachie_frames", 0)), s.get("tachie_expression", ""), s.mute))
         elif s.type == "IMAGE" and s.get("tachie_still"):
             stills = True
+            still_chars.add(s["tachie_still"])
             items.append(("still", s.name, int(s.content_start), s.left_handle, s.right_handle, len(s.elements),
                           s.get("tachie_expression", ""), s.get("tachie_faced", "")))
     if not stills:
         return ""  # 作り直す立ち絵が無い
+    # キャラのパーツ・表情プリセットを選び直したら作り直す
+    items += [("character", ch.name, appearance_key(ch)) for ch in scene.tachie.characters if ch.name in still_chars]
     return json.dumps(sorted(items, key=repr), ensure_ascii=False)
 
 
@@ -1078,16 +1095,16 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
                 problems.append(f"{ch.name}のセリフ {clip_id} の口の動きがありません（再生成すると口パクします）")
             continue
         lines.append((offset, motion, cache_of(line_preset if line_preset is not None else preset or "")))
+    key = _still_key(ch, preset, segments, talking)
     if segments or lines:
         paths = still_frames(cache, [(a, b, cache_of(p)) for a, b, p in segments], lines, frames,
                              scene_fps(scene), seed=(ch.name, start))
         # フォルダはキャラ・位置・長さごと（同じ区間の別の立ち絵と連番を取り合わないように）
         strip = _strip_from_paths(context, sed, ch, name, start, paths, "faces",
-                                  json.dumps([ch.name, start, frames, _still_key(preset, segments, talking)],
-                                             ensure_ascii=False), channel)
+                                  json.dumps([ch.name, start, frames, key], ensure_ascii=False), channel)
     else:
         strip = _blink_strip(sed, ch, cache, name, start, frames, scene_fps(scene), channel)
-    strip["tachie_faced"] = _still_key(preset, segments, talking)
+    strip["tachie_faced"] = key
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
     strip["tachie_expression"] = preset or ""
