@@ -178,7 +178,7 @@ def refresh_motion(scene, lines_dir: Path) -> int:
         elif "tachie_fade_keyed" in t:
             del t["tachie_fade_keyed"]
     for ch in characters.values():
-        mine = [s for s in images if owner(s) == ch.name and s.channel == ch.channel]
+        mine = [s for s in images if owner(s) == ch.name]  # チャンネルでは絞らない（手で動かした立ち絵も）
         if ch.talk_bounce > 0 or ch.talk_sway > 0:
             for s in mine:
                 if s.get("tachie_id"):
@@ -256,22 +256,22 @@ def motion_signature(scene) -> str:
     if sed is None:
         return ""
     chars = scene.tachie.characters
-    settings = [(c.name, c.channel, round(c.talk_bounce, 4), round(c.talk_sway, 3), round(c.talk_period, 3),
+    settings = [(c.name, round(c.talk_bounce, 4), round(c.talk_sway, 3), round(c.talk_period, 3),
                  c.enter_effect, c.exit_effect, round(c.effect_seconds, 3), round(c.subtitle_fade, 3)) for c in chars]
-    active = any(s[2] or s[3] or s[5] != "NONE" or s[6] != "NONE" or s[8] for s in settings)
+    active = any(s[1] or s[2] or s[4] != "NONE" or s[5] != "NONE" or s[7] for s in settings)
     items = []
     for s in sed.strips:
         if s.type == "TEXT" and s.get("tachie_id"):  # 字幕のフェードは字幕の位置で決まる
             offset = () if s.get("tachie_role") == "name" else tuple(round(v, 4) for v in text_offset(s))
             active = active or offset not in ((), (0.0, 0.0))
-            items.append((s.name, s.channel, int(s.content_start), s.left_handle, s.right_handle, offset))
+            items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, offset))
             continue
         if owner(s) is None:
             continue
         pose = (round(s.get("tachie_pos_x", 0.0), 4), round(s.get("tachie_pos_y", 0.0), 4),
                 round(s.get("tachie_scale", 1.0), 4))
         active = active or pose != (0.0, 0.0, 1.0)
-        items.append((s.name, s.channel, int(s.content_start), s.left_handle, s.right_handle, pose))
+        items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, pose))
     if not active:
         return ""
     return repr((settings, sorted(items)))

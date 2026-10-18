@@ -451,6 +451,18 @@ zstrips = sorted([x for x in sed.strips if motion_mod.owner(x) == "ずんだも�
                  key=lambda x: x.left_handle)
 assert [v for _, v in keyed(zstrips[0], "blend_alpha")][:2] == [0.0, 1.0]
 assert len(keyed(zstrips[-1], "transform.offset_x")) == 2
+# セリフの立ち絵を手で別のチャンネルに動かしても、待機は重ならず（キャラが二重にならない）、動きも付く
+moved, home = zimg, zimg.channel
+moved.channel = 60
+assert moved.channel == 60
+ops.refresh_idle(bpy.context)
+assert not [x for x in sed.strips if x.get("tachie_idle") == "ずんだもん"
+            and x.left_handle < moved.right_handle and moved.left_handle < x.right_handle], "待機が重なった"
+assert keyed(moved, "transform.offset_y"), "動かした立ち絵に動きが付かない"
+moved.channel = home
+assert moved.channel == home
+ops.refresh_idle(bpy.context)
+check_idle()
 # セリフごとの大きさ（足元が中心）。再生成しても残る
 zimg["tachie_scale"] = 1.5
 ops.refresh_motion_now(scene)

@@ -447,7 +447,8 @@ def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str =
     if sed is None:
         return roles
     end = start + frames
-    if layout == "FULL" and _overlaps(sed, ch.channel, start, end, ignore):
+    if layout == "FULL" and (_overlaps(sed, ch.channel, start, end, ignore)
+                             or _own_overlaps(sed, ch, start, end, ignore)):
         raise ValueError(f"{ch.name}の立ち絵（チャンネル {ch.channel}）の {start}〜{end} フレームに他のストリップが"
                          "あります（同じキャラのセリフは重ねられません）")
     reserved = {settings.audio_channel, settings.subtitle_channel, settings.name_channel, settings.headline_channel}
@@ -1008,8 +1009,7 @@ def faces_signature(scene) -> str:
             items.append(("face", s.name, s.channel, s.left_handle, s.right_handle, s["tachie_face"],
                           s.get("tachie_expression", "")))
         elif s.type == "IMAGE" and (s.get("tachie_id") or s.get("tachie_still")):
-            items.append(("image", s.name, s.channel, int(s.content_start), len(s.elements),
-                          s.get("tachie_faced", "")))
+            items.append(("image", s.name, int(s.content_start), len(s.elements), s.get("tachie_faced", "")))
     if not any(i[0] == "face" for i in items) and not any(
             s.get("tachie_faced") for s in sed.strips if s.type == "IMAGE"):
         return ""  # 表情ストリップが無く、描き直した立ち絵も無い
@@ -1116,7 +1116,10 @@ def refresh_idle(context) -> int:
     for ch in scene.tachie.characters:
         if not ch.show_idle or not ch.folder:
             continue
-        busy = [(s.left_handle, s.right_handle) for s in sed.strips if s.channel == ch.channel]
+        # そのキャラの立ち絵（手で別のチャンネルに動かしたものも）と、立ち絵のチャンネルに実際にあるもの
+        # （新しく作るストリップは重なっても Blender が逃がさないので、そこには置かない）
+        busy = [(s.left_handle, s.right_handle) for s in sed.strips
+                if s.channel == ch.channel or _own_image(s, ch.name)]
         busy += [(s.left_handle, max(s.right_handle, s.left_handle + int(s.get("tachie_frames", 0))))
                  for s in sed.strips  # 余韻の分まで（音声だけのセリフは音声ストリップより長い）
                  if s.get("tachie_character") == ch.name and s.get("tachie_id")
@@ -1143,6 +1146,19 @@ def refresh_idle(context) -> int:
                 count += 1
     refresh_motion_now(scene)
     return count
+
+
+def _own_image(strip, name: str) -> bool:
+    """キャラ `name` のセリフかセリフなしの立ち絵（待機は除く）。置いてあるチャンネルは問わない。"""
+    from .motion import owner
+
+    return not strip.get("tachie_idle") and owner(strip) == name
+
+
+def _own_overlaps(sed, ch, start: int, end: int, ignore=()) -> bool:
+    """キャラ `ch` の立ち絵（手で別のチャンネルに動かしたものも）が [start, end) に重なるか。"""
+    return any(_own_image(s, ch.name) and s.left_handle < end and start < s.right_handle and s not in ignore
+               for s in sed.strips)
 
 
 def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int, fps: float):
@@ -1287,7 +1303,8 @@ class TACHIE_OT_add_still(bpy.types.Operator):
         start = scene.frame_current
         frames = max(1, round(settings.still_seconds * scene_fps(scene)))
         sed = scene.sequence_editor
-        if sed and _overlaps(sed, ch.channel, start, start + frames):
+        if sed and (_overlaps(sed, ch.channel, start, start + frames)
+                    or _own_overlaps(sed, ch, start, start + frames)):
             self.report({"ERROR"}, f"チャンネル {ch.channel} の {start}〜{start + frames} フレームに"
                                    "他のストリップがあります")
             return {"CANCELLED"}
