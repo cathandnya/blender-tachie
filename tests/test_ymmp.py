@@ -335,3 +335,21 @@ def test_custom_subtitle(tmp_path):
     items[-1]["FontSize"] = anim(40.0)
     p = load_project(write(tmp_path, data))
     assert p.unsupported["字幕をボイスごとに変えた文字の設定（位置だけ写す）"] == 1
+
+
+def test_jump_keys():
+    """跳ねながら登場: 効果時間でずれが 0 になり、周期ごとに跳ね、着地でつぶれて間隔のあと次のジャンプ。"""
+    from tachie_studio.ymmp import jump_keys
+
+    jump = {"seconds": 1.0, "height": 0.1, "stretch": 10.0, "period": 0.5, "distortion": 5.0, "interval": 0.2,
+            "x": 0.0, "y": -0.5}
+    keys = jump_keys(jump, 10)
+    frames = [k[0] for k in keys]
+    assert frames == sorted(frames) and keys[0] == (0, 1.0, 0.0, 1.0)
+    # 1 回目: 0〜5 フレームで跳ね（真ん中が最高・いちばん伸びる）、6 フレームでつぶれ、7 で戻る。2 回目は 7〜12
+    by = {f: (rest, h, sy) for f, rest, h, sy in keys}
+    assert by[2][1] == max(h for _, _, h, _ in keys) or by[3][1] == max(h for _, _, h, _ in keys)
+    assert max(sy for *_, sy in keys) == pytest.approx(1.1, abs=0.01)
+    assert by[6] == (pytest.approx(0.4), 0.0, pytest.approx(0.95)) and by[7][1:] == (0.0, 1.0)
+    assert by[12][1] == 0.0 and by[10][0] == 0.0  # 効果時間（10 フレーム）でずれは 0
+    assert frames[-1] == 14  # 2 回目の着地まで（12 + 間隔 2）

@@ -425,9 +425,9 @@ def _span(item: dict, parts: dict) -> Span:
 def _jump(span: Span, item: dict) -> None:
     """映像エフェクト「跳ねながら登場退場」（InOutJumpEffect）を Span.jump にする（写したものはエフェクトの一覧から外す）。
 
-    X / Y は登場の始め（退場の終わり）の位置のずれ（ピクセル、下が正）、JumpHeight はジャンプの高さ・Stretch は伸び縮み
-    （どちらも %）、Period は 1 回のジャンプの長さ（秒）。YMM4 の正確な動きは資料が無いので、アドオンは近い動きにする
-    （歪み Distortion・間隔 Interval は使わない）。"""
+    YMM4 の画面の表示: 登場退場（登場時・退場時・反転（登場時／退場時）・効果時間 秒）、跳ねる（高さ JumpHeight px・
+    伸び Stretch %・周期 Period 秒）、着地（歪み Distortion %・間隔 Interval 秒）、移動（X / Y px、下が正）。
+    X / Y は登場の始め（退場の終わり）の位置のずれ。YMM4 の正確な軌道は資料が無いので、アドオンは近い動きにする。"""
     for e in item.get("VideoEffects") or []:
         if _type(e) != "InOutJumpEffect" or not e.get("IsEnabled", True):
             continue
@@ -437,16 +437,43 @@ def _jump(span: Span, item: dict) -> None:
                      "in_reverse": bool(e.get("IsInReverse")), "out_reverse": bool(e.get("IsOutReverse")),
                      "seconds": float(e.get("EffectTimeSeconds") or 0.5), "height": float(e.get("JumpHeight") or 0.0),
                      "stretch": float(e.get("Stretch") or 0.0), "period": float(e.get("Period") or 0.5),
+                     "distortion": float(e.get("Distortion") or 0.0), "interval": float(e.get("Interval") or 0.0),
                      "x": float(e.get("X") or 0.0), "y": float(e.get("Y") or 0.0)}
         span.effects.remove("InOutJumpEffect")
         return
 
 
+def jump_keys(jump: dict, fps: float) -> list[tuple[int, float, float, float]]:
+    """跳ねながら登場の動き [(登場の頭からのフレーム, 残りのずれ 0〜1, 跳ねた高さ（画面に対する割合）, 縦の伸び)]。
+
+    `seconds` 秒かけてずれた位置から元の位置へ移り、その間 `period` 秒のジャンプ（高さ `height`、空中で縦に `stretch` %
+    伸びる）と着地（`interval` 秒、`distortion` % つぶれて戻る）を繰り返す。最後のジャンプの着地まで続く。
+    YMM4 の InOutJumpEffect の設定の意味に合わせた近い動き（正確な軌道は資料が無い）。"""
+    total = max(1, round(jump["seconds"] * fps))
+    hop = max(1, round(max(jump.get("period") or jump["seconds"], 1 / fps) * fps))
+    land = max(0, round((jump.get("interval") or 0.0) * fps))
+    stretch, squash = jump.get("stretch", 0.0) / 100, jump.get("distortion", 0.0) / 100
+    keys: dict[int, tuple[float, float, float]] = {}
+    start = 0
+    while True:
+        for k in range(hop + 1):  # ジャンプ（放物線）。空中で縦に伸びる
+            p = k / hop
+            h = 4 * p * (1 - p)
+            keys[start + k] = (jump["height"] * h, 1 + stretch * h)
+        if land and squash:  # 着地でつぶれて戻る
+            keys[start + hop + land // 2] = (0.0, 1 - squash)
+            keys[start + hop + land] = (0.0, 1.0)
+        start += hop + land
+        if start >= total:
+            break
+    return [(f, max(0.0, 1 - f / total), h, sy) for f, (h, sy) in sorted(keys.items())]
+
+
 def jump_on_screen(jump: dict | None, width: float, height: float) -> dict | None:
-    """Span.jump の X / Y（ピクセル、下が正）を画面に対する割合（上が正）にする（アドオンが立ち絵に持たせる形）。"""
+    """Span.jump の X / Y（ピクセル、下が正）と高さ（ピクセル）を画面に対する割合（上が正）にする（アドオンが立ち絵に持たせる形）。"""
     if not jump:
         return None
-    return {**jump, "x": jump["x"] / width, "y": -jump["y"] / height}
+    return {**jump, "x": jump["x"] / width, "y": -jump["y"] / height, "height": jump["height"] / height}
 
 
 def _slide(m: Media, item: dict) -> None:

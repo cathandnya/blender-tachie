@@ -265,8 +265,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
     ボタン `tachie.flip_still` はキャラの設定と同じ向きに戻すとキーを消してキャラに従わせる）。
   - 跳ねながら登場退場（YMM4 の InOutJumpEffect、`ymmp._jump` → `jump_on_screen` で画面に対する割合）は立ち絵の `tachie_jump` に
     持ち、`motion._jump` が offset と scale にキーを打つ（付いている側はキャラの登場・退場の代わり）。YMM4 の正確な動きは
-    資料が無く近い動き（`seconds` 秒でずれた位置から移りながら `period` ごとに立ち絵の高さの `height` % 跳ね、空中で `stretch` %
-    縦に伸び、着地でつぶれる。歪み・間隔は使わない。Reverse は向きの反転と解釈）。`motion.MANAGED` に scale を含む。
+    資料が無く近い動き（`ymmp.jump_keys`: `seconds` 秒でずれた位置から移りながら `period` 秒ごとに `height`（画面の高さに対する割合、
+    YMM4 は px）跳ね、空中で `stretch` % 縦に伸び、着地で `interval` 秒かけて `distortion` % つぶれて戻る。最後の着地まで続け、
+    立ち絵が短ければ動き全体を縮める。退場は登場の逆再生。Reverse は向きの反転と解釈）。`motion.MANAGED` に scale を含む。
   - 字幕のスタイル（フォント・サイズ・色・縁取り・高さ）もキャラクターごとで、変えると置いてある字幕に即反映する
     （`properties.apply_subtitle`、改行も入れ直す）。フォントは `system_fonts()` の一覧から選べる。
     `bpy.data.fonts` の名前は英語表記（例: ヒラギノ丸ゴ → "Hiragino Maru Gothic Pro W4"）。

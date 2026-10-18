@@ -16,6 +16,7 @@ from pathlib import Path
 import bpy
 
 from .properties import apply_placement, name_height, place_text, text_offset
+from .tachie_studio.ymmp import jump_keys
 
 # 声が出ているとみなす音量（lipsync.mouth の無音のしきい値と同じ）
 VOICED_RMS = 0.02
@@ -160,40 +161,26 @@ def jump_of(strip) -> dict | None:
         return None
 
 
-def _jump(strip, ch, jump: dict, fps: float, width: int, height: int, appearing: bool) -> None:
-    """跳ねながら登場（appearing）・退場のキーフレーム（YMM4 の InOutJumpEffect に近い動き。正確な動きは資料が無い）。
-
-    登場は `x` / `y`（画面に対する割合、上が正。`in_reverse` なら逆向き）だけずれた位置から、退場は元の位置からそこへ
-    （`out_reverse` でなければ逆向き）、`seconds` 秒かけて移りながら、`period` 秒ごとに跳ねる（高さは立ち絵の高さの
-    `height` %、空中では縦に `stretch` % 伸びる）。着地（登場の終わり）では一度つぶれて戻る。"""
-    length = strip.right_handle - 1 - strip.left_handle
-    if jump.get("in") and jump.get("out"):  # 登場と退場が重なると、同じフレームのキーが上書きされて片方が消える
-        length //= 2
-    n = max(2, min(round(jump["seconds"] * fps), length))
-    hops = max(1, round(jump["seconds"] / max(jump.get("period") or jump["seconds"], 1e-3)))
+def _jump(strip, jump: dict, fps: float, width: int, height: int, appearing: bool, limit: int) -> None:
+    """跳ねながら登場（appearing）・退場のキーフレーム（`jump_keys`）。退場は登場を逆に再生する（反転（退場時）が
+    オフならずれの向きも逆）。`limit` はキーを打てるフレーム数（登場と退場が重ならないように）。収まらなければ
+    動き全体を `limit` に縮める（途中で切ると、ずれたまま・跳ねたままの値が残るため）。"""
     sign = (-1 if jump.get("in_reverse") else 1) if appearing else (1 if jump.get("out_reverse") else -1)
     flip = -1 if strip.use_flip_x else 1  # 反転したストリップは offset の向きも逆
-    # 大きさは apply_placement の値（登場の着地でつぶしたままの scale を退場の基準にしない）
-    base_x, base_y, base_s = strip.transform.offset_x, strip.transform.offset_y, float(strip.get("tachie_scale", 1.0))
+    # 基準はキーの無い元の位置・大きさ（apply_placement が当てた値。前のキーで変わった値を使わない）
+    base_x, base_y = strip.transform.offset_x, strip.transform.offset_y
+    base_s = float(strip.get("tachie_scale", 1.0))
     dx, dy = sign * jump["x"] * width * flip, sign * jump["y"] * height
-    hop_px = jump.get("height", 0.0) / 100 * ch.height * height * base_s
-    stretch = jump.get("stretch", 0.0) / 100
-    start = strip.left_handle if appearing else strip.right_handle - 1 - n
-    for k in range(n + 1):
-        t = k / n
-        rest = 1 - t if appearing else t  # 残りのずれ
-        phase = (t * hops) % 1.0 if k < n else 0.0
-        hop = 4 * phase * (1 - phase)
-        _key(strip, "transform.offset_x", start + k, base_x + dx * rest)
-        _key(strip, "transform.offset_y", start + k, base_y + dy * rest + hop_px * hop)
-        _key(strip, "transform.scale_y", start + k, base_s * (1 + stretch * hop))
-        _key(strip, "transform.scale_x", start + k, base_s * (1 - stretch * hop / 2))
-    squash = max(1, round(0.1 * fps))
-    end = strip.right_handle - 1 - (n + 1 if jump.get("out") else 0)  # 退場の動きより前（戻るキーまで打てるときだけ）
-    if appearing and stretch and start + n + 2 * squash < end:  # 着地でつぶれて戻る
-        for f, sy in ((start + n + squash, 1 - stretch), (start + n + 2 * squash, 1.0)):
-            _key(strip, "transform.scale_y", f, base_s * sy)
-            _key(strip, "transform.scale_x", f, base_s * (2 - sy))
+    keys = jump_keys(jump, fps)
+    limit = max(0, limit)
+    shrink = min(1.0, limit / keys[-1][0]) if keys[-1][0] else 1.0
+    for f, rest, h, sy in keys:
+        f = round(f * shrink)
+        frame = strip.left_handle + f if appearing else strip.right_handle - 1 - f
+        _key(strip, "transform.offset_x", frame, base_x + dx * rest)
+        _key(strip, "transform.offset_y", frame, base_y + dy * rest + h * height)
+        _key(strip, "transform.scale_y", frame, base_s * sy)
+        _key(strip, "transform.scale_x", frame, base_s * (2 - sy))
 
 
 def refresh_motion(scene, lines_dir: Path) -> int:
@@ -259,9 +246,14 @@ def refresh_motion(scene, lines_dir: Path) -> int:
         jumps = {s.name: j for s in mine if (j := jump_of(s))}
         for s in mine:
             j = jumps.get(s.name)
+            if not j:
+                continue
+            frames = s.right_handle - 1 - s.left_handle
+            both = j.get("in") and j.get("out")
             for appearing in (True, False):
-                if j and j.get("in" if appearing else "out"):
-                    _jump(s, ch, j, fps, width, height, appearing)
+                if j.get("in" if appearing else "out"):
+                    # 登場と退場の両方なら半分ずつ（同じフレームのキーで上書きし合わないように）
+                    _jump(s, j, fps, width, height, appearing, frames // 2 - (0 if appearing else 1) if both else frames)
                     count += 1
         duration = max(1, round(ch.effect_seconds * fps))
         for group in spans(mine):

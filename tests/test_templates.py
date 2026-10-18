@@ -73,7 +73,8 @@ def test_from_ymm4(tmp_path: Path):
     # 左右反転は立ち絵ごと、跳ねながら登場退場は画面に対する割合（上が正）で持つ
     assert still["flip"] is True and still["jump"]["in"] and not still["jump"]["out"] and still["jump"]["out_reverse"]
     assert still["jump"]["y"] == pytest.approx(-900 / 1080) and still["jump"]["x"] == 0.0
-    assert (still["jump"]["seconds"], still["jump"]["height"], still["jump"]["period"]) == (0.5, 10.0, 0.5)
+    assert (still["jump"]["seconds"], still["jump"]["period"]) == (0.5, 0.5)
+    assert still["jump"]["height"] == pytest.approx(10 / 1080)  # 高さは px → 画面の高さに対する割合
     assert not t_skipped
     # .ymmp の読み込みと同じく、写せない合成モード・アニメーションは報告する
     image = {**ymm4_settings()["Templates"][1]["Items"][0], "Blend": "Add", "X": anim(0.0, "反復移動", (100.0,))}
