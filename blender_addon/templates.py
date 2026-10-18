@@ -17,7 +17,8 @@ from bpy_extras.io_utils import ImportHelper
 
 from .motion import _channelbag
 from .operators import (
-    ERRORS, _applied_signatures, _face_name, _free_face_channel, auto_signature, character_audio, character_voice,
+    ERRORS, POSE_PROPS, _applied_signatures, _face_name, _free_face_channel, _still_overlaps, auto_signature,
+    character_audio, character_voice, get_pose, load_material, place_still,
     ensure_sequencer_scene, line_accent, line_audio, line_channels, line_end, line_kana, line_layout,
     line_layout_of, line_sound, line_strips, line_subtitle, line_text, line_texts, line_voice, place_strips, prefs,
     refresh_faces, render_clip, scene_fps, seq_scene, set_text_offset,
@@ -174,8 +175,12 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
             items.append({"kind": "face", "frame": s.left_handle - t0, "length": s.right_handle - s.left_handle,
                           "layer": s.channel, "character": s["tachie_face"],
                           "expression": s.get("tachie_expression", ""), "parts": None})
-        elif s.get("tachie_idle") or s.get("tachie_still"):
-            skipped.append(f"立ち絵（{s.name}）")
+        elif s.get("tachie_still"):
+            items.append({"kind": "still", "frame": s.left_handle - t0, "length": s.right_handle - s.left_handle,
+                          "layer": s.channel, "character": s["tachie_still"],
+                          "expression": s.get("tachie_expression", ""), "parts": None, "pose": get_pose(s)})
+        elif s.get("tachie_idle"):
+            skipped.append(f"前の版の待機の立ち絵（{s.name}）")
         else:
             m = _media_of(scene, s, t0, fps, speed_of)
             if m is None:
@@ -199,19 +204,51 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
 
 # ---- 置く ----
 
-def _resolve_expression(ch, item: dict, problems: list[str]) -> str:
-    """セリフ・表情ストリップの表情プリセット。YMM4 のパーツなら、キャラの基本の表情との差分のプリセットにする。"""
+def _resolve_expression(ch, item: dict, problems: list[str], tachie: dict | None = None) -> str:
+    """セリフ・表情ストリップ・立ち絵の表情プリセット。YMM4 のパーツなら、キャラの基本の表情との差分のプリセットにする。
+
+    立ち絵（YMM4 の立ち絵アイテム）のパーツは基本の表情そのもの（空のパーツは非表示、.ymmp の読み込みと同じ）。
+    セリフ・表情は変えるパーツだけで、`tachie`（重なる立ち絵アイテムのパーツ）があればその上に重ねる。"""
     preset = item.get("expression") or ""
     parts = item.get("face_parts") if item["kind"] == "line" else item.get("parts")
+    if item["kind"] == "still" and parts and not any(parts.values()):
+        parts = None  # パーツの指定が無い立ち絵アイテムはキャラの基本の表情
     if not preset and parts and ch.folder:
         from .ymmp_import import _base_parts, _Presets, _valid_parts
 
         base = _base_parts(ch)
-        preset = _Presets(ch, problems).name_for(_valid_parts(ch, overlay(base, parts), problems, base))
+        full = parts if item["kind"] == "still" else overlay(tachie or base, parts)
+        preset = _Presets(ch, problems).name_for(_valid_parts(ch, full, problems, base))
     if preset and preset not in {e.name for e in ch.expressions}:
         problems.append(f"{ch.name} に表情「{preset}」が無いので基本の表情にしました")
         preset = ""
     return preset
+
+
+def _still_pose(ch, item: dict, data: dict) -> dict | None:
+    """立ち絵の位置・大きさ（立ち絵ごとの値）。YMM4 の立ち絵アイテムは X / Y（画面中央からのピクセル、下が正）と
+    Zoom（素材の高さに対する %）を、キャラの立ち位置・高さとの差にする（.ymmp の読み込みでキャラに写すのと同じ換算）。"""
+    if item.get("pose"):
+        return item["pose"]
+    if "x" not in item:
+        return None
+    width, height = float(data.get("width") or 1920), float(data.get("height") or 1080)
+    material = load_material(ch.folder)
+    pose = {"tachie_pos_x": item["x"] / width - ch.position_x, "tachie_pos_y": -item["y"] / height - ch.position_y,
+            "tachie_scale": material.height * item.get("zoom", 100.0) / 100 / height / ch.height}
+    for key, (_, lo, hi, base, _) in POSE_PROPS.items():
+        # 丸めの誤差（キャラの設定と同じ位置・大きさ）は 0 / 1 にし、パネルで編集できる範囲に収める
+        pose[key] = base if abs(pose[key] - base) < 1e-3 else max(lo, min(hi, pose[key]))
+    return pose
+
+
+def _tachie_parts(items: list[dict], item: dict) -> dict | None:
+    """セリフ・表情の頭に重なる、同じキャラの立ち絵（YMM4 の立ち絵アイテム）のパーツ（.ymmp の読み込みの
+    `tachie_base` と同じく、YMM4 の表情はその上に重ねる）。"""
+    f = item["frame"]
+    return next((i["parts"] for i in items if i["kind"] == "still" and i["character"] == item["character"]
+                 and i["frame"] <= f < i["frame"] + i["length"] and i.get("parts") and any(i["parts"].values())),
+                None)
 
 
 def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[str]]:
@@ -263,7 +300,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
         voice = {**character_voice(ch), **{k: v for k, v in (item.get("voice") or {}).items()
                                            if k in character_voice(ch)}}
         try:
-            preset = _resolve_expression(ch, item, problems)
+            preset = _resolve_expression(ch, item, problems, _tachie_parts(items, item))
             clip, lines_dir = render_clip(context, ch, item["text"], preset or None, speaker=item.get("style"),
                                           voice=voice, kana=item.get("kana") or None, accent=item.get("accent"),
                                           accent_kana=item.get("accent_kana"), audio=audio)
@@ -298,7 +335,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             problems.append(f"キャラクター「{item['character']}」（立ち絵あり）が無いので表情ストリップを置きませんでした")
             continue
         try:
-            preset = _resolve_expression(ch, item, problems)
+            preset = _resolve_expression(ch, item, problems, _tachie_parts(items, item))
         except ERRORS as e:
             problems.append(f"{ch.name} の表情ストリップ: {e}")
             continue
@@ -309,6 +346,23 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
         face["tachie_face"] = ch.name
         face["tachie_expression"] = preset
         placed["face"] += 1
+    # 立ち絵（同じキャラの立ち絵に重なるものは置かない）
+    for item in (i for i in items if i["kind"] == "still"):
+        ch = characters.get(item["character"])
+        if ch is None or not ch.folder:
+            problems.append(f"キャラクター「{item['character']}」（立ち絵あり）が無いので立ち絵を置きませんでした")
+            continue
+        a, b = frame(item["frame"]), max(frame(item["frame"]) + 1, frame(item["frame"] + item["length"]))
+        if _still_overlaps(sed, ch, a, b):
+            problems.append(f"{ch.name} の立ち絵（{a}〜{b} フレーム）は、置いてある立ち絵と重なるので置きませんでした")
+            continue
+        try:
+            preset = _resolve_expression(ch, item, problems)
+            place_still(context, ch, preset, a, b - a, _still_pose(ch, item, data), problems=problems)
+        except ERRORS as e:
+            problems.append(f"{ch.name} の立ち絵: {e}")
+            continue
+        placed["still"] += 1
     end = frame(end_frame(data))
     if end - 1 > scene.frame_end:
         scene.frame_end = end - 1
@@ -325,12 +379,12 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
 
 # ---- オペレーター ----
 
-LABELS = {"line": "セリフ", "face": "表情", "image": "画像", "video": "動画", "audio": "音声", "text": "テキスト",
+LABELS = {"line": "セリフ", "face": "表情", "still": "立ち絵", "image": "画像", "video": "動画", "audio": "音声", "text": "テキスト",
           "color": "カラー", "video_sound": "動画の音"}
 
 
 class TACHIE_OT_register_template(bpy.types.Operator):
-    """選択中のストリップ（セリフ・表情・画像・動画・音声・テキスト・カラー）をテンプレートとして登録する（全 .blend 共通）"""
+    """選択中のストリップ（セリフ・表情・立ち絵・画像・動画・音声・テキスト・カラー）をテンプレートとして登録する（全 .blend 共通）"""
 
     bl_idname = "tachie.register_template"
     bl_label = "選択中のストリップを登録"
@@ -444,10 +498,10 @@ class TACHIE_OT_import_ymm4_templates(bpy.types.Operator, ImportHelper):
             added += 1
             item = next((t for t in templates if t.name == name), None) or templates.add()
             item.name, item.data, item.behind = name, dumps(data), behind
-            counts = Counter("セリフ" if i["kind"] == "line" else "表情" if i["kind"] == "face"
-                             else LABELS[i["media"]["kind"]] for i in data["items"])
+            counts = Counter(LABELS[i["kind"]] if i["kind"] != "media" else LABELS[i["media"]["kind"]]
+                             for i in data["items"])
             missing = sorted({i["character"] for i in data["items"]
-                              if i["kind"] in ("line", "face") and i["character"] not in characters})
+                              if i["kind"] in ("line", "face", "still") and i["character"] not in characters})
             note = "、".join(f"{k} {n}" for k, n in counts.items()) or "空"
             lines.append(f"{name}: {note}" + ("（立ち絵より奥）" if behind else ""))
             if skipped:

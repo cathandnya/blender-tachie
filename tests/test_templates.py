@@ -34,7 +34,10 @@ def ymm4_settings() -> dict:
              "Frame": 500, "Layer": 0, "Length": 300}]},
         {"Name": "立ち絵", "Path": [], "Items": [
             {"$type": ITEM + "TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん", "Frame": 0,
-             "Layer": 1, "Length": 60}]},
+             "Layer": 1, "Length": 60, "X": anim(769.0), "Y": anim(530.0), "Zoom": anim(80.0),
+             "TachieItemParameter": {"Eye": "C:\\char\\ずんだもん\\目\\なごみ目.png"}},
+            {"$type": ITEM + "TachieItem, YukkuriMovieMaker", "CharacterName": "めたん", "Frame": 0,
+             "Layer": 2, "Length": 60, "IsHidden": True}]},
     ]}
 
 
@@ -59,7 +62,11 @@ def test_from_ymm4(tmp_path: Path):
     assert b_behind and (b["fps"], b["width"], b["height"]) == (30.0, 1280, 720)
     image = media_from_dict(b["items"][0]["media"])
     assert image.kind == "image" and image.frame == 0 and image.length == 300 and image.zoom == 50.0
-    assert t["items"] == [] and t_skipped == {"立ち絵アイテム": 1}
+    # 立ち絵アイテムは立ち絵（位置・大きさは YMM4 の値のまま持ち、置くときにキャラとの差にする）。非表示は読まない
+    (still,) = t["items"]
+    assert still["kind"] == "still" and still["character"] == "ずんだもん" and (still["frame"], still["length"]) == (0, 60)
+    assert (still["x"], still["y"], still["zoom"]) == (769.0, 530.0, 80.0) and still["parts"]["目"] == "なごみ目"
+    assert not t_skipped
     # .ymmp の読み込みと同じく、写せない合成モード・アニメーションは報告する
     image = {**ymm4_settings()["Templates"][1]["Items"][0], "Blend": "Add", "X": anim(0.0, "反復移動", (100.0,))}
     assert from_ymm4({"Items": [image]})[2] == {"画像の合成モード Add": 1, "ImageItem の X のアニメーション": 1}

@@ -8,6 +8,9 @@
 - `{"kind": "line", "character", "text", "kana", "accent", "accent_kana", "style", "voice", "audio", "expression",
   "layout", "subtitle_offset", "subtitle_hidden", "face_parts"}` — セリフ（置くときに合成し直す）
 - `{"kind": "face", "character", "expression", "parts"}` — 表情ストリップ
+- `{"kind": "still", "character", "expression", "parts", "pose"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
+  `{"tachie_pos_x", "tachie_pos_y", "tachie_scale"}`。YMM4 の立ち絵アイテムは代わりに `x` / `y` / `zoom` を持ち、置くときに
+  キャラの立ち位置・高さとの差にする）
 
 YMM4 のテンプレートは `user/setting/<版>/YukkuriMovieMaker.Settings.ItemSettings.json` の `Templates`
 （`{Name, Path: [フォルダ…], FPS, Width, Height, Items: [...]}`、Items は .ymmp のアイテムと同じ形）。
@@ -120,6 +123,17 @@ def from_ymm4(template: dict) -> tuple[dict, bool, Counter]:
                 "audio": {"volume": v.volume / VOLUME_BASE, "pan": v.pan / 100, "fade_in": v.fade_in,
                           "fade_out": v.fade_out, **_after(item, v, fps)},
                 "subtitle_offset": None, "subtitle_hidden": v.subtitle == "Hidden", "face_parts": v.face})
+        elif kind == "TachieItem":
+            span = _span(item, parts_of(item.get("TachieItemParameter"), full=True))
+            if span.hidden:
+                continue
+            items.append({"kind": "still", "frame": span.frame, "length": span.length, "layer": span.layer,
+                          "character": span.character, "expression": "", "parts": span.parts,
+                          "x": span.x, "y": span.y, "zoom": span.zoom})
+            for e in span.effects:
+                skipped[f"立ち絵アイテムのエフェクト {e}"] += 1
+            if span.inverted:  # 左右反転はキャラごと（キャラの設定で変える）
+                skipped["立ち絵アイテムの左右反転"] += 1
         elif kind == "TachieFaceItem":
             span = _span(item, parts_of(item.get("TachieFaceParameter"), full=False))
             if not span.hidden:

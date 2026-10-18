@@ -1084,7 +1084,7 @@ assert still("ずんだもん").channel == zimg_ch + 2 and back_color.channel ==
 assert sed.channels[zunda.channel].name == "ずんだもん 立ち絵" and sed.channels[10].name == "Channel 10"
 s.channel_base = 10
 assert still("ずんだもん").channel == zimg_ch
-# YMM4 のテンプレート（ItemSettings.json）を読み込む: セリフと画像は置ける、トランジション・立ち絵アイテムは読まない
+# YMM4 のテンプレート（ItemSettings.json）を読み込む: セリフ・画像・立ち絵アイテムは置ける、トランジションは読まない
 YMM_ITEM2 = "YukkuriMovieMaker.Project.Items."
 item_settings = out / "YukkuriMovieMaker.Settings.ItemSettings.json"
 item_settings.write_text(json.dumps({"Templates": [
@@ -1108,8 +1108,8 @@ item_settings.write_text(json.dumps({"Templates": [
 n_templates = len(templates)
 run(bpy.ops.tachie.import_ymm4_templates, filepath=str(item_settings))
 tpl_report = bpy.data.texts["YMM4 のテンプレートの読み込み結果"].as_string()
-assert "2 個のうち 1 個" in tpl_report and "トランジション 1" in tpl_report and "立ち絵アイテム 1" in tpl_report, tpl_report
-assert len(templates) == n_templates + 1
+assert "2 個のうち 2 個" in tpl_report and "トランジション 1" in tpl_report and "立ち絵 1" in tpl_report, tpl_report
+assert len(templates) == n_templates + 2
 zunda_presets_t = {e.name for e in zunda.expressions}
 t_at3 = max(x.right_handle for x in sed.strips) + 20
 scene.frame_current = t_at3
@@ -1119,11 +1119,22 @@ assert [g[0]["tachie_text"] for g in greet] == ["テンプレなのだ", "続き
 assert max(x.right_handle for x in greet[0]) <= min(x.left_handle for x in greet[1])
 gpreset = greet[0][0]["tachie_expression"]
 assert gpreset and next(e for e in zunda.expressions if e.name == gpreset).part_eye == "なごみ目"
+# 立ち絵アイテムのテンプレートは立ち絵を置く（60fps の 60 フレーム → 30 フレーム）。重なる立ち絵があれば置かない
+t_at4 = max(x.right_handle for x in sed.strips) + 20
+scene.frame_current = t_at4
+run(bpy.ops.tachie.insert_template, index=list(templates).index(next(t for t in templates if t.name == "立ち絵だけ")))
+tstill, = [x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.left_handle >= t_at4]
+assert (tstill.left_handle, tstill.right_handle, tstill.channel) == (t_at4, t_at4 + 30, zunda.channel)
+scene.frame_current = t_at4 + 10
+assert bpy.ops.tachie.insert_template(  # 何も置けなければ CANCELLED
+    index=list(templates).index(next(t for t in templates if t.name == "立ち絵だけ"))) == {"CANCELLED"}
+assert len([x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.left_handle >= t_at4]) == 1
 # 片付け
-for x in [x for x in sed.strips if x.left_handle >= t_at and (x.get("tachie_id") or x.get("tachie_ymmp"))]:
+for x in [x for x in sed.strips if x.left_handle >= t_at and (x.get("tachie_id") or x.get("tachie_ymmp")
+                                                             or x.get("tachie_still"))]:
     sed.strips.remove(x)
 for i in reversed(range(len(templates))):
-    if templates[i].name in ("テスト", "あいさつ"):
+    if templates[i].name in ("テスト", "あいさつ", "立ち絵だけ"):
         templates.remove(i)
 for i in reversed(range(len(zunda.expressions))):  # 読み込みで作った表情プリセット
     if zunda.expressions[i].name not in zunda_presets_t:
