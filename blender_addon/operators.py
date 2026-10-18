@@ -418,12 +418,15 @@ def render_clip(context, ch, text: str, preset: str | None = None, speaker: int 
     return clip_job(context, ch, text, preset, speaker, voice, kana, accent, accent_kana, audio, layout)()
 
 
-def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str = "FULL") -> dict:
+def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str = "FULL",
+                  prefer: dict | None = None) -> dict:
     """セリフを start に置くチャンネル {"audio", "image", "subtitle", "name"}（形 `layout` で置くものだけ）。
 
     どれもそのキャラのレーン（`channels`）。立ち絵は同じキャラの立ち絵のあるセリフと重ねられない。音声・字幕・
     キャラ名はレーンが埋まっていれば（同じキャラの立ち絵の無いセリフが重なるとき）レーンより上の空き。キャラ名は字幕より上。
+    `prefer`（役割 → チャンネル。作り直すときの今のチャンネル）があり、そこが空いていればそこ（手で動かした位置を残す）。
     """
+    prefer = prefer or {}
     scene = seq_scene(context)
     lanes.ensure_layout(scene)
     sed = scene.sequence_editor
@@ -431,6 +434,8 @@ def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str =
     result = {}
     if layout == "FULL":
         image = lanes.lane(scene, "image", ch.name)
+        if prefer.get("image") and (sed is None or not _overlaps(sed, prefer["image"], start, end, ignore)):
+            image = prefer["image"]
         if image is None:
             raise ValueError(f"{ch.name}には立ち絵のチャンネルがありません（立ち絵の無いキャラクター）")
         if sed is not None and (_overlaps(sed, image, start, end, ignore) or _own_overlaps(sed, ch, start, end, ignore)):
@@ -441,6 +446,12 @@ def line_channels(context, ch, start: int, frames: int, ignore=(), layout: str =
     roles = ["audio"] + (["subtitle"] + (["name"] if ch.show_name else []) if layout != "AUDIO" else [])
     for role in roles:
         first = result["subtitle"] + 1 if role == "name" else None  # キャラ名は字幕より上
+        want = prefer.get(role)
+        if want and want not in taken and (first is None or want >= first) and (
+                sed is None or not _overlaps(sed, want, start, end, ignore)):
+            result[role] = want
+            taken.add(want)
+            continue
         result[role] = lanes.role_channel(scene, role, ch.name, start, end, taken, ignore, first)
         taken.add(result[role])
     return result
@@ -713,7 +724,14 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
     delta = start + clip.frames - old_end
     # 消す前に置けるか確かめる（ずらすストリップは邪魔にならない）
     movers = [s for s in sed.strips if settings.ripple and delta and s.left_handle >= old_end]
-    channels = line_channels(context, ch, start, clip.frames, ignore=old + movers, layout=layout)
+    # 手で動かしたもの（レーンにいないもの）は、今のチャンネルが空いていればそこに置き直す。レーンにいるものは
+    # 今のキャラのレーンへ（セリフのキャラを変えたときはそのキャラのレーン）
+    scene = seq_scene(context)
+    lanes.ensure_layout(scene)  # 古いレイアウトのままだと、レーンにいるものまで手で動かしたものに見える
+    current = lanes.scene_layout(scene)
+    prefer = {key[0]: s.channel for s in old
+              if (key := lanes.lane_key(s)) and s.channel != current.channel(*key)}
+    channels = line_channels(context, ch, start, clip.frames, ignore=old + movers, layout=layout, prefer=prefer)
     shift = delta
     if delta < 0:
         # 縮めるとき、このセリフの途中から始まって後ろまで続くストリップ（同時に喋る別のキャラのセリフなど）は
@@ -844,13 +862,14 @@ def _segments_key(segments, base: str) -> str:
     return json.dumps([base, segments], ensure_ascii=False)
 
 
-def _strip_from_paths(context, sed, ch, name: str, start: int, paths: list, folder: str, key: str):
-    """画像のパスの列をハードリンクで 1 つのフォルダに並べ、立ち絵ストリップにする。"""
+def _strip_from_paths(context, sed, ch, name: str, start: int, paths: list, folder: str, key: str,
+                      channel: int | None = None):
+    """画像のパスの列をハードリンクで 1 つのフォルダに並べ、立ち絵ストリップにする（既定は立ち絵のレーン）。"""
     directory = output_dir(context) / folder / hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
     link_frames(paths, directory)
     files = sorted(os.listdir(directory))
     strip = sed.strips.new_image(name=name, filepath=_path_for_blend(directory / files[0]),
-                                 channel=ch.channel, frame_start=start, fit_method="ORIGINAL")
+                                 channel=channel or ch.channel, frame_start=start, fit_method="ORIGINAL")
     for f in files[1:]:
         strip.elements.append(f)
     strip.blend_type = "ALPHA_OVER"
@@ -1147,11 +1166,12 @@ def _own_overlaps(sed, ch, start: int, end: int, ignore=()) -> bool:
                for s in sed.strips)
 
 
-def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int, fps: float):
-    """まばたきだけの立ち絵（口は閉じ）のストリップを置く。"""
+def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int, fps: float,
+                 channel: int | None = None):
+    """まばたきだけの立ち絵（口は閉じ）のストリップを置く（既定は立ち絵のレーン）。"""
     paths = idle_frames(cache, frames, fps, seed=(ch.name, start))
     strip = sed.strips.new_image(name=name, filepath=_path_for_blend(paths[0]),
-                                 channel=ch.channel, frame_start=start, fit_method="ORIGINAL")
+                                 channel=channel or ch.channel, frame_start=start, fit_method="ORIGINAL")
     for p in paths[1:]:
         strip.elements.append(p.name)
     strip.blend_type = "ALPHA_OVER"
@@ -1159,7 +1179,8 @@ def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int,
     return strip
 
 
-def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None):
+def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None,
+                channel: int | None = None):
     """セリフなしの立ち絵（まばたきのみ）を置く。待機ストリップと違い、作り直しでは消えない。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
@@ -1168,6 +1189,8 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
         scene.view_settings.view_transform = "Standard"
     cache = character_cache(context, ch, preset)
     name = f"立ち絵 {ch.name}" + (f"({preset})" if preset else "")
+    if not channel or _overlaps(sed, channel, start, start + frames):  # 作り直す前のチャンネルが埋まっていればレーン
+        channel = ch.channel
     segments = face_segments(sed, ch, start, start + frames)
     if segments:
         # 表情ストリップと重なる: 区間ごとに表情を変えた連番を faces/ に並べる
@@ -1177,9 +1200,9 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
         # フォルダはキャラ・位置・長さごと（同じ区間の別の立ち絵と連番を取り合わないように）
         strip = _strip_from_paths(context, sed, ch, name, start, paths, "faces",
                                   json.dumps([ch.name, start, frames, _segments_key(segments, preset)],
-                                             ensure_ascii=False))
+                                             ensure_ascii=False), channel)
     else:
-        strip = _blink_strip(sed, ch, cache, name, start, frames, scene_fps(scene))
+        strip = _blink_strip(sed, ch, cache, name, start, frames, scene_fps(scene), channel)
     strip["tachie_faced"] = _segments_key(segments, preset) if segments else ""
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
@@ -1201,8 +1224,9 @@ def remake_still(context, strip, preset: str | None = None):
     start, frames = strip.left_handle, strip.right_handle - strip.left_handle
     character_cache(context, ch, preset)  # 素材が読めないときは消す前に失敗させる
     pose = get_pose(strip)
+    channel = strip.channel  # 今のチャンネル（空いていれば、そこに置き直す）
     sed.strips.remove(strip)
-    return place_still(context, ch, preset, start, frames, pose)
+    return place_still(context, ch, preset, start, frames, pose, channel)
 
 
 def connect(context, strips) -> None:

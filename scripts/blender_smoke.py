@@ -1280,11 +1280,24 @@ run(bpy.ops.tachie.character_move, direction="UP")
 zunda, metan = s.characters[0], s.characters[1]
 assert zunda.name == "ずんだもん" and lane("subtitle", "ずんだもん") == zsub and on_lanes()
 sed.channels[zsub].mute = False
-# 手で動かした立ち絵は「チャンネルを整理する」でレーンに戻る
-moved = image_of(next(iter(lines())))
+# 手で動かしたストリップは、並べ替え・再生成をしても動かさない（今のチャンネルに置き直す）。
+# 「チャンネルを整理する」を押したときだけレーンに戻る
+first_id = next(iter(lines()))
+moved = image_of(first_id)
 moved.channel = 90
+s.active_character = 0
+run(bpy.ops.tachie.character_move, direction="DOWN")
+run(bpy.ops.tachie.character_move, direction="UP")
+zunda, metan = s.characters[0], s.characters[1]
+assert image_of(first_id).channel == 90, image_of(first_id).channel
+sed.active_strip = sound(first_id)
+sound(first_id).channel = 91
+run(bpy.ops.tachie.regenerate)
+first_id = sed.active_strip["tachie_id"]
+assert image_of(first_id).channel == 90 and sound(first_id).channel == 91
 run(bpy.ops.tachie.relayout)
-assert moved.channel == zunda.channel and on_lanes()
+moved = image_of(first_id)
+assert moved.channel == zunda.channel and sound(first_id).channel == lane("audio", zunda.name) and on_lanes()
 # 古い .blend（レーンに並べ直す前）: 開いたときに並べ直す
 s.applied_layout, s.layout_version = "", 0
 moved.channel = 91

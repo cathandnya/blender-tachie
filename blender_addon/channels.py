@@ -134,8 +134,10 @@ def ensure_layout(scene) -> list[str]:
     return problems
 
 
-def relayout(scene, layout: Layout | None = None) -> list[str]:
+def relayout(scene, layout: Layout | None = None, force: bool = False) -> list[str]:
     """印の付いたストリップをレーンへ動かし（埋まっていれば top より上）、チャンネルに名前を付ける。
+    動かすのは前のレーンにちょうど乗っているものだけで、手で別のチャンネルに動かしたもの（とあふれたもの）はそのまま。
+    `force`（ボタン「チャンネルを整理する」）と、前のレイアウトが無い（古い .blend）ときは全部をレーンへ。
     レーンより上の印の無いもの（YMM4 の手前の画像など）は top の増減の分まとめてずらす。"""
     settings = scene.tachie
     layout = layout or scene_layout(scene)
@@ -143,7 +145,7 @@ def relayout(scene, layout: Layout | None = None) -> list[str]:
     sed = scene.sequence_editor
     problems: list[str] = []
     if sed is not None:
-        moved, problems = _move_strips(sed, layout, old, {ch.name for ch in settings.characters})
+        moved, problems = _move_strips(sed, layout, old, {ch.name for ch in settings.characters}, force)
         if not moved:  # 並べ替えられなかった: 当てたことにしない（パネルで「合っていません」と出し、次で直す）
             _sync_cached(scene, layout)
             return problems
@@ -154,7 +156,8 @@ def relayout(scene, layout: Layout | None = None) -> list[str]:
     return problems
 
 
-def _move_strips(sed, layout: Layout, old: Layout | None, registered: set[str]) -> tuple[bool, list[str]]:
+def _move_strips(sed, layout: Layout, old: Layout | None, registered: set[str],
+                 force: bool = False) -> tuple[bool, list[str]]:
     """(動かせたか, 問題)。動かせなかった（行き先が決まらない）ときは何も動かさない。"""
     # 一覧にいないキャラの待機は消す（待機は作り直すもので、消したキャラの分は要らない）
     for s in [s for s in sed.strips if s.get("tachie_idle") and s["tachie_idle"] not in registered]:
@@ -162,11 +165,21 @@ def _move_strips(sed, layout: Layout, old: Layout | None, registered: set[str]) 
     strips = list(sed.strips)
     tagged = [(s, k) for s in strips if (k := lane_key(s)) is not None]
     tagged_set = {s for s, _ in tagged}
+    kept, above = [], set()
+    if not force and old is not None:
+        # 手で動かしたもの（前のレーンにいないもの）は動かさない。前にレーンが無かった役割（キャラ名を出すようにした・
+        # 素材を付けたなど）はレーンへ。前の top より上（あふれ）にいるものは、印の無いものと一緒にずらす
+        # （レーンが増えたときにレーンの中に取り残されないように）
+        kept = [s for s, k in tagged if (c := old.channel(*k)) is not None and c != s.channel]
+        above = {s for s in kept if s.channel > old.top}
+        kept_set = set(kept)
+        tagged = [(s, k) for s, k in tagged if s not in kept_set]
     # 前のいちばん下より下にあった印の無いもの（背景など）は、いちばん下を下げても動かさない（手前へ飛ばさない）
     below = max(layout.base, old.base) if old is not None else layout.base
-    front = [s for s in strips if s not in tagged_set and s.channel >= below]
+    front = [s for s in strips if (s not in tagged_set or s in above) and s.channel >= below]
     fixed = [(s.channel, s.left_handle, s.right_handle) for s in strips
              if s not in tagged_set and s.channel < below]
+    fixed += [(s.channel, s.left_handle, s.right_handle) for s in kept if s not in above]
     # レーンより上の印の無いものは、レーンと重ならないように（減ったときは詰めて）まとめてずらす
     delta = 0
     if front:
@@ -239,7 +252,7 @@ class TACHIE_OT_relayout(bpy.types.Operator):
 
         scene = seq_scene(context)
         try:
-            problems = relayout(scene)
+            problems = relayout(scene, force=True)
         except ValueError as e:  # チャンネルが足りない（キャラが多すぎる・いちばん下が高すぎる）
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
