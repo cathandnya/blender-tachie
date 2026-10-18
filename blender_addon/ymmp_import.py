@@ -80,6 +80,15 @@ def resolve_material(settings, c, ymmp: Path) -> str | None:
     return next((f for r in dict.fromkeys(roots) if (f := find_material(r, c.folder_name))), None)
 
 
+def _base_span(project: Project, name: str):
+    """キャラクターの基本の表情・位置にする立ち絵アイテム（いちばん長く出ているもの）。無ければ None。
+    YMM4 のキャラの既定のパーツ（TachieDefaultItemParameter）は新しく置くアイテムの初期値で、動画に出ている見た目とは
+    限らない（口・体が空のまま、記号だけ、など）ので、基本の表情には実際に置かれていたアイテムを使う。"""
+    # 立ち絵アイテムの parts は空のパーツも "" で持つので、どれかのパーツがあるものだけ
+    spans = [s for s in project.tachies if s.character == name and not s.hidden and any(s.parts.values())]
+    return max(spans, key=lambda s: s.length, default=None)
+
+
 def _used_characters(project: Project) -> set[str]:
     return {v.character for v in project.voices} | {s.character for s in project.tachies + project.faces}
 
@@ -307,8 +316,9 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
     # YMM4 の字幕の Y は画面中央からの下向きのピクセル（下揃え）。このアドオンは画面の下からの割合
     ch.subtitle_y = min(1.0, max(0.0, 0.5 - c.subtitle_y / project.height))
     ch.show_idle = True
-    if c.parts:
-        _set_parts(ch, _valid_parts(ch, c.parts, problems))
+    base = tachie.parts if tachie is not None and any(tachie.parts.values()) else c.parts  # 立ち絵アイテムの見た目を優先
+    if base:
+        _set_parts(ch, _valid_parts(ch, base, problems))
     if tachie is not None:
         # YMM4 の立ち絵の X / Y は画面中央からの画像の中心（ピクセル、下向き正）、Zoom は素材の大きさに対する %
         render = seq_scene(context).render
@@ -556,7 +566,8 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 problems.append(f"{name}: キャラクターを追加できません: {e}")
                 continue
             ch.name = name
-            tachie = next((s for s in project.tachies if s.character == name and not s.hidden), None)
+            tachie = _base_span(project, name) or next(
+                (s for s in project.tachies if s.character == name and not s.hidden), None)
             _setup_character(context, ch, c, project, tachie, problems)
             characters[name] = ch
             added_folders[name] = folder
@@ -574,12 +585,18 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 problems.append(f"画像・動画などを置けません: {e}")
             problems += media.problems
 
+        base_spans = {name: _base_span(project, name) for name in characters}
+
         def tachie_base(name: str, f: int) -> dict:
-            """その時刻の立ち絵アイテムの基本の表情（無ければキャラクターの基本）。"""
+            """その時刻の立ち絵アイテムの基本の表情（無ければ基本の表情にしたアイテム、それも無ければキャラクターの基本）。"""
             span = next((s for s in project.tachies
                          if s.character == name and not s.hidden and s.frame <= f < s.frame + s.length), None)
-            base = project.characters[name].parts if name in project.characters else {}
-            return span.parts if span is not None and span.parts else base
+            if span is not None and span.parts:
+                return span.parts
+            fallback = base_spans.get(name)  # 立ち絵アイテムの外は、基本の表情にしたアイテム
+            if fallback is not None:
+                return fallback.parts
+            return project.characters[name].parts if name in project.characters else {}
 
         def expression(name: str, f: int, face: dict) -> str:
             ch = characters[name]
