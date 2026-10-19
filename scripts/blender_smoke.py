@@ -325,7 +325,9 @@ run(bpy.ops.tachie.accent_split, phrase=0, mora=len0)
 assert len(edit.phrases) == n_phrases and len(edit.phrases[0].moras) == len0
 target = edit.phrases[-1]
 before_pitch = [round(m.pitch, 3) for m in target.moras]
-target.accent = 1 if target.accent != 1 else len(target.moras)  # 音高をエンジンで計算し直す
+new_accent = 1 if target.accent != 1 else len(target.moras)
+target.moras[new_accent - 1].is_accent = True  # アクセントのボタンを押す → 音高をエンジンで計算し直す
+assert target.accent == new_accent and target.moras[new_accent - 1].is_accent
 assert [round(m.pitch, 3) for m in target.moras] != before_pitch, before_pitch
 run(bpy.ops.tachie.edit_accent)
 snd = sound(sed.active_strip["tachie_id"])

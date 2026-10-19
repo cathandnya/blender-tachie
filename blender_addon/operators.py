@@ -1758,19 +1758,20 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
             used += n
             box = row.box()
             box.ui_units_x = MORA_UNITS * len(item.moras) + 0.6
-            head = box.row(align=True)
             if pitch:
-                head.prop(item, "accent", text="", slider=True)  # アクセントの位置（YMM4 の句の上のスライダー）
                 box.prop(item, "shift", text="句の高さ", slider=True)
             else:
-                head.label(text="")
+                box.label(text="")
             grid = box.row(align=True)
             for k, m in enumerate(item.moras):
                 col = grid.column(align=True)
                 col.ui_units_x = MORA_UNITS
-                col.enabled = m.voiced or not pitch  # 無声化・促音の音高は 0 のまま
-                col.prop(m, attr, text="")
-                bars = col.column(align=True)
+                if pitch:  # アクセントの位置（押したモーラにする。今の位置に ▼）
+                    col.prop(m, "is_accent", text="▼" if item.accent == k + 1 else "", toggle=True)
+                values = col.column(align=True)
+                values.enabled = m.voiced or not pitch  # 無声化・促音の音高は 0 のまま
+                values.prop(m, attr, text="")
+                bars = values.column(align=True)
                 bars.scale_y = 0.42
                 bars.prop(m, level, expand=True)
                 if not pitch:
@@ -1789,7 +1790,7 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
                 join.ui_units_x = 1.0
                 join.label(text="")
                 join.operator("tachie.accent_join", text="", icon="LINKED").phrase = i  # アクセント句を結合
-        layout.label(text="棒を押すとその高さに。モーラの文字で句を分け、鎖のボタンで次の句と結合" if pitch else
+        layout.label(text="上のボタンでアクセントの位置（▼）、棒で音高。モーラの文字で句を分け、鎖のボタンで次の句と結合" if pitch else
                      "棒・上の数値は母音の長さ、下の数値は子音の長さ（秒）", icon="INFO")
 
     def execute(self, context):

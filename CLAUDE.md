@@ -213,7 +213,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   中身は WindowManager の `tachie_accent`（句ごとの `shift` は差分を音高に足す）。YMM4 の「抑揚を編集」に寄せた並び:
   句を横に並べて幅で折り返し（`MORA_UNITS`）、モーラごとの縦の棒は `pitch_level` / `length_level`（`ACCENT_LEVELS` 段の
   EnumProperty を縦に expand。get / set で値と段を変換、範囲はダイアログごとの `pitch_lo/hi`・`length_lo/hi`）。句の
-  `accent`（アクセントの位置）を変えると `/mora_pitch` でその句の音高だけ計算し直す。句の結合（鎖のボタン、
+  `accent`（アクセントの位置。モーラごとのボタン `TachieMora.is_accent`、get / set で句の accent と行き来し、今の位置に ▼）を
+  変えると `/mora_pitch` でその句の音高だけ計算し直す。句の結合（鎖のボタン、
   `tachie.accent_join`）・分割（モーラの文字、`tachie.accent_split`）は `voicevox.accent.join_phrases` / `split_phrase` の
   あと `/mora_data` で変えた句だけ計算し直す。どれかをしたら（`changed`）確定時に発音を句から作り直す（`kana_from_phrases`、
   エンジンと同じ書き方: 無声化の _、アクセントの '、区切りの / と 、、疑問の ？）。バックグラウンドでは開けないので、

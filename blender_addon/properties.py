@@ -1,4 +1,5 @@
 import glob
+import re
 import unicodedata
 
 import bpy
@@ -669,6 +670,23 @@ def _level_set(attr: str, range_attr: str):
     return set_
 
 
+def _mora_place(mora) -> tuple:
+    """抑揚の編集のモーラの (句の番号, モーラの番号)。"""
+    m = re.search(r"phrases\[(\d+)\]\.moras\[(\d+)\]", mora.path_from_id())
+    return int(m[1]), int(m[2])
+
+
+def _is_accent_get(self):
+    p, k = _mora_place(self)
+    return self.id_data.tachie_accent.phrases[p].accent == k + 1
+
+
+def _is_accent_set(self, value):
+    if value:  # 押したモーラをアクセントの位置にする（句の accent の update が音高を計算し直す）
+        p, k = _mora_place(self)
+        self.id_data.tachie_accent.phrases[p].accent = k + 1
+
+
 class TachieMora(bpy.types.PropertyGroup):
     """抑揚の編集で 1 モーラ分（name はモーラの文字）。"""
     consonant: StringProperty()
@@ -679,6 +697,8 @@ class TachieMora(bpy.types.PropertyGroup):
                                     unit="TIME_ABSOLUTE", description="子音の長さ（秒）")
     vowel_length: FloatProperty(name="母音", min=0.0, max=1.0, soft_max=0.3, step=0.1, precision=3,
                                 unit="TIME_ABSOLUTE", description="母音の長さ（秒）")
+    is_accent: BoolProperty(name="アクセント", get=_is_accent_get, set=_is_accent_set,
+                            description="ここをアクセントにする（ここまで高く、次から下がる。音高を計算し直す）")
     # 棒（押した高さが値になる）
     pitch_level: EnumProperty(items=_LEVEL_ITEMS, get=_level_get("pitch", "pitch"), set=_level_set("pitch", "pitch"),
                               description="音高（押した高さにする。細かい値は上の数値で）")
