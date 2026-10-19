@@ -2989,7 +2989,7 @@ class TACHIE_OT_set_part(bpy.types.Operator):
         return apply_part(self, context, self.part)
 
 
-PART_ICON_SCALE = 1.2  # パーツの見本の大きさ（UI の単位。パーツを選ぶ一覧と表情の欄）
+PART_ICON_SCALE = 1.8  # パーツの見本の大きさ（UI の単位。パーツを選ぶ一覧と表情の欄）
 PART_ICON_SIZE = 96  # 見本の画像のピクセル
 # 見本の背景（YMM4 と同じく白。透明だと Blender の暗い画面で黒い目などが背景に沈む）
 PART_ICON_BACKGROUND = (255, 255, 255, 255)
