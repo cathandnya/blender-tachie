@@ -81,13 +81,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   セリフ（YMM4 と同じく音声と字幕だけ）を追加すると再生位置に音声・字幕（とキャラ名）を置き、カスタムプロパティ
   `tachie_id` `tachie_text` `tachie_character` `tachie_speaker` `tachie_folder` `tachie_mouth` `tachie_expression` を付ける。
   セリフは wav と動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・まばたきの seed）だけ書く（`render_line(cache=None)`）。
-  セリフの入力欄は 1 行ずつ（`properties.TEXT_PROPS`、最大 5 行。前の行が空でなければ次の欄を出す、`input_lines`）。
-  Blender の入力欄には改行を入れられない（Enter も Shift+Enter も確定）ので、行を分けて字幕の改行にする。ボタンで追加し、
-  追加したら入力欄を空にする（`clear_text_input`）。`\n`（¥n）と書いても改行。ストリップの
-  `tachie_text` は `\n` の書き方のまま持ち（本当の改行はパネルの欄で見えない）、字幕（`properties.apply_subtitle` の
+  Blender の入力欄には改行を入れられない（Enter も Shift+Enter も入力の確定）ので、字幕の改行は `\n`（¥n）と書く。
+  ボタンで追加し、追加したら入力欄を空にする（`clear_text_input`）。ストリップの
+  `tachie_text` も `\n` の書き方のまま持ち（本当の改行はパネルの欄で見えない）、字幕（`properties.apply_subtitle` の
   `subtitle.breaks`）・字幕ファイル・読み上げ（`operators._Client.audio_query`）のときに改行にする。YMM4 のセリフの改行も
-  `place_strips` が `\n` にそろえる（`subtitle.mark_breaks`）。選択中のセリフは「行ごとに編集」（`tachie.edit_line_text`、
-  `invoke_props_dialog` の行の欄）で直して作り直す。
+  `place_strips` が `\n` にそろえる（`subtitle.mark_breaks`）。
   台本の流し込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。
   再生成のテキストと表情は、パネルで編集する選択中のストリップから取る（他のストリップは古いまま）。
   再生成は同じ `tachie_id` のストリップを消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。

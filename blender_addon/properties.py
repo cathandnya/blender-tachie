@@ -414,52 +414,9 @@ LINE_LAYOUTS = [
 ]
 
 
-# セリフの入力欄（1 行ずつ。Blender の入力欄には改行を入れられないので、行ごとに欄を分ける）
-TEXT_PROPS = ("text", "text_2", "text_3", "text_4", "text_5")
-_clearing_text = False
-
-
-def _close_gap(prop: str):
-    """入力欄の行を空にしたら、後ろの行を詰める（空の欄の後ろはパネルに出ず、隠れた古い行が残らないように）。"""
-    index = TEXT_PROPS.index(prop)
-
-    def update(self, context):
-        global _clearing_text
-        if _clearing_text or getattr(self, prop).strip():
-            return
-        rest = [getattr(self, p) for p in TEXT_PROPS[index + 1:]]
-        if not any(line.strip() for line in rest):
-            return
-        _clearing_text = True
-        try:
-            kept = [line for line in rest if line.strip()]
-            for p, line in zip(TEXT_PROPS[index:], kept + [""] * (len(TEXT_PROPS) - index - len(kept))):
-                setattr(self, p, line)
-        finally:
-            _clearing_text = False
-    return update
-
-
-def input_lines(settings) -> list[str]:
-    """入力欄の行（空の欄の手前まで。パネルも空の欄の次は出さない）。"""
-    lines = []
-    for prop in TEXT_PROPS:
-        line = getattr(settings, prop)
-        if not line.strip():
-            break
-        lines.append(line)
-    return lines
-
-
 def clear_text_input(settings) -> None:
-    """セリフの入力欄を全部空にする（`_close_gap` を走らせない）。"""
-    global _clearing_text
-    _clearing_text = True
-    try:
-        for prop in TEXT_PROPS:
-            setattr(settings, prop, "")
-    finally:
-        _clearing_text = False
+    """セリフの入力欄を空にする（追加したあと）。"""
+    settings.text = ""
 
 
 def _update_lanes(self, context):
@@ -608,12 +565,8 @@ class TachieYmmpCharacter(bpy.types.PropertyGroup):
 class TachieSceneSettings(bpy.types.PropertyGroup):
     characters: CollectionProperty(type=TachieCharacter)
     active_character: IntProperty(name="キャラクター", default=0)
-    text: StringProperty(name="セリフ", default="", update=_close_gap("text"),
-                         description="追加するセリフ（1 行目）。確定すると次の行の欄が出る（字幕の改行）")
-    text_2: StringProperty(name="2 行目", default="", update=_close_gap("text_2"))
-    text_3: StringProperty(name="3 行目", default="", update=_close_gap("text_3"))
-    text_4: StringProperty(name="4 行目", default="", update=_close_gap("text_4"))
-    text_5: StringProperty(name="5 行目", default="", update=_close_gap("text_5"))
+    text: StringProperty(name="セリフ", default="",
+                         description="追加するセリフ。字幕の改行は \\n（¥n）と書く（Blender の入力欄には改行を入れられない）")
     expression: StringProperty(name="表情", default="", description="追加するセリフの表情プリセット。空なら基本の表情")
     script: PointerProperty(name="台本", type=bpy.types.Text,
                             description="テキストエディタの台本（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」）")
