@@ -2865,10 +2865,13 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
     bl_property = "part"
     bl_options = {"UNDO"}
 
-    prop: bpy.props.StringProperty()
-    preset: bpy.props.StringProperty(description="空ならキャラクターの基本の表情、指定するとその表情プリセット")
-    still: bpy.props.BoolProperty(description="選択中の立ち絵のパーツ（その立ち絵だけ）")
-    part: bpy.props.EnumProperty(items=_parts)
+    # 前に使ったときの値を覚えない（覚えると、立ち絵やプリセットのパーツを選んだあとに基本の表情のボタンを押しても、
+    # 立ち絵・プリセットのほうを変えようとした）
+    prop: bpy.props.StringProperty(options={"SKIP_SAVE"})
+    preset: bpy.props.StringProperty(description="空ならキャラクターの基本の表情、指定するとその表情プリセット",
+                                     options={"SKIP_SAVE"})
+    still: bpy.props.BoolProperty(description="選択中の立ち絵のパーツ（その立ち絵だけ）", options={"SKIP_SAVE"})
+    part: bpy.props.EnumProperty(items=_parts, options={"SKIP_SAVE"})
 
     @classmethod
     def poll(cls, context):
