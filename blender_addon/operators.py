@@ -92,7 +92,71 @@ def output_dir(context) -> Path:
         return Path(bpy.path.abspath(custom))
     if bpy.data.filepath:
         return Path(bpy.path.abspath("//tachie"))
+    return _temp_output()
+
+
+def _temp_output() -> Path:
     return Path(tempfile.gettempdir()) / "blender_tachie"
+
+
+def _under(path: Path, root: Path) -> Path | None:
+    """`path` が `root` の下なら `root` からの相対パス。"""
+    try:
+        return path.resolve().relative_to(root.resolve())
+    except (ValueError, OSError):
+        return None
+
+
+@persistent
+def _move_temp_output(filepath, *_args):
+    """未保存のときに一時フォルダへ書き出したもの（音声・口の動き・立ち絵の連番）を、保存する .blend のフォルダの
+    tachie/ へコピーしてストリップの参照を付け替える（保存の前に呼ぶので、保存した .blend には新しい場所が入る）。
+    一時フォルダは OS が消すことがあり、出力フォルダも保存すると //tachie に変わるので、そのままだと口の動きが
+    見つからず閉じた口になり、いずれ音声も消える。出力フォルダを指定しているときは何もしない。"""
+    if not filepath or prefs(bpy.context).output_dir:
+        return
+    temp, dest = _temp_output(), Path(filepath).parent / "tachie"
+    if not temp.is_dir() or temp.resolve() == dest.resolve():
+        return
+    copied: set[Path] = set()
+
+    failed: set[Path] = set()
+
+    def copy(rel: Path) -> bool:
+        """コピーできた（か、元が無い）なら True。失敗したものは付け替えない（一時フォルダの方を指したままにする）。"""
+        src, dst = temp / rel, dest / rel
+        if rel in copied or not src.exists():
+            return True
+        if rel in failed:
+            return False
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+        except OSError as e:
+            print(f"{src} を {dst} にコピーできませんでした: {e}")
+            failed.add(rel)
+            return False
+        copied.add(rel)
+        return True
+
+    moved = 0
+    with prefetch.paused():  # 裏で描いている途中のストリップの参照を書き換えると落ちることがある
+        for scene in bpy.data.scenes:
+            sed = scene.sequence_editor
+            for s in sed.strips_all if sed else ():
+                if s.type == "SOUND" and s.sound and (rel := _under(Path(bpy.path.abspath(s.sound.filepath)), temp)):
+                    if copy(rel) and copy(rel.with_suffix(".json")):  # 音声と口の動き
+                        s.sound.filepath = str(dest / rel)  # 相対パスにするかは Blender の保存の設定に任せる
+                        moved += 1
+                elif s.type == "IMAGE" and (rel := _under(Path(bpy.path.abspath(s.directory)), temp)):
+                    if copy(rel):
+                        s.directory = str(dest / rel) + os.sep
+                        moved += 1
+    if moved:
+        print(f"一時フォルダのセリフ・立ち絵 {moved} 本を {dest} にコピーしました")
 
 
 def scene_fps(scene) -> float:
@@ -1139,8 +1203,11 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
             caches[p] = character_cache(context, ch, p)
         return caches[p]
 
+    from .motion import motion_paths
+
+    motion_path = motion_paths(sed, lines_dir)
     for clip_id, offset, line_preset, length in talking:
-        path = lines_dir / f"{clip_id}.json"
+        path = motion_path(clip_id)
         motion = LineMotion.load(path) if path.is_file() else None
         if motion is None or motion.frames != length:
             if problems is not None:
@@ -3630,10 +3697,13 @@ def register():
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
+    bpy.app.handlers.save_pre.append(_move_temp_output)
 
 
 def unregister():
     if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
+    if _move_temp_output in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.remove(_move_temp_output)
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

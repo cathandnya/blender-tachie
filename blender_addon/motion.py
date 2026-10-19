@@ -117,6 +117,25 @@ def _talk(strip, ch, motion_path: Path, fps: float, height: int, start: int | No
                      base_r + (0 if edge else amp_r * (1 if k % 2 else -1)))
 
 
+def motion_paths(sed, lines_dir: Path):
+    """セリフの口の動き（lines/<id>.json）のパスを返す関数。音声ストリップの wav の隣を先に見る（未保存のときに一時
+    フォルダへ書き出したセリフは、保存して出力フォルダが変わっても wav の隣にある）。無ければ出力フォルダの lines。
+    音声ストリップは最初に 1 回だけ集める（セリフ × 立ち絵の数だけ全ストリップを見ないように）。"""
+    sounds = {}
+    for s in sed.strips:
+        if s.type == "SOUND" and s.sound and (clip_id := s.get("tachie_id")) and clip_id not in sounds:
+            sounds[clip_id] = s.sound.filepath
+
+    def find(clip_id: str) -> Path:
+        if clip_id in sounds:
+            beside = Path(bpy.path.abspath(sounds[clip_id])).with_suffix(".json")
+            if beside.is_file():
+                return beside
+        return lines_dir / f"{clip_id}.json"
+
+    return find
+
+
 def _line_heads(sed, name: str) -> list[tuple[str, int, int]]:
     """キャラ `name` のセリフ（ミュートは除く）の [(id, 動きの頭, 終わり)]。動きの頭は音声ストリップの中身の頭。"""
     out = []
@@ -286,18 +305,19 @@ def refresh_motion(scene, lines_dir: Path) -> int:
             count += 1
         elif "tachie_fade_keyed" in t:
             del t["tachie_fade_keyed"]
+    motion_path = motion_paths(sed, lines_dir)
     for ch in characters.values():
         mine = [s for s in images if owner(s) == ch.name]  # チャンネルでは絞らない（手で動かした立ち絵も）
         talks = _line_heads(sed, ch.name)
         if ch.talk_bounce > 0 or ch.talk_sway > 0:
             for s in mine:
                 if s.get("tachie_id"):  # 前の版のセリフの立ち絵
-                    _talk(s, ch, lines_dir / f"{s['tachie_id']}.json", fps, height)
+                    _talk(s, ch, motion_path(s["tachie_id"]), fps, height)
                     count += 1
                 elif s.get("tachie_still"):  # 重なるセリフの間
                     for clip_id, head, end in talks:
                         if head < s.right_handle and s.left_handle < end:
-                            _talk(s, ch, lines_dir / f"{clip_id}.json", fps, height, head)
+                            _talk(s, ch, motion_path(clip_id), fps, height, head)
                             count += 1
         # 跳ねながら登場退場（YMM4 の立ち絵アイテムごとの映像エフェクト）。付いている側はキャラの登場・退場の代わり
         jumps = {s.name: j for s in mine if (j := jump_of(s))}

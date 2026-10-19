@@ -81,6 +81,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   セリフ（YMM4 と同じく音声と字幕だけ）を追加すると再生位置に音声・字幕（とキャラ名）を置き、カスタムプロパティ
   `tachie_id` `tachie_text` `tachie_character` `tachie_speaker` `tachie_folder` `tachie_mouth` `tachie_expression` を付ける。
   セリフは wav と動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・まばたきの seed）だけ書く（`render_line(cache=None)`）。
+  出力フォルダはアドオン設定の `output_dir`、無ければ .blend のフォルダの `tachie/`、未保存なら一時フォルダの `blender_tachie/`。
+  未保存で置いたものは、保存するとき（`save_pre` の `operators._move_temp_output`）に `.blend のフォルダ/tachie/` へコピーして
+  音声・立ち絵の参照を付け替える（一時フォルダは OS が消すことがあり、保存すると出力フォルダも変わって口の動きが見つから
+  なくなった）。口の動きは音声ストリップの wav の隣を先に探す（`motion.motion_paths`）。
   Blender の入力欄には改行を入れられない（Enter も Shift+Enter も入力の確定）ので、字幕の改行は `\n`（¥n）と書く。
   ボタンで追加し、追加したら入力欄を空にする（`clear_text_input`）。ストリップの
   `tachie_text` も `\n` の書き方のまま持ち（本当の改行はパネルの欄で見えない）、字幕（`properties.apply_subtitle` の
