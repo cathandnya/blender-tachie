@@ -1,7 +1,7 @@
 import bpy
 
-from .operators import (STILL_SETTINGS, line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
-                        prefs, selected_targets, seq_scene)
+from .operators import (STILL_SETTINGS, active_selected, line_layout_of, line_sound, line_strips, line_subtitle,
+                        load_material, output_dir, prefs, selected_targets, seq_scene)
 from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
 
 
@@ -93,7 +93,9 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         sed = seq_scene(context).sequence_editor
-        strip = sed.active_strip if sed else None
+        # Blender は選択を外してもアクティブなストリップ（最後にクリックしたもの）を覚えているので、選ばれているときだけ
+        # 編集の欄を出す（選択を外したのに前のセリフの値が出たままにならないように）
+        strip = active_selected(context)
         ids, stills, faces = selected_targets(sed)
         n = len(ids) + len(stills) + len(faces)
         if n > 1:

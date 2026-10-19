@@ -1320,9 +1320,16 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
     jump = jump_of(strip)
     look = still_settings(strip)
     parts = still_parts(strip)
+    # 選択とアクティブも引き継ぐ（新しいストリップは選ばれた状態でできるので、選んでいなかった立ち絵が自動の反映で
+    # 選ばれたり、選んでいた立ち絵がパネルから消えたりしないように）
+    selected, active = strip.select, sed.active_strip == strip
     sed.strips.remove(strip)
-    return place_still(context, ch, preset, start, frames, pose, channel, problems,
-                       None if flip is None else bool(flip), jump, look, parts)
+    new = place_still(context, ch, preset, start, frames, pose, channel, problems,
+                      None if flip is None else bool(flip), jump, look, parts)
+    new.select = selected
+    if active:
+        sed.active_strip = new
+    return new
 
 
 def connect(context, strips) -> None:
@@ -1337,9 +1344,16 @@ def connect(context, strips) -> None:
         bpy.ops.sequencer.connect()
 
 
-def active_line_id(context) -> str | None:
+def active_selected(context):
+    """選ばれているアクティブなストリップ。Blender は選択を外してもアクティブなストリップを覚えているので、選択も見る
+    （選択を外したのに、見えていない前のセリフ・立ち絵をショートカットなどで書き換えないように）。"""
     sed = seq_scene(context).sequence_editor
     strip = sed.active_strip if sed else None
+    return strip if strip is not None and strip.select else None
+
+
+def active_line_id(context) -> str | None:
+    strip = active_selected(context)
     return strip.get("tachie_id") if strip else None
 
 
@@ -1446,8 +1460,7 @@ class TACHIE_OT_remake_still(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        sed = seq_scene(context).sequence_editor
-        return bool(sed and sed.active_strip and sed.active_strip.get("tachie_still"))
+        return bool((strip := active_selected(context)) and strip.get("tachie_still"))
 
     def execute(self, context):
         sed = seq_scene(context).sequence_editor
@@ -1470,8 +1483,7 @@ class TACHIE_OT_flip_still(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        sed = seq_scene(context).sequence_editor
-        return bool(sed and sed.active_strip and sed.active_strip.get("tachie_still"))
+        return bool((strip := active_selected(context)) and strip.get("tachie_still"))
 
     def execute(self, context):
         strip = seq_scene(context).sequence_editor.active_strip
@@ -2885,6 +2897,9 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
 
     def invoke(self, context, event):
         global _part_items, _part_rows
+        if self.still and active_selected(context) is None:
+            self.report({"WARNING"}, "立ち絵を選んでください")
+            return {"CANCELLED"}
         category = next(c for c, props in PART_PROPS.items() if self.prop in props)
         try:
             character = load_material(self._character(context).folder)
@@ -2950,7 +2965,7 @@ def apply_part(op, context, value: str):
 
 def _set_still_part(self, context, value: str):
     sed = seq_scene(context).sequence_editor
-    strip = sed.active_strip
+    strip = active_selected(context)
     if strip is None or not strip.get("tachie_still"):
         return {"CANCELLED"}
     category = next(c for c, props in PART_PROPS.items() if self.prop in props)
@@ -3045,8 +3060,7 @@ class TACHIE_OT_clear_still_parts(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        sed = seq_scene(context).sequence_editor
-        return bool(sed and sed.active_strip and sed.active_strip.get("tachie_parts"))
+        return bool((strip := active_selected(context)) and strip.get("tachie_parts"))
 
     def execute(self, context):
         sed = seq_scene(context).sequence_editor
@@ -3767,6 +3781,9 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
 
     def invoke(self, context, event):
         global _expression_items
+        if self.target != "ADD" and active_selected(context) is None:
+            self.report({"WARNING"}, "ストリップを選んでください")
+            return {"CANCELLED"}
         try:
             ch = self._character(context)
         except (ValueError, KeyError, AttributeError) as e:
@@ -3785,6 +3802,8 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
         if self.target == "ADD":
             seq_scene(context).tachie.expression = value
             return {"FINISHED"}
+        if active_selected(context) is None:  # 選択を外したアクティブなストリップは書き換えない
+            return {"CANCELLED"}
         sed = seq_scene(context).sequence_editor
         if self.target == "FACE":
             face = sed.active_strip
