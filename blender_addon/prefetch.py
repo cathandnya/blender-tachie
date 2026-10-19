@@ -2,8 +2,9 @@
 
 Blender 自身の操作はストリップを消す・作る前にプリフェッチを止めるが、Python の API（strips.remove / new_* / channel・
 elements・F カーブの書き換え）では止まらない。裏で描いている途中のストリップを消すと、消えたストリップを読みに行って
-Blender ごと落ちる（ストリップをドラッグした直後の自動の反映で起きた）。`use_prefetch` を切ると Blender は裏の処理を
-止めるので、書き換えの前に切り、終わったら戻す。
+Blender ごと落ちる（ストリップをドラッグした直後の自動の反映で起きた）。書き換えの前に `use_prefetch` を切り、
+終わったら戻す。切るだけでは裏で描いている途中の処理が止まらないので、画面があるときは `sequencer.refresh_all` も呼ぶ
+（`_stop_rendering`）。
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ def paused():
                 sed.use_prefetch = False
                 stopped.append(scene.name)
                 _wanted.add(scene.name)
+        if stopped and not bpy.app.background:
+            _stop_rendering(stopped)
     _depth += 1
     try:
         yield
@@ -49,6 +52,36 @@ def paused():
             _pending.update(stopped)
             if _depth == 0 and _pending:
                 _schedule()  # 続けて書き換えたら、最後から数え直す
+
+
+def _stop_rendering(names) -> None:
+    """裏で描いている途中のプリフェッチを止める。use_prefetch を切っても途中の描画は続いていて、そのまま立ち絵を
+    作り直すと落ちた（画面ありで、プリフェッチが戻ってからセリフを動かす・自動の反映、を繰り返すと 3〜4 回目で落ち、
+    sequencer.refresh_all を挟むと 80 回でも落ちなかった）。refresh_all はキャッシュも捨てる（プレビューは描き直す）。
+    refresh_all は画面のシーケンサーのシーンだけを止めるので、止めたシーン（names）ごとに、そのシーンを映している画面で呼ぶ。"""
+    left = set(names)
+    for window in bpy.context.window_manager.windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        workspace = window.workspace
+        scene = getattr(workspace, "sequencer_scene", None) or window.scene
+        if scene is None or scene.name not in left:
+            continue
+        for area in screen.areas:
+            if area.type != "SEQUENCE_EDITOR":
+                continue
+            region = next((r for r in area.regions if r.type == "WINDOW"), None)
+            try:
+                with bpy.context.temp_override(window=window, area=area, region=region):
+                    bpy.ops.sequencer.refresh_all()
+            except RuntimeError as e:  # シーケンサーのシーンが無いなど（そのときはプリフェッチも動いていない）
+                print("プリフェッチを止められません:", e)
+                continue  # 同じシーンを映している別の画面で試す
+            left.discard(scene.name)
+            break
+        if not left:
+            return
 
 
 def _restore(names) -> None:

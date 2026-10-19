@@ -293,7 +293,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   - API で `frame_start` を動かして他と重なると、Blender が勝手に別チャンネルへ逃がす。ずらすときは順序に注意。
   - シーケンサーのプリフェッチ（`sequence_editor.use_prefetch`）が裏で描いている間に Python からストリップを消す・作ると、
     消えたストリップを読みに行って Blender ごと落ちる（ドラッグ直後の自動の反映で起きた。Blender 自身の操作は止めてから
-    書き換える）。`blender_addon/prefetch.py` の `paused()` で止めてから書き換える。オペレーターは `__init__.register` で
+    書き換える）。`blender_addon/prefetch.py` の `paused()` で止めてから書き換える。`use_prefetch` を切るだけでは裏で描いている
+    途中の処理が止まらず落ちた（画面ありでプリフェッチが戻ってからセリフを動かす → 自動の反映、を繰り返すと 3〜4 回目で落ちる）
+    ので、切ったあと `sequencer.refresh_all` を呼んで止める（`_stop_rendering`。キャッシュも捨てる。80 回繰り返して落ちない）。オペレーターは `__init__.register` で
     execute / modal を包む（`guard_class`）。待っている間もタイマーで呼ばれる modal（YMM4 の読み込み・AI での表情の割り当て）と
     自動の反映（`_apply_faces_later`）は、書き換えるところだけ止める（止めるたびに先読みしたフレームが捨てられるため）。
     戻すのは画面があるとき 0.5 秒待ってから（`prefetch.RESUME_SECONDS`、タイマー）。すぐ戻すと Blender がシーケンサーの中身を
