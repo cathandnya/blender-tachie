@@ -108,6 +108,14 @@ def _under(path: Path, root: Path) -> Path | None:
 
 
 @persistent
+def _clear_input_on_load(*_args):
+    """開いたら新しいセリフの入力欄を空にする（入力欄を空にする前の版で追加したセリフの文字が .blend に残っていた）。"""
+    for scene in bpy.data.scenes:
+        if scene.library is None and scene.tachie.text:  # リンクしたシーンは書き換えられない
+            clear_text_input(scene.tachie)
+
+
+@persistent
 def _move_temp_output(filepath, *_args):
     """未保存のときに一時フォルダへ書き出したもの（音声・口の動き・立ち絵の連番）を、保存する .blend のフォルダの
     tachie/ へコピーしてストリップの参照を付け替える（保存の前に呼ぶので、保存した .blend には新しい場所が入る）。
@@ -3932,6 +3940,7 @@ def register():
         bpy.utils.register_class(c)
     bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph_update)
     bpy.app.handlers.save_pre.append(_move_temp_output)
+    bpy.app.handlers.load_post.append(_clear_input_on_load)
 
 
 def unregister():
@@ -3945,5 +3954,7 @@ def unregister():
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
     if _move_temp_output in bpy.app.handlers.save_pre:
         bpy.app.handlers.save_pre.remove(_move_temp_output)
+    if _clear_input_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_clear_input_on_load)
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
