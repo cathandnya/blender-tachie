@@ -875,6 +875,25 @@ assert not s.text  # 追加したら入力欄を空にする
 assert ops.line_subtitle(nl).text.split("\n")[:3] == ["改行の", "テスト", "なのだ。"], ops.line_subtitle(nl).text
 for x in nl:
     sed.strips.remove(x)
+# 入力欄は 1 行ずつ（行ごとに改行する。空の欄の後ろは使わない）
+s.text, s.text_2, s.text_3, s.text_4 = "一行目なのだ", "二行目なのだ", "", "使わない行"
+run(bpy.ops.tachie.add_line)
+nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"].startswith("一行目"))
+assert nl[0]["tachie_text"] == "一行目なのだ\\n二行目なのだ" and ops.line_subtitle(nl).text == "一行目なのだ\n二行目なのだ"
+assert not s.text and not s.text_2 and not s.text_4
+# 行を空にすると後ろの行を詰める（隠れた古い行が残らない）
+s.text, s.text_2, s.text_3 = "あ", "い", "う"
+s.text_2 = ""
+assert (s.text, s.text_2, s.text_3) == ("あ", "う", ""), (s.text, s.text_2, s.text_3)
+ops.clear_text_input(s)
+assert not s.text and not s.text_2
+# 選択中のセリフを行ごとに編集して作り直す（ダイアログは画面が要るので execute だけ）
+sed.active_strip = ops.line_subtitle(nl)
+run(bpy.ops.tachie.edit_line_text, line_1="一行目なのだ", line_2="", line_3="三行目になったのだ")
+nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"].startswith("一行目"))
+assert nl[0]["tachie_text"] == "一行目なのだ\\n三行目になったのだ", nl[0]["tachie_text"]
+for x in nl:
+    sed.strips.remove(x)
 scene.frame_end = frame_end_before
 
 # YMM4 のプロジェクトの読み込み: 今あるキャラ（ずんだもん）はそのまま、無いキャラは素材フォルダから追加する

@@ -2,7 +2,7 @@ import bpy
 
 from .operators import (STILL_SETTINGS, line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
                         prefs, selected_targets, seq_scene)
-from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
+from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, TEXT_PROPS, VOICE_PROPS, input_lines, still_flip
 
 
 class _Panel:
@@ -63,7 +63,10 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
 
         ch = s.character()
-        layout.prop(s, "text", text="", icon="GREASEPENCIL")
+        # セリフは 1 行ずつ（字幕の改行）。行を確定すると次の行の欄が出る
+        col = layout.column(align=True)
+        for i, prop in enumerate(TEXT_PROPS[:len(input_lines(s)) + 1]):
+            col.prop(s, prop, text="", icon="GREASEPENCIL" if i == 0 else "BLANK1")
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
         row.enabled = tachie
@@ -149,7 +152,9 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                           if c.name == strip.get("tachie_character")), None)
             name = owner.speaker_name if owner and owner.speaker == speaker and owner.speaker_name else f"ID {speaker}"
             row.operator("tachie.pick_speaker", text=name, icon="VIEWZOOM").target = "LINE"
-            layout.prop(strip, '["tachie_text"]', text="")
+            row = layout.row(align=True)
+            row.prop(strip, '["tachie_text"]', text="")
+            row.operator("tachie.edit_line_text", text="", icon="TEXT")  # 行ごと（改行を入れて）編集する
             if sound is not None and "tachie_kana" in sound:
                 layout.label(text="発音")  # 発音は長いので、ラベルと分けて幅いっぱいに
                 row = layout.row(align=True)

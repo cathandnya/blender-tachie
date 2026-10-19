@@ -15,12 +15,12 @@ from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import channels as lanes
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, clear_text_input, place_text, still_flip, system_fonts, text_offset
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, clear_text_input, input_lines, place_text, still_flip, system_fonts, text_offset
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, link_frames, still_frames
 from .tachie_studio.pipeline.script import script_format, split_kana
-from .tachie_studio.subtitle import breaks, mark_breaks
+from .tachie_studio.subtitle import BREAK, breaks, mark_breaks
 from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
                                             parse_characters)
@@ -1232,32 +1232,46 @@ def input_text(text: str) -> str:
     return mark_breaks(text)
 
 
-_auto_added_at = 0.0  # 最後にセリフを追加した時刻（Enter とボタンの二重の追加を防ぐ）
+EDIT_LINES = 5  # 「行ごとに編集」の行の数（それより多い行は最後の行にまとめる）
 
 
-def add_line_from_input(scene_name: str) -> None:
-    """入力欄の Enter でセリフを追加する（`properties._update_text` からタイマーで呼ぶ）。追加できたら入力欄を空にする。"""
-    wm = bpy.context.window_manager
-    scene = bpy.data.scenes.get(scene_name)
-    if scene is None or not wm.windows or not scene.tachie.text.strip():
-        return  # ボタンで先に追加した（入力欄が空になった）
-    # シーケンサーの画面があるウィンドウ（3 本をつなぐ connect に画面のコンテキストが要る）
-    window, area = wm.windows[0], None
-    for w in wm.windows:
-        area = next((a for a in w.screen.areas if a.type == "SEQUENCE_EDITOR"), None)
-        if area is not None:
-            window = w
-            break
-    override = {"window": window}
-    if area is not None:
-        override.update(area=area, region=next((r for r in area.regions if r.type == "WINDOW"), None))
-    try:
-        with bpy.context.temp_override(**override):
-            result = bpy.ops.tachie.add_line("EXEC_DEFAULT", True)  # タイマーからでも元に戻すの段を積む
-    except RuntimeError:  # 失敗の理由はオペレーターがステータスバーに出す。入力欄はそのまま（直して Enter し直せる）
-        return
-    if result == {"FINISHED"}:
-        clear_text_input(scene.tachie)
+class TACHIE_OT_edit_line_text(bpy.types.Operator):
+    """選択中のセリフのテキストを行ごと（字幕の改行ごと）に編集して作り直す"""
+
+    bl_idname = "tachie.edit_line_text"
+    bl_label = "行ごとに編集"
+    bl_options = {"REGISTER", "UNDO"}
+
+    line_1: bpy.props.StringProperty(name="1 行目")
+    line_2: bpy.props.StringProperty(name="2 行目")
+    line_3: bpy.props.StringProperty(name="3 行目")
+    line_4: bpy.props.StringProperty(name="4 行目")
+    line_5: bpy.props.StringProperty(name="5 行目")
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def invoke(self, context, event):
+        lines = input_text(seq_scene(context).sequence_editor.active_strip["tachie_text"]).split(BREAK)
+        lines = lines[:EDIT_LINES - 1] + ([BREAK.join(lines[EDIT_LINES - 1:])] if len(lines) >= EDIT_LINES else [])
+        for i in range(EDIT_LINES):
+            setattr(self, f"line_{i + 1}", lines[i] if i < len(lines) else "")
+        return context.window_manager.invoke_props_dialog(self, width=420, confirm_text="作り直す")
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        for i in range(EDIT_LINES):
+            col.prop(self, f"line_{i + 1}", text="")
+        self.layout.label(text="空の行は詰めます", icon="INFO")
+
+    def execute(self, context):
+        lines = [getattr(self, f"line_{i + 1}") for i in range(EDIT_LINES)]
+        text = BREAK.join(line for line in lines if line.strip())
+        if not text:
+            self.report({"ERROR"}, "セリフを入力してください")
+            return {"CANCELLED"}
+        return _regenerate_active(self, context, text=text)
 
 
 class TACHIE_OT_add_line(bpy.types.Operator):
@@ -1268,15 +1282,12 @@ class TACHIE_OT_add_line(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        global _auto_added_at
         settings = seq_scene(context).tachie
         ch = settings.character()
-        text, kana = split_kana(input_text(settings.text).strip())
+        # 入力欄の行ごとに改行する（\n・¥n と書いても改行になる）
+        text, kana = split_kana(input_text(BREAK.join(input_lines(settings))).strip())
         if ch is None:
             self.report({"ERROR"}, "キャラクターを追加してください")
-            return {"CANCELLED"}
-        if not text and time.monotonic() - _auto_added_at < 1.0:
-            # 入力中にボタンを押すと、入力の確定（Enter と同じ）で追加したあとにボタンでも呼ばれる
             return {"CANCELLED"}
         if not text:
             self.report({"ERROR"}, "セリフを入力してください")
@@ -1293,7 +1304,6 @@ class TACHIE_OT_add_line(bpy.types.Operator):
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         connect(context, strips)
-        _auto_added_at = time.monotonic()
         clear_text_input(settings)  # YMM4 と同じく、追加したら入力欄を空にする
         if settings.advance:
             seq_scene(context).frame_current = line_end(strips)
@@ -1431,12 +1441,12 @@ class TACHIE_OT_regenerate(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _regenerate_active(op, context, **kwargs):
-    """選択中のセリフを作り直す（テキストと表情は選択中のストリップから）。"""
+def _regenerate_active(op, context, text: str | None = None, **kwargs):
+    """選択中のセリフを作り直す（テキストは `text` か選択中のストリップ、表情は選択中のストリップから）。"""
     sed = seq_scene(context).sequence_editor
     active = sed.active_strip
     try:
-        strips = regenerate(context, active_line_id(context), active["tachie_text"],
+        strips = regenerate(context, active_line_id(context), active["tachie_text"] if text is None else text,
                             active.get("tachie_expression", ""), **kwargs)
         refresh_faces(context)
     except ERRORS as e:
@@ -3475,6 +3485,7 @@ _classes = (
     TACHIE_OT_add_line,
     TACHIE_OT_add_still,
     TACHIE_OT_remake_still,
+    TACHIE_OT_edit_line_text,
     TACHIE_OT_flip_still,
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,
