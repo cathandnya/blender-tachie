@@ -255,6 +255,13 @@ assert snd["tachie_kana"] == edited and snd["tachie_kana_auto"] == auto
 run(bpy.ops.tachie.reset_kana)
 snd = sound(sed.active_strip["tachie_id"])
 assert snd["tachie_kana"] == auto
+# 発音を編集のダイアログ（execute だけ）: 3 行をつなげた発音で作り直す。空にすると自動の読み
+half = len(edited) // 2
+run(bpy.ops.tachie.edit_kana, line_1=edited[:half], line_2=edited[half:], line_3="")
+assert sound(sed.active_strip["tachie_id"])["tachie_kana"] == edited
+run(bpy.ops.tachie.edit_kana, line_1="", line_2="", line_3="")
+snd = sound(sed.active_strip["tachie_id"])
+assert snd["tachie_kana"] == auto
 snd["tachie_kana"] = "ア'"
 snd["tachie_text"] = "こんにちは、ずんだもんだよ。"
 activate(snd)

@@ -54,3 +54,23 @@ def split_phrase(phrases: list[dict[str, Any]], index: int, mora: int) -> list[d
     tail = {**ap, "moras": ap["moras"][mora:], "accent": accent - mora if accent > mora else 1}
     out[index:index + 1] = [head, tail]
     return out
+
+
+def split_kana_lines(kana: str, lines: int = 3) -> list[str]:
+    """発音を句の区切りで `lines` 行に分ける（区切りの / と 、 は前の行の終わりに残す。つなげると元の発音）。
+    長さがだいたいそろうように、行の長さが全体の 1/lines を超えたら次の行へ。"""
+    phrases, current = [], ""
+    for ch in kana:
+        current += ch
+        if ch in "/、":
+            phrases.append(current)
+            current = ""
+    if current:
+        phrases.append(current)
+    out = [""] * lines
+    target, row = len(kana) / lines, 0
+    for phrase in phrases:
+        if out[row] and row < lines - 1 and len(out[row]) + len(phrase) / 2 > target:
+            row += 1
+        out[row] += phrase
+    return out
