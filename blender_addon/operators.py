@@ -29,6 +29,9 @@ from .tachie_studio.tachie.compose import load_image
 from .tachie_studio.tachie.psd import (animation_config_path, apply_layers, load_ymm_presets, read_animation_config,
                                        write_animation_config, ymm_preset)
 from .tachie_studio.voicevox import VoicevoxClient, VoicevoxError
+from .tachie_studio.voicevox.accent import join_phrases, kana_from_phrases, split_phrase
+
+MORA_UNITS = 2.4  # 抑揚の編集の 1 モーラの幅（UI の単位）
 
 # 読み込んだ素材と合成キャッシュ（Blender を閉じるまで使い回す）
 _characters = {}
@@ -1571,25 +1574,48 @@ def _line_context(context):
 
 
 def load_accent_edit(edit, phrases: list) -> None:
-    edit.phrases.clear()
-    for ap in phrases:
-        item = edit.phrases.add()
-        item.rest = json.dumps({k: v for k, v in ap.items() if k != "moras"}, ensure_ascii=False)
-        for mora in ap["moras"]:
-            m = item.moras.add()
-            m.name = mora["text"]
-            m.consonant = mora.get("consonant") or ""
-            m.vowel = mora["vowel"]
-            m.pitch = mora.get("pitch") or 0.0
-            m.voiced = (mora.get("pitch") or 0.0) > 0
-            m.consonant_length = mora.get("consonant_length") or 0.0
-            m.vowel_length = mora.get("vowel_length") or 0.0
+    from . import properties
+
+    properties._loading_accent = True  # accent の update（音高の計算し直し）を走らせない
+    try:
+        edit.phrases.clear()
+        for ap in phrases:
+            item = edit.phrases.add()
+            item.rest = json.dumps({k: v for k, v in ap.items() if k not in ("moras", "accent")}, ensure_ascii=False)
+            item.accent = max(1, min(len(ap["moras"]), int(ap.get("accent") or 1)))
+            _load_moras(item, ap["moras"])
+    finally:
+        properties._loading_accent = False
+    fit_accent_range(edit)
+
+
+def fit_accent_range(edit) -> None:
+    """棒の値の範囲（音高は有声のモーラの最小〜最大の少し外、長さは 0〜最大の少し上）。"""
+    moras = [m for item in edit.phrases for m in item.moras]
+    pitches = [m.pitch for m in moras if m.voiced and m.pitch > 0]
+    edit.pitch_lo, edit.pitch_hi = (min(pitches) - 0.4, max(pitches) + 0.4) if pitches else (3.0, 6.5)
+    # 長さのいちばん下の段でも音が消えないように、下限は 0 にしない
+    edit.length_lo, edit.length_hi = 0.02, max([m.vowel_length for m in moras] + [0.15]) * 1.4
+
+
+def _load_moras(item, moras: list) -> None:
+    item.moras.clear()
+    for mora in moras:
+        m = item.moras.add()
+        m.name = mora["text"]
+        m.consonant = mora.get("consonant") or ""
+        m.vowel = mora["vowel"]
+        m.pitch = mora.get("pitch") or 0.0
+        m.voiced = (mora.get("pitch") or 0.0) > 0
+        m.consonant_length = mora.get("consonant_length") or 0.0
+        m.vowel_length = mora.get("vowel_length") or 0.0
 
 
 def accent_from_edit(edit) -> list:
     phrases = []
     for item in edit.phrases:
         ap = json.loads(item.rest or "{}")
+        ap["accent"] = min(item.accent, len(item.moras))
         ap["moras"] = [{
             "text": m.name,
             "consonant": m.consonant or None,
@@ -1600,6 +1626,79 @@ def accent_from_edit(edit) -> list:
         } for m in item.moras]
         phrases.append(ap)
     return phrases
+
+
+def _accent_client(context, edit):
+    settings = seq_scene(context).tachie
+    ch = next((c for c in settings.characters if c.name == edit.character), None)
+    return client(context, ch, timeout=10.0)
+
+
+def refresh_phrase_pitch(context, item) -> None:
+    """句のアクセントの位置を変えたあと、その句の音高だけエンジンで計算し直す（他の句の編集は残す）。"""
+    edit = context.window_manager.tachie_accent
+    index = next((i for i, p in enumerate(edit.phrases) if p == item), None)
+    if index is None:
+        return
+    edit.changed = True  # 音高を計算し直せなくても、アクセントの位置は変わっている（発音を句から作り直す）
+    try:
+        fresh = _accent_client(context, edit).mora_pitch(accent_from_edit(edit), edit.speaker)
+    except ERRORS as e:
+        print("音高を計算し直せません:", e)
+        return
+    for m, new in zip(item.moras, fresh[index]["moras"]):
+        m.pitch = new.get("pitch") or 0.0
+        m.voiced = m.pitch > 0
+    fit_accent_range(edit)
+
+
+def restructure_accent(context, phrases: list, changed: list[int]) -> None:
+    """句を結合・分割したあとの句の並びを読み込む。`changed`（新しい並びでの番号）の句だけ音高と長さをエンジンで
+    計算し直し、他の句は編集したまま。"""
+    edit = context.window_manager.tachie_accent
+    fresh = _accent_client(context, edit).mora_data(phrases, edit.speaker)
+    merged = [fresh[i] if i in changed else ap for i, ap in enumerate(phrases)]
+    load_accent_edit(edit, merged)
+    edit.changed = True
+
+
+class TACHIE_OT_accent_join(bpy.types.Operator):
+    """この句と次の句を 1 つにする（アクセント句を結合）"""
+
+    bl_idname = "tachie.accent_join"
+    bl_label = "アクセント句を結合"
+    bl_options = {"INTERNAL"}
+
+    phrase: bpy.props.IntProperty()
+
+    def execute(self, context):
+        try:
+            restructure_accent(context, join_phrases(accent_from_edit(context.window_manager.tachie_accent),
+                                                     self.phrase), [self.phrase])
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class TACHIE_OT_accent_split(bpy.types.Operator):
+    """このモーラの手前で句を 2 つに分ける"""
+
+    bl_idname = "tachie.accent_split"
+    bl_label = "ここで句を分ける"
+    bl_options = {"INTERNAL"}
+
+    phrase: bpy.props.IntProperty()
+    mora: bpy.props.IntProperty()
+
+    def execute(self, context):
+        try:
+            restructure_accent(context, split_phrase(accent_from_edit(context.window_manager.tachie_accent),
+                                                     self.phrase, self.mora), [self.phrase, self.phrase + 1])
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        return {"FINISHED"}
 
 
 def _fresh_accent(context, text: str, speaker: int, kana: str | None, ch=None) -> list:
@@ -1632,11 +1731,13 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        load_accent_edit(edit, phrases)
         edit.clip_id, edit.text, edit.kana, edit.speaker = active_line_id(context), text, kana or "", speaker
-        widest = max((len(p["moras"]) for p in phrases), default=1)
-        return context.window_manager.invoke_props_dialog(self, width=max(420, min(1400, 64 * widest + 80)),
-                                                          confirm_text="反映して作り直す")
+        edit.character, edit.changed = ch.name, False
+        load_accent_edit(edit, phrases)
+        # 句を横に並べ、入りきらなければ次の段へ（YMM4 の「抑揚を編集」と同じ並び）
+        total = sum(len(p["moras"]) for p in phrases) + len(phrases)
+        edit.width = max(480, min(1500, int(MORA_UNITS * 20 * total) + 60))
+        return context.window_manager.invoke_props_dialog(self, width=edit.width, confirm_text="反映して作り直す")
 
     def draw(self, context):
         edit = context.window_manager.tachie_accent
@@ -1645,32 +1746,61 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         row.prop(edit, "tab", expand=True)
         row.operator("tachie.preview_accent", text="", icon="PLAY")
         row.operator("tachie.reload_accent", text="", icon="FILE_REFRESH")
-        for item in edit.phrases:
-            box = layout.box()
-            if edit.tab == "PITCH":
-                box.prop(item, "shift", slider=True)
-            row = box.row(align=True)
-            for m in item.moras:
-                col = row.column(align=True)
-                col.label(text=m.name)
-                if edit.tab == "PITCH":
-                    sub = col.column(align=True)
-                    sub.enabled = m.voiced
-                    sub.prop(m, "pitch", text="")
-                else:
+        pitch = edit.tab == "PITCH"
+        attr, level = ("pitch", "pitch_level") if pitch else ("vowel_length", "length_level")
+        # ダイアログの幅も UI の単位も画面の倍率で大きくなるので、倍率で割らない
+        per_row = max(4, int((edit.width - 40) / (MORA_UNITS * 20)))
+        row, used = None, per_row
+        for i, item in enumerate(edit.phrases):
+            n = len(item.moras) + (1 if i < len(edit.phrases) - 1 else 0)
+            if row is None or used + n > per_row:
+                row, used = layout.row(align=False), 0
+            used += n
+            box = row.box()
+            box.ui_units_x = MORA_UNITS * len(item.moras) + 0.6
+            head = box.row(align=True)
+            if pitch:
+                head.prop(item, "accent", text="", slider=True)  # アクセントの位置（YMM4 の句の上のスライダー）
+                box.prop(item, "shift", text="句の高さ", slider=True)
+            else:
+                head.label(text="")
+            grid = box.row(align=True)
+            for k, m in enumerate(item.moras):
+                col = grid.column(align=True)
+                col.ui_units_x = MORA_UNITS
+                col.enabled = m.voiced or not pitch  # 無声化・促音の音高は 0 のまま
+                col.prop(m, attr, text="")
+                bars = col.column(align=True)
+                bars.scale_y = 0.42
+                bars.prop(m, level, expand=True)
+                if not pitch:
                     sub = col.column(align=True)
                     sub.enabled = bool(m.consonant)
                     sub.prop(m, "consonant_length", text="")
-                    col.prop(m, "vowel_length", text="")
-        if edit.tab == "LENGTH":
-            layout.label(text="上が子音、下が母音の長さ（秒）")
+                if k:  # モーラの文字を押すと、その手前で句を分ける
+                    op = col.operator("tachie.accent_split", text=m.name, emboss=False)
+                    op.phrase, op.mora = i, k
+                else:
+                    name = col.row()
+                    name.alignment = "CENTER"
+                    name.label(text=m.name)
+            if i < len(edit.phrases) - 1:
+                join = row.column(align=True)
+                join.ui_units_x = 1.0
+                join.label(text="")
+                join.operator("tachie.accent_join", text="", icon="LINKED").phrase = i  # アクセント句を結合
+        layout.label(text="棒を押すとその高さに。モーラの文字で句を分け、鎖のボタンで次の句と結合" if pitch else
+                     "棒・上の数値は母音の長さ、下の数値は子音の長さ（秒）", icon="INFO")
 
     def execute(self, context):
         edit = context.window_manager.tachie_accent
         if active_line_id(context) != edit.clip_id:
             self.report({"ERROR"}, "編集中に選択中のセリフが変わりました")
             return {"CANCELLED"}
-        return _regenerate_active(self, context, kana=edit.kana or None, accent=accent_from_edit(edit))
+        accent = accent_from_edit(edit)
+        # アクセントの位置・句の区切りを変えたら、発音も句から作り直す（パネルの発音の欄に出る）
+        kana = kana_from_phrases(accent) if edit.changed else (edit.kana or None)
+        return _regenerate_active(self, context, kana=kana, accent=accent)
 
 
 class TACHIE_OT_preview_accent(bpy.types.Operator):
@@ -1712,6 +1842,7 @@ class TACHIE_OT_reload_accent(bpy.types.Operator):
             name = strips[0].get("tachie_character") if strips else None
             ch = next((c for c in seq_scene(context).tachie.characters if c.name == name), None)
             load_accent_edit(edit, _fresh_accent(context, edit.text, edit.speaker, edit.kana or None, ch))
+            edit.changed = False  # 句の区切り・アクセントの位置も発音のものに戻った
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -3442,6 +3573,8 @@ _classes = (
     TACHIE_OT_add_line,
     TACHIE_OT_add_still,
     TACHIE_OT_remake_still,
+    TACHIE_OT_accent_join,
+    TACHIE_OT_accent_split,
     TACHIE_OT_flip_still,
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,

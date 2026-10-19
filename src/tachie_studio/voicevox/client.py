@@ -74,6 +74,14 @@ class VoicevoxClient:
         params = {"text": text, "speaker": speaker, "is_kana": "true" if is_kana else "false"}
         return json.loads(self._request("POST", "/accent_phrases", params))
 
+    def mora_pitch(self, accent_phrases: list[dict[str, Any]], speaker: int) -> list[dict[str, Any]]:
+        """アクセントの位置・句の区切りに合わせて音高を計算し直す。"""
+        return json.loads(self._request("POST", "/mora_pitch", {"speaker": speaker}, accent_phrases))
+
+    def mora_data(self, accent_phrases: list[dict[str, Any]], speaker: int) -> list[dict[str, Any]]:
+        """音高と長さを計算し直す（句を結合・分割したあと）。"""
+        return json.loads(self._request("POST", "/mora_data", {"speaker": speaker}, accent_phrases))
+
     def user_dict(self) -> dict[str, dict[str, Any]]:
         """{単語の UUID: {surface, pronunciation, accent_type, priority, …}}"""
         return json.loads(self._request("GET", "/user_dict"))

@@ -210,7 +210,13 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `tachie_accent_key`（編集したときの [テキスト, 発音, スタイル]）。どれかが変われば捨てて取り直す（`line_accent`）。
   自動の読みはユーザー辞書で変わるので、再生成では編集したときの読みを `Line.accent_kana` で渡し、`render_line` が今の読みと比べる。
   発音を「取り直す」と抑揚の編集も捨てる。優先は 抑揚の編集 > 発音 > 自動。ダイアログは `invoke_props_dialog` で、
-  中身は WindowManager の `tachie_accent`（句ごとの `shift` は差分を音高に足す）。バックグラウンドでは開けないので、
+  中身は WindowManager の `tachie_accent`（句ごとの `shift` は差分を音高に足す）。YMM4 の「抑揚を編集」に寄せた並び:
+  句を横に並べて幅で折り返し（`MORA_UNITS`）、モーラごとの縦の棒は `pitch_level` / `length_level`（`ACCENT_LEVELS` 段の
+  EnumProperty を縦に expand。get / set で値と段を変換、範囲はダイアログごとの `pitch_lo/hi`・`length_lo/hi`）。句の
+  `accent`（アクセントの位置）を変えると `/mora_pitch` でその句の音高だけ計算し直す。句の結合（鎖のボタン、
+  `tachie.accent_join`）・分割（モーラの文字、`tachie.accent_split`）は `voicevox.accent.join_phrases` / `split_phrase` の
+  あと `/mora_data` で変えた句だけ計算し直す。どれかをしたら（`changed`）確定時に発音を句から作り直す（`kana_from_phrases`、
+  エンジンと同じ書き方: 無声化の _、アクセントの '、区切りの / と 、、疑問の ？）。バックグラウンドでは開けないので、
   スモークテストは中身を入れて execute だけ呼ぶ。
   ユーザー辞書は WindowManager の `tachie_dict`（入力欄）と `operators._dict_words`（一覧のキャッシュ）。
   キャラクター追加の初期値は アドオン設定（`extension_path_user` の `character_defaults.toml`、キーは素材フォルダ名、

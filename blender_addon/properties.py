@@ -647,6 +647,28 @@ class TachieDictionary(bpy.types.PropertyGroup):
                              description="音が下がる直前のモーラの位置。0 は平板（下がらない）")
 
 
+# 抑揚の編集の棒（YMM4 の縦のスライダーの代わり）。上がいちばん高い。値の範囲はダイアログごと（TachieAccentEdit の lo / hi）
+ACCENT_LEVELS = 12
+_LEVEL_ITEMS = [(str(i), "", "", i) for i in reversed(range(ACCENT_LEVELS))]  # 値（get / set の番号）は段の高さ
+
+
+def _level_get(attr: str, range_attr: str):
+    def get(self):
+        edit = self.id_data.tachie_accent
+        lo, hi = getattr(edit, f"{range_attr}_lo"), getattr(edit, f"{range_attr}_hi")
+        t = (getattr(self, attr) - lo) / (hi - lo) if hi > lo else 0.0
+        return max(0, min(ACCENT_LEVELS - 1, round(t * (ACCENT_LEVELS - 1))))
+    return get
+
+
+def _level_set(attr: str, range_attr: str):
+    def set_(self, value):
+        edit = self.id_data.tachie_accent
+        lo, hi = getattr(edit, f"{range_attr}_lo"), getattr(edit, f"{range_attr}_hi")
+        setattr(self, attr, round(lo + (hi - lo) * value / (ACCENT_LEVELS - 1), 4))
+    return set_
+
+
 class TachieMora(bpy.types.PropertyGroup):
     """抑揚の編集で 1 モーラ分（name はモーラの文字）。"""
     consonant: StringProperty()
@@ -657,6 +679,12 @@ class TachieMora(bpy.types.PropertyGroup):
                                     unit="TIME_ABSOLUTE", description="子音の長さ（秒）")
     vowel_length: FloatProperty(name="母音", min=0.0, max=1.0, soft_max=0.3, step=0.1, precision=3,
                                 unit="TIME_ABSOLUTE", description="母音の長さ（秒）")
+    # 棒（押した高さが値になる）
+    pitch_level: EnumProperty(items=_LEVEL_ITEMS, get=_level_get("pitch", "pitch"), set=_level_set("pitch", "pitch"),
+                              description="音高（押した高さにする。細かい値は上の数値で）")
+    length_level: EnumProperty(items=_LEVEL_ITEMS, get=_level_get("vowel_length", "length"),
+                               set=_level_set("vowel_length", "length"),
+                               description="母音の長さ（押した高さにする。細かい値は上の数値で）")
 
 
 def _shift_phrase(self, context):
@@ -667,10 +695,27 @@ def _shift_phrase(self, context):
     self.shift_applied = self.shift
 
 
+_loading_accent = False
+
+
+def _accent_changed(self, context):
+    """句のアクセントの位置を変えたら、その句の音高をエンジンで計算し直す。"""
+    if _loading_accent:
+        return
+    if 0 < len(self.moras) < self.accent:  # 句のモーラ数より後ろには置けない（代入でもう一度呼ばれる）
+        self.accent = len(self.moras)
+        return
+    from .operators import refresh_phrase_pitch
+
+    refresh_phrase_pitch(context, self)
+
+
 class TachiePhrase(bpy.types.PropertyGroup):
-    """抑揚の編集で 1 アクセント句分。moras 以外の値（accent / pause_mora / is_interrogative）は rest に JSON で持つ。"""
+    """抑揚の編集で 1 アクセント句分。moras と accent 以外の値（pause_mora / is_interrogative）は rest に JSON で持つ。"""
     moras: CollectionProperty(type=TachieMora)
     rest: StringProperty()
+    accent: IntProperty(name="アクセント", default=1, min=1, max=64, update=_accent_changed,
+                        description="アクセントのあるモーラ（ここまで高く、次から下がる）。変えると音高を計算し直す")
     shift: FloatProperty(name="句の高さ", default=0.0, soft_min=-1.0, soft_max=1.0, step=1, precision=2,
                          update=_shift_phrase, description="句全体の音高をずらす")
     shift_applied: FloatProperty(default=0.0)
@@ -685,6 +730,13 @@ class TachieAccentEdit(bpy.types.PropertyGroup):
     text: StringProperty()
     kana: StringProperty()
     speaker: IntProperty()
+    character: StringProperty()  # エンジン（キャラごと）を選ぶ
+    changed: BoolProperty(default=False)  # アクセントの位置・句の区切りを変えた（発音を句から作り直す）
+    width: IntProperty(default=600)  # ダイアログの幅（句を何モーラずつ並べるか）
+    pitch_lo: FloatProperty(default=3.0)
+    pitch_hi: FloatProperty(default=6.5)
+    length_lo: FloatProperty(default=0.0)
+    length_hi: FloatProperty(default=0.3)
 
 
 _classes = (TachieSoundEffect, TachieTemplate, TachiePreferences, TachieExpression, TachieCharacter, TachieYmmpCharacter,

@@ -306,6 +306,34 @@ run(bpy.ops.tachie.preview_line)
 run(bpy.ops.tachie.clear_accent)
 first_id = sed.active_strip["tachie_id"]
 assert not sound(first_id).get("tachie_accent") and lines()[first_id][1] == r0
+# 抑揚の編集の棒・アクセントの位置・句の結合と分割（YMM4 の「抑揚を編集」に近い形）
+from bl_ext.user_default.blender_tachie.tachie_studio.voicevox.accent import kana_from_phrases  # noqa: E402
+
+sed.active_strip = sound(first_id)
+strips_, text_, ch_, speaker_, kana_ = ops._line_context(bpy.context)
+ops.load_accent_edit(edit, ops._fresh_accent(bpy.context, text_, speaker_, kana_))
+edit.clip_id, edit.text, edit.kana, edit.speaker = first_id, text_, kana_ or "", speaker_
+edit.character, edit.changed = ch_.name, False
+m0 = edit.phrases[0].moras[0]
+m0.pitch_level = "11"  # いちばん上の段 = 範囲の上端
+assert abs(m0.pitch - edit.pitch_hi) < 1e-3 and m0.pitch_level == "11"
+n_phrases, len0, len1 = len(edit.phrases), len(edit.phrases[0].moras), len(edit.phrases[1].moras)
+assert n_phrases >= 2, n_phrases
+run(bpy.ops.tachie.accent_join, phrase=0)
+assert len(edit.phrases) == n_phrases - 1 and edit.changed and len(edit.phrases[0].moras) == len0 + len1
+run(bpy.ops.tachie.accent_split, phrase=0, mora=len0)
+assert len(edit.phrases) == n_phrases and len(edit.phrases[0].moras) == len0
+target = edit.phrases[-1]
+before_pitch = [round(m.pitch, 3) for m in target.moras]
+target.accent = 1 if target.accent != 1 else len(target.moras)  # 音高をエンジンで計算し直す
+assert [round(m.pitch, 3) for m in target.moras] != before_pitch, before_pitch
+run(bpy.ops.tachie.edit_accent)
+snd = sound(sed.active_strip["tachie_id"])
+saved = __import__("json").loads(snd["tachie_accent"])
+assert snd["tachie_kana"] == kana_from_phrases(saved) and saved[-1]["accent"] == target.accent  # 発音も句から作り直す
+run(bpy.ops.tachie.reset_kana)
+first_id = sed.active_strip["tachie_id"]
+assert not sound(first_id).get("tachie_accent")
 # 発音を変えると抑揚の編集は捨てる
 ops.load_accent_edit(edit, ops._fresh_accent(bpy.context, text_, speaker_, kana_))
 edit.clip_id = first_id
