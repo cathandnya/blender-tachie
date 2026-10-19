@@ -11,7 +11,7 @@
 - `{"kind": "still", "character", "expression", "parts", "pose", "flip", "jump"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
   `{"tachie_pos_x", "tachie_pos_y", "tachie_scale"}`。YMM4 の立ち絵アイテムは代わりに `x` / `y` / `zoom` を持ち、置くときに
   キャラの立ち位置・高さとの差にする。`flip` は左右反転（None ならキャラの設定）、`jump` は跳ねながら登場退場
-  （`ymmp.jump_on_screen` の形））
+  （`ymmp.jump_on_screen` の形）、`settings` は不透明度・回転角・フェード・喋る時のみ表示（`ymmp.tachie_settings`））
 
 YMM4 のテンプレートは `user/setting/<版>/YukkuriMovieMaker.Settings.ItemSettings.json` の `Templates`
 （`{Name, Path: [フォルダ…], FPS, Width, Height, Items: [...]}`、Items は .ymmp のアイテムと同じ形）。
@@ -28,7 +28,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .ymmp import (ITEM_LABELS, MEDIA_KINDS, Media, _media, _note_unsupported, _span, _type, _voice, jump_on_screen,
-                   parts_of)
+                   parts_of, tachie_settings)
 
 VERSION = 1
 # YMM4 の音量（50 が等倍）
@@ -129,13 +129,17 @@ def from_ymm4(template: dict) -> tuple[dict, bool, Counter]:
             span = _span(item, parts_of(item.get("TachieItemParameter"), full=True))
             if span.hidden:
                 continue
+            tachie_settings(span, item)
             width, height = float(template.get("Width") or 1920), float(template.get("Height") or 1080)
             items.append({"kind": "still", "frame": span.frame, "length": span.length, "layer": span.layer,
                           "character": span.character, "expression": "", "parts": span.parts,
                           "x": span.x, "y": span.y, "zoom": span.zoom, "flip": span.inverted,
-                          "jump": jump_on_screen(span.jump, width, height)})
+                          "jump": jump_on_screen(span.jump, width, height), "settings": span.settings})
             for e in span.effects:
                 skipped[f"立ち絵アイテムのエフェクト {e}"] += 1
+            for n in span.unsupported:
+                skipped[n] += 1
+            _note_unsupported(SimpleNamespace(unsupported=skipped), kind, item)
         elif kind == "TachieFaceItem":
             span = _span(item, parts_of(item.get("TachieFaceParameter"), full=False))
             if not span.hidden:

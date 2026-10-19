@@ -16,6 +16,7 @@ import base64
 import binascii
 import io
 import json
+import math
 import ntpath
 import re
 import unicodedata
@@ -261,6 +262,9 @@ class Span:
     hidden: bool = False
     inverted: bool = False  # 左右反転（IsInverted）
     jump: dict | None = None  # 映像エフェクト「跳ねながら登場退場」（`_jump`、X / Y はピクセルのまま）
+    # 立ち絵アイテムだけ: 不透明度（0〜1）・回転角（度）・フェードイン／アウト（秒）・喋る時のみ表示（`tachie_settings`）
+    settings: dict = field(default_factory=dict)
+    unsupported: list[str] = field(default_factory=list)  # 立ち絵アイテムの写せない設定
 
 
 # 画像・動画・音声・テキストのアイテム → Media.kind
@@ -420,6 +424,28 @@ def _span(item: dict, parts: dict) -> Span:
                 inverted=bool(item.get("IsInverted")))
     _jump(span, item)
     return span
+
+
+def tachie_settings(span: Span, item: dict) -> None:
+    """立ち絵アイテムの描画の設定を Span.settings に、写せない設定を Span.unsupported に入れる。"""
+    param = item.get("TachieItemParameter") or {}
+    # 回転角は 1 周を超えてもよい（450 度 = 90 度）。立ち絵の回転角は ±360 度までなので 1 周の中に戻す
+    span.settings = {"opacity": value(item.get("Opacity"), 100.0) / 100,
+                     "rotation": math.fmod(value(item.get("Rotation")), 360.0),
+                     "fade_in": float(item.get("FadeIn") or 0.0), "fade_out": float(item.get("FadeOut") or 0.0),
+                     "speech_only": bool(param.get("IsHiddenWhenNoSpeech"))}
+    notes = []  # アニメーション・中間点は _note_unsupported が報告する
+    if value(item.get("Z")):
+        notes.append("Z")
+    if (item.get("Blend") or "Normal") != "Normal":
+        notes.append(f"合成モード {item['Blend']}")
+    for key, label in (("IsClippingWithObjectAbove", "クリッピング"), ("IsAlwaysOnTop", "手前に表示"),
+                       ("IsZOrderEnabled", "Z値順に表示")):
+        if item.get(key):
+            notes.append(label)
+    if param.get("IsDifferentialComposite"):
+        notes.append("表情を差分合成")
+    span.unsupported = [f"立ち絵アイテムの{n}" for n in notes]
 
 
 def _jump(span: Span, item: dict) -> None:
@@ -718,9 +744,12 @@ def load_project(path: str | Path) -> Project:
                 project.unsupported[f"表情のエフェクト {e}"] += 1
         elif kind == "TachieItem":
             span = _span(item, parts_of(item.get("TachieItemParameter"), full=True))
+            tachie_settings(span, item)
             project.tachies.append(span)
             for e in span.effects:
                 project.unsupported[f"立ち絵のエフェクト {e}"] += 1
+            for n in span.unsupported:
+                project.unsupported[n] += 1
         elif kind == "TachieFaceItem":
             span = _span(item, parts_of(item.get("TachieFaceParameter"), full=False))
             project.faces.append(span)

@@ -18,7 +18,7 @@ from bpy_extras.io_utils import ImportHelper
 from .motion import _channelbag, jump_of
 from .operators import (
     ERRORS, _applied_signatures, _face_name, _free_face_channel, _still_overlaps, auto_signature,
-    character_audio, character_voice, get_pose, place_still, item_still_pose,
+    character_audio, character_voice, get_pose, place_still, item_still_pose, still_settings,
     ensure_sequencer_scene, line_accent, line_audio, line_channels, line_end, line_kana, line_layout,
     line_layout_of, line_sound, line_strips, line_subtitle, line_text, line_texts, line_voice, place_strips, prefs,
     refresh_faces, render_clip, scene_fps, seq_scene, set_text_offset,
@@ -179,7 +179,7 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
             items.append({"kind": "still", "frame": s.left_handle - t0, "length": s.right_handle - s.left_handle,
                           "layer": s.channel, "character": s["tachie_still"],
                           "expression": s.get("tachie_expression", ""), "parts": None, "pose": get_pose(s),
-                          "flip": s.get("tachie_flip"),
+                          "flip": s.get("tachie_flip"), "settings": still_settings(s),
                           "jump": jump_of(s)})
         elif s.get("tachie_idle"):
             skipped.append(f"前の版の待機の立ち絵（{s.name}）")
@@ -355,7 +355,8 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             preset = _resolve_expression(ch, item, problems)
             flip = item.get("flip")  # YMM4 と同じく立ち絵ごと。キャラの設定と同じならキャラに従う
             place_still(context, ch, preset, a, b - a, _still_pose(ch, item, data), problems=problems,
-                        flip=None if flip is None or bool(flip) == ch.flip_x else bool(flip), jump=item.get("jump"))
+                        flip=None if flip is None or bool(flip) == ch.flip_x else bool(flip), jump=item.get("jump"),
+                        settings=item.get("settings"))
         except ERRORS as e:
             problems.append(f"{ch.name} の立ち絵: {e}")
             continue

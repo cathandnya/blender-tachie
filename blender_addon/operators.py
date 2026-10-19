@@ -724,6 +724,37 @@ POSE_PROPS = {
 }
 
 
+# 立ち絵ごとの描画の設定（YMM4 の立ち絵アイテムと同じ）: 設定の名前 → (プロパティ, 表示名, 最小, 最大, 既定, 説明)。
+# 動き（motion.refresh_motion）が当てる
+STILL_SETTINGS = {
+    "opacity": ("tachie_opacity", "不透明度", 0.0, 1.0, 1.0, "立ち絵の不透明度（1 で不透明）"),
+    "rotation": ("tachie_rotation", "回転角", -360.0, 360.0, 0.0, "立ち絵の回転（度、足元が中心）"),
+    "fade_in": ("tachie_still_fade_in", "フェードイン", 0.0, 10.0, 0.0, "立ち絵の頭のフェード（秒）"),
+    "fade_out": ("tachie_still_fade_out", "フェードアウト", 0.0, 10.0, 0.0, "立ち絵の終わりのフェード（秒）"),
+    "speech_only": ("tachie_speech_only", "喋る時のみ表示", False, True, False,
+                    "重なるそのキャラのセリフの間だけ表示する（フェードは使わない）"),
+}
+
+
+def still_settings(strip) -> dict:
+    """立ち絵ごとの描画の設定（無いものは既定値）。"""
+    return {key: type(default)(strip.get(prop, default)) for key, (prop, _, _, _, default, _) in STILL_SETTINGS.items()}
+
+
+def set_still_settings(strip, settings: dict | None) -> None:
+    for key, (prop, label, lo, hi, default, desc) in STILL_SETTINGS.items():
+        value = (settings or {}).get(key)
+        if value is None:  # 無い・null（手で書いたテンプレートの JSON）は既定値
+            value = default
+        if isinstance(default, bool):
+            strip[prop] = bool(value)
+            strip.id_properties_ui(prop).update(description=desc)
+        else:
+            strip[prop] = float(min(hi, max(lo, value)))
+            strip.id_properties_ui(prop).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=1, precision=2,
+                                                description=desc)
+
+
 # 字幕（とキャラ名）をセリフごとにずらす量。字幕ストリップで編集し、自動反映でキャラ名にも写す
 TEXT_POSE_PROPS = {
     "tachie_sub_x": ("字幕の横の位置", "字幕を左右にずらす量（画面の幅に対する割合）"),
@@ -1062,13 +1093,14 @@ def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int,
 
 def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None,
                 channel: int | None = None, problems: list | None = None, flip: bool | None = None,
-                jump: dict | None = None):
+                jump: dict | None = None, settings: dict | None = None):
     """立ち絵（`tachie_still`）を置く。まばたきし、重なるそのキャラのセリフの間だけ口パクしてセリフの表情に
     なる（表情ストリップが重なればその表情）。口パクに使えなかったセリフ（動きの json が無い前の版のセリフなど）は
     `problems` に理由を足し、その間は口を閉じる。
 
     `flip` は立ち絵ごとの左右反転（`tachie_flip`、YMM4 の立ち絵アイテムと同じ。None ならキャラの設定に従う）、
-    `jump` は跳ねながら登場退場（`tachie_jump`、`ymmp.jump_on_screen` の形。動きは motion が打つ）。"""
+    `jump` は跳ねながら登場退場（`tachie_jump`、`ymmp.jump_on_screen` の形。動きは motion が打つ）。
+    `settings` は不透明度・回転角・フェード・喋る時のみ表示（`STILL_SETTINGS`、None なら既定値）。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
     lanes.ensure_layout(scene)  # 立ち絵のレーン（ch.channel）に置く
@@ -1116,6 +1148,7 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
         strip["tachie_flip"] = bool(flip)
     if jump:
         strip["tachie_jump"] = json.dumps(jump, ensure_ascii=False)
+    set_still_settings(strip, settings)
     set_pose(strip, pose, ch)
     if strip.right_handle - 1 > scene.frame_end:
         scene.frame_end = strip.right_handle - 1
@@ -1154,9 +1187,10 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
     from .motion import jump_of
 
     jump = jump_of(strip)
+    look = still_settings(strip)
     sed.strips.remove(strip)
     return place_still(context, ch, preset, start, frames, pose, channel, problems,
-                       None if flip is None else bool(flip), jump)
+                       None if flip is None else bool(flip), jump, look)
 
 
 def connect(context, strips) -> None:

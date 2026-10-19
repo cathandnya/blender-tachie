@@ -1,6 +1,6 @@
 import bpy
 
-from .operators import (line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
+from .operators import (STILL_SETTINGS, line_layout_of, line_sound, line_strips, line_subtitle, load_material, output_dir,
                         prefs, selected_targets, seq_scene)
 from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
 
@@ -127,6 +127,10 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                          depress=flipped)
             if "tachie_flip" not in strip:
                 row.label(text="（キャラの設定）")
+            col = layout.column(align=True)
+            for prop, label, *_ in STILL_SETTINGS.values():
+                if prop in strip:
+                    col.prop(strip, f'["{prop}"]', text=label)
             if strip.get("tachie_jump"):
                 layout.label(text="跳ねながら登場退場（YMM4 の映像エフェクト）", icon="ANIM")
             draw_pose(layout, strip)

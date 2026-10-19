@@ -7,3 +7,5 @@ __pycache__/
 .DS_Store
 build/
 dist/
+# YMM4 の画面のスクショ（設定の意味を調べるときの手元の資料）
+examples/*.png

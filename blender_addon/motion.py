@@ -98,6 +98,7 @@ def _talk(strip, ch, motion_path: Path, fps: float, height: int, start: int | No
     half = max(1, round(ch.talk_period * fps / 2))
     amp_y = ch.talk_bounce * height
     amp_r = math.radians(ch.talk_sway)
+    base_r = base_rotation(strip)
     base_y = strip.transform.offset_y
     start = int(strip.content_start) if start is None else start
     lo, hi = strip.left_handle - start, strip.right_handle - 1 - start
@@ -112,7 +113,8 @@ def _talk(strip, ch, motion_path: Path, fps: float, height: int, start: int | No
             if amp_y:
                 _key(strip, "transform.offset_y", start + f, base_y + (0 if edge else amp_y * (k % 2)))
             if amp_r:
-                _key(strip, "transform.rotation", start + f, 0 if edge else amp_r * (1 if k % 2 else -1))
+                _key(strip, "transform.rotation", start + f,
+                     base_r + (0 if edge else amp_r * (1 if k % 2 else -1)))
 
 
 def _line_heads(sed, name: str) -> list[tuple[str, int, int]]:
@@ -123,6 +125,60 @@ def _line_heads(sed, name: str) -> list[tuple[str, int, int]]:
             head = int(s.content_start)
             out.append((s["tachie_id"], head, head + (int(s.get("tachie_frames", 0)) or s.right_handle - head)))
     return out
+
+
+def base_rotation(strip) -> float:
+    """立ち絵ごとの回転角（`tachie_rotation`、度、YMM4 と同じく時計回りが正）→ transform.rotation（ラジアン、反時計回りが正）。"""
+    return -math.radians(float(strip.get("tachie_rotation", 0.0)))
+
+
+def base_opacity(strip) -> float:
+    return float(strip.get("tachie_opacity", 1.0))
+
+
+def _constant(scene, strip, attr: str) -> None:
+    """ストリップの `attr` の F カーブのキーを、なめらかにつながず切り替える（喋る時のみ表示）。"""
+    bag = _channelbag(scene)
+    path = strip.path_from_id(attr)  # 名前の " や \ もエスケープされた F カーブのパス
+    fcurve = next((f for f in bag.fcurves if f.data_path == path), None) if bag else None
+    for kp in fcurve.keyframe_points if fcurve else ():
+        kp.interpolation = "CONSTANT"
+
+
+def _visibility(scene, strip, fps: float, talks: list[tuple[str, int, int]]) -> set[str]:
+    """立ち絵ごとのフェード（`tachie_still_fade_in` / `_out`）と喋る時のみ表示（`tachie_speech_only`）の不透明度のキー。
+    打った側（"in" / "out"）を返す（その側にはキャラのフェードの登場・退場を打たない）。"""
+    opacity = base_opacity(strip)
+    left, last = strip.left_handle, strip.right_handle - 1
+    if strip.get("tachie_speech_only"):
+        # 重なるそのキャラのセリフの間だけ見せる（セリフの区間の境目で切り替える）。重なる・続くセリフはつなぐ
+        # （同じキャラのセリフも重ねられるので、先のセリフの終わりで消さない）
+        shown: list[list[int]] = []
+        for a, b in sorted((max(left, a), min(last + 1, b)) for _, a, b in talks if a < last + 1 and left < b):
+            if shown and a <= shown[-1][1]:
+                shown[-1][1] = max(shown[-1][1], b)
+            else:
+                shown.append([a, b])
+        _key(strip, "blend_alpha", left, 0.0)
+        for a, b in shown:
+            _key(strip, "blend_alpha", a, opacity)
+            if b <= last:
+                _key(strip, "blend_alpha", b, 0.0)
+        _constant(scene, strip, "blend_alpha")
+        return {"in", "out"}
+    fade_in = round(float(strip.get("tachie_still_fade_in", 0.0)) * fps)
+    fade_out = round(float(strip.get("tachie_still_fade_out", 0.0)) * fps)
+    if not (fade_in or fade_out):
+        return set()
+    if fade_in and fade_out:  # 重なれば半分ずつ
+        fade_in, fade_out = min(fade_in, (last - left) // 2), min(fade_out, (last - left) // 2)
+    if fade_in:
+        _key(strip, "blend_alpha", left, 0.0)
+        _key(strip, "blend_alpha", min(last, left + max(1, fade_in)), opacity)
+    if fade_out:
+        _key(strip, "blend_alpha", max(left, last - max(1, fade_out)), opacity)
+        _key(strip, "blend_alpha", last, 0.0)
+    return {side for side, n in (("in", fade_in), ("out", fade_out)) if n}
 
 
 def spans(strips) -> list[list]:
@@ -140,8 +196,9 @@ def _edge(strip, ch, effect: str, frame_from: int, frame_to: int, appearing: boo
     """登場（appearing）・退場のキーフレーム。frame_from → frame_to の間に見えない状態と元の状態を行き来する。"""
     hidden_first = appearing
     if effect == "FADE":
-        _key(strip, "blend_alpha", frame_from, 0.0 if hidden_first else 1.0)
-        _key(strip, "blend_alpha", frame_to, 1.0 if hidden_first else 0.0)
+        opacity = base_opacity(strip)
+        _key(strip, "blend_alpha", frame_from, 0.0 if hidden_first else opacity)
+        _key(strip, "blend_alpha", frame_to, opacity if hidden_first else 0.0)
     elif effect == "SLIDE":
         base = strip.transform.offset_x
         # 近い方の画面の端から入る（出る）。左右反転したストリップは offset の向きも逆
@@ -204,8 +261,8 @@ def refresh_motion(scene, lines_dir: Path) -> int:
     width, height = scene.render.resolution_x, scene.render.resolution_y
     for s in images:  # キーフレームの無い元の状態
         apply_placement(s, characters[owner(s)])
-        s.transform.rotation = 0.0
-        s.blend_alpha = 1.0
+        s.transform.rotation = base_rotation(s)
+        s.blend_alpha = base_opacity(s)
     # セリフごとの字幕の位置（字幕ストリップでずらした量をキャラ名にも写す）。tachie_sub_x を持たない古いセリフの
     # 字幕は触らない（手で動かした location を、動きの作り直しのたびに既定の位置へ戻さないため）
     offsets = {s["tachie_id"]: text_offset(s) for s in sed.strips
@@ -231,8 +288,8 @@ def refresh_motion(scene, lines_dir: Path) -> int:
             del t["tachie_fade_keyed"]
     for ch in characters.values():
         mine = [s for s in images if owner(s) == ch.name]  # チャンネルでは絞らない（手で動かした立ち絵も）
+        talks = _line_heads(sed, ch.name)
         if ch.talk_bounce > 0 or ch.talk_sway > 0:
-            talks = _line_heads(sed, ch.name)
             for s in mine:
                 if s.get("tachie_id"):  # 前の版のセリフの立ち絵
                     _talk(s, ch, lines_dir / f"{s['tachie_id']}.json", fps, height)
@@ -255,6 +312,9 @@ def refresh_motion(scene, lines_dir: Path) -> int:
                     # 登場と退場の両方なら半分ずつ（同じフレームのキーで上書きし合わないように）
                     _jump(s, j, fps, width, height, appearing, frames // 2 - (0 if appearing else 1) if both else frames)
                     count += 1
+        # 立ち絵ごとのフェード・喋る時のみ表示。打った側にはキャラのフェードの登場・退場を重ねない
+        faded = {s.name: sides for s in mine if s.get("tachie_still") and (sides := _visibility(scene, s, fps, talks))}
+        count += len(faded)
         duration = max(1, round(ch.effect_seconds * fps))
         for group in spans(mine):
             first, last = group[0], group[-1]
@@ -262,11 +322,13 @@ def refresh_motion(scene, lines_dir: Path) -> int:
             if len(group) == 1 and ch.enter_effect != "NONE" and ch.exit_effect != "NONE":
                 # 1 本だけのまとまりで登場と退場が重なると、同じフレームのキーが上書きされて片方が消える
                 d = min(d, max(1, (first.right_handle - 1 - first.left_handle) // 2))
-            if ch.enter_effect != "NONE" and not (jumps.get(first.name) or {}).get("in"):
+            if ch.enter_effect != "NONE" and not (jumps.get(first.name) or {}).get("in") and not (
+                    ch.enter_effect == "FADE" and "in" in faded.get(first.name, ())):
                 end = min(first.left_handle + d, first.right_handle - 1)
                 _edge(first, ch, ch.enter_effect, first.left_handle, end, True, width)
                 count += 1
-            if ch.exit_effect != "NONE" and not (jumps.get(last.name) or {}).get("out"):
+            if ch.exit_effect != "NONE" and not (jumps.get(last.name) or {}).get("out") and not (
+                    ch.exit_effect == "FADE" and "out" in faded.get(last.name, ())):
                 begin = max(last.right_handle - 1 - d, last.left_handle)
                 _edge(last, ch, ch.exit_effect, begin, last.right_handle - 1, False, width)
                 count += 1
@@ -344,9 +406,12 @@ def motion_signature(scene) -> str:
             continue
         if owner(s) is None:
             continue
+        look = tuple(round(float(s.get(k, d)), 4) for k, d in (
+            ("tachie_opacity", 1.0), ("tachie_rotation", 0.0), ("tachie_still_fade_in", 0.0),
+            ("tachie_still_fade_out", 0.0), ("tachie_speech_only", 0.0)))
         pose = (round(s.get("tachie_pos_x", 0.0), 4), round(s.get("tachie_pos_y", 0.0), 4),
-                round(s.get("tachie_scale", 1.0), 4), s.get("tachie_flip"), s.get("tachie_jump", ""))
-        active = active or pose != (0.0, 0.0, 1.0, None, "")
+                round(s.get("tachie_scale", 1.0), 4), s.get("tachie_flip"), s.get("tachie_jump", ""), look)
+        active = active or pose != (0.0, 0.0, 1.0, None, "", (1.0, 0.0, 0.0, 0.0, 0.0))
         items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, pose))
     if not active:
         return ""

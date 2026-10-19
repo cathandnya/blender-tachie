@@ -35,11 +35,13 @@ def ymm4_settings() -> dict:
         {"Name": "立ち絵", "Path": [], "Items": [
             {"$type": ITEM + "TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん", "Frame": 0,
              "Layer": 1, "Length": 60, "X": anim(769.0), "Y": anim(540.0), "Zoom": anim(80.0), "IsInverted": True,
+             "Opacity": anim(50.0), "Rotation": anim(10.0), "FadeIn": 0.2, "FadeOut": 0.0, "Blend": "Add",
+             "IsAlwaysOnTop": True,
              "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
                                "IsInEffect": True, "IsOutEffect": False, "IsOutReverse": True, "EffectTimeSeconds": 0.5,
                                "JumpHeight": 10.0, "Stretch": 10.0, "Period": 0.5, "X": 0.0, "Y": 900.0,
                                "IsEnabled": True}],
-             "TachieItemParameter": {"Eye": "C:\\char\\ずんだもん\\目\\なごみ目.png"}},
+             "TachieItemParameter": {"Eye": "C:\\char\\ずんだもん\\目\\なごみ目.png", "IsHiddenWhenNoSpeech": True}},
             {"$type": ITEM + "TachieItem, YukkuriMovieMaker", "CharacterName": "めたん", "Frame": 0,
              "Layer": 2, "Length": 60, "IsHidden": True}]},
     ]}
@@ -75,7 +77,8 @@ def test_from_ymm4(tmp_path: Path):
     assert still["jump"]["y"] == pytest.approx(-900 / 1080) and still["jump"]["x"] == 0.0
     assert (still["jump"]["seconds"], still["jump"]["period"]) == (0.5, 0.5)
     assert still["jump"]["height"] == pytest.approx(10 / 1080)  # 高さは px → 画面の高さに対する割合
-    assert not t_skipped
+    assert still["settings"] == {"opacity": 0.5, "rotation": 10.0, "fade_in": 0.2, "fade_out": 0.0, "speech_only": True}
+    assert t_skipped == {"立ち絵アイテムの合成モード Add": 1, "立ち絵アイテムの手前に表示": 1}  # 写せない設定は報告する
     # .ymmp の読み込みと同じく、写せない合成モード・アニメーションは報告する
     image = {**ymm4_settings()["Templates"][1]["Items"][0], "Blend": "Add", "X": anim(0.0, "反復移動", (100.0,))}
     assert from_ymm4({"Items": [image]})[2] == {"画像の合成モード Add": 1, "ImageItem の X のアニメーション": 1}

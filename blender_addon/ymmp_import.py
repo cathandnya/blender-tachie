@@ -739,7 +739,8 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                         place_still(context, ch, preset, a, b - a,
                                     item_still_pose(ch, span.x, span.y, span.zoom, project.width, project.height),
                                     problems=problems, flip=span.inverted if span.inverted != ch.flip_x else None,
-                                    jump=jump_on_screen(span.jump, project.width, project.height))
+                                    jump=jump_on_screen(span.jump, project.width, project.height),
+                                    settings=span.settings)
                     except ERRORS as e:
                         problems.append(f"{a} フレームの {name} の立ち絵: {e}")
                         continue

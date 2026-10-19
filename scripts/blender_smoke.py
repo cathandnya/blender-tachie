@@ -943,12 +943,13 @@ ymmp.write_text(json.dumps({
         ymm_voice("めたん（YMM4）", "読み込んだかぶせるセリフ", 20),  # ずんだもんと同時に喋る
         ymm_voice("ナレーター（YMM4）", "読み込んだナレーション", 500),  # 立ち絵の無いキャラ
         {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "めたん（YMM4）",
-         "TachieItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png",
-                                 "Mouth": metan_dir + "\\口\\ほほえみ.png"}, "X": -770.0, "Y": 600.0,
+         "TachieItemParameter": {"Eye": metan_dir + "\\目\\普通白目_普通目.png", "IsHiddenWhenNoSpeech": True,
+                                 "Mouth": metan_dir + "\\口\\ほほえみ.png"}, "X": -770.0, "Y": 600.0, "Blend": "Add",
          "Zoom": 80.0, "Frame": ymm_base, "Layer": 1, "Length": 700},
         # 立ち絵アイテムごとの左右反転・位置・跳ねながら登場退場（ずんだもんのキャラの設定は反転しない）
         {"$type": "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker", "CharacterName": "ずんだもん",
          "X": 300.0, "Y": 300.0, "Zoom": 100.0, "IsInverted": True, "Frame": ymm_base + 560, "Layer": 1, "Length": 120,
+         "Opacity": {"Values": [{"Value": 50.0}]}, "Rotation": {"Values": [{"Value": 10.0}]}, "FadeIn": 0.2,
          "VideoEffects": [{"$type": "YukkuriMovieMaker.Project.Effects.InOutJumpEffect, YukkuriMovieMaker",
                            "IsInEffect": True, "IsOutEffect": True, "IsOutReverse": True, "EffectTimeSeconds": 0.5,
                            "JumpHeight": 10.0, "Stretch": 10.0, "Period": 0.25, "X": 0.0, "Y": 900.0,
@@ -1011,9 +1012,20 @@ assert zpreset not in zunda_presets and next(e for e in zunda.expressions if e.n
 ystill, = [x for x in sed.strips if x.get("tachie_still") == "めたん（YMM4）"]
 assert (ystill.left_handle, ystill.right_handle) == (zl, zl + 350) and ystill.channel == ymetan.channel
 assert len({mouth(ystill, f) for f in range(ml, ml + 30)}) > 1 and mouth(ystill, ml - 5) == "l0"
+# 喋る時のみ表示: 重なるセリフの間だけ見える（境目で切り替える）。写せない合成モードは報告する
+assert ystill["tachie_speech_only"] and "立ち絵アイテムの合成モード Add" in report
+scene.frame_set(ml + 10)
+assert abs(ystill.blend_alpha - 1.0) < 1e-6
+scene.frame_set(ml - 5)
+assert ystill.blend_alpha == 0.0
 zstill, = [x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.right_handle > zl]
 assert (zstill.left_handle, zstill.right_handle) == (zl + 280, zl + 340) and not zunda.flip_x
 assert zstill["tachie_flip"] and zstill.use_flip_x  # 反転は立ち絵ごと（キャラの設定は変えない）
+# 不透明度・回転角（時計回りが正）・フェードイン
+import math  # noqa: E402
+
+assert abs(zstill["tachie_opacity"] - 0.5) < 1e-6 and abs(zstill.transform.rotation + math.radians(10)) < 1e-6
+assert [round(v, 4) for _, v in keyed(zstill, "blend_alpha")][:2] == [0.0, 0.5]
 assert abs(zstill["tachie_pos_x"] - (300 / 1920 - zunda.position_x)) < 1e-6
 assert abs(zstill["tachie_pos_y"] - (-300 / 1080 - zunda.position_y)) < 1e-6
 jumps = keyed(zstill, "transform.offset_y")
