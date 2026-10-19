@@ -488,6 +488,22 @@ sed.active_strip = zs
 ops._expression_items = [(ops.NONE, "（基本）", "")]
 run(bpy.ops.tachie.pick_expression, target="STILL", expression=ops.NONE)
 s.expression = ""
+# 立ち絵ごとのパーツ（その立ち絵だけ。表情プリセットの上に重ねる）。セリフの表情が立ち絵のままの間もその見た目
+sed.active_strip = still("ずんだもん")
+ops._part_items = [("怒り眉", "怒り眉", "")]
+run(bpy.ops.tachie.pick_part, prop="part_eyebrow", still=True, part="怒り眉")
+zs = still("ずんだもん")
+custom = ops.character_cache(bpy.context, zunda, "", {"眉": "怒り眉"}).directory.name
+assert ops.still_parts(zs) == {"眉": "怒り眉"} and expression_dir(zs, 1) == custom != base
+assert expression_dir(zs, l) == custom and len({mouth(zs, f) for f in range(l, r)}) > 1
+check_stills()
+sed.active_strip = zs
+ops._part_items = [("右腕_指差し", "右腕_指差し", "")]
+run(bpy.ops.tachie.pick_part, prop="part_other2", still=True, part="右腕_指差し")  # 他はスロットごと
+assert ops.still_parts(still("ずんだもん")) == {"眉": "怒り眉", "他": ["", "右腕_指差し"]}
+sed.active_strip = still("ずんだもん")
+run(bpy.ops.tachie.clear_still_parts)
+assert not ops.still_parts(still("ずんだもん")) and expression_dir(still("ずんだもん"), 1) == base
 
 # まとめて変える（ダイアログは画面が要るので execute だけ）
 def select_only(strips_):

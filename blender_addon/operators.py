@@ -23,7 +23,7 @@ from .tachie_studio.pipeline.script import script_format, split_kana
 from .tachie_studio.subtitle import breaks, mark_breaks
 from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
-                                            parse_characters)
+                                            overlay_parts, parse_characters)
 from .tachie_studio.tachie import PRESET_FILE, Expression, load_character, load_presets
 from .tachie_studio.tachie.compose import load_image
 from .tachie_studio.tachie.psd import (animation_config_path, apply_layers, load_ymm_presets, read_animation_config,
@@ -440,11 +440,50 @@ def line_strips(sed, clip_id: str) -> list:
     return [s for s in sed.strips if s.get("tachie_id") == clip_id]
 
 
-def character_cache(context, ch, preset: str | None = None) -> FrameCache:
-    """キャラクターの表情・大きさでの「目 × 口」合成キャッシュ。"""
+def character_cache(context, ch, preset: str | None = None, parts: dict | None = None) -> FrameCache:
+    """キャラクターの表情・大きさでの「目 × 口」合成キャッシュ。`parts` は表情プリセットの上に重ねる立ち絵ごとのパーツ。"""
     character = load_material(ch.folder)
     scale = seq_scene(context).render.resolution_y * ch.height / character.height
-    return _cache(character, expression_of(ch, preset), output_dir(context) / "cache", scale)
+    expression = expression_of(ch, preset)
+    if parts:
+        expression = overlay_parts(expression, parts, f"{ch.name} の立ち絵のパーツ")
+    return _cache(character, expression, output_dir(context) / "cache", scale)
+
+
+def still_parts(strip) -> dict:
+    """立ち絵ごとのパーツ（`tachie_parts`、表情プリセットと同じ形で変えるパーツだけ。YMM4 の「表情: カスタム」）。"""
+    try:
+        parts = json.loads(strip.get("tachie_parts") or "{}")
+    except ValueError:
+        return {}
+    return parts if isinstance(parts, dict) else {}
+
+
+def clean_still_parts(parts: dict | None, ch=None, problems: list | None = None) -> dict:
+    """立ち絵ごとのパーツから空の指定（"" / 全部空きのスロット）を落とす。`ch` を渡すと素材に無いパーツも
+    落とし（他・後はそのスロットを空きに）、`problems` に書く（素材を選び直した・別のキャラのテンプレートなど）。"""
+    parts = {k: v for k, v in (parts or {}).items() if v and (not isinstance(v, list) or any(v))}
+    material = load_material(ch.folder) if ch is not None and parts else None
+    if material is None or material.is_psd:
+        return parts
+    out = {}
+    for category, v in parts.items():
+        names = material.parts.get(category, {})
+        kept = [n if not n or n in names else "" for n in (v if isinstance(v, list) else [v])]
+        for n in (v if isinstance(v, list) else [v]):
+            if n and n not in names and problems is not None:
+                problems.append(f"{ch.name}: 素材に {category}/{n} が無いので立ち絵のパーツから外しました")
+        if any(kept):
+            out[category] = kept if isinstance(v, list) else kept[0]
+    return out
+
+
+def set_still_parts(strip, parts: dict | None) -> None:
+    parts = clean_still_parts(parts)
+    if parts:
+        strip["tachie_parts"] = json.dumps(parts, ensure_ascii=False)
+    elif "tachie_parts" in strip:
+        del strip["tachie_parts"]
 
 
 def line_layout(ch, layout: str | None = None) -> str:
@@ -993,15 +1032,19 @@ def appearance_key(ch, presets=None) -> list:
 
 
 def still_key(context, sed, ch, strip) -> str:
-    """立ち絵の作り直しの鍵（キャラの見た目・表情・表情ストリップの区間・重なるセリフ）。置いたときと違えば作り直す。"""
+    """立ち絵の作り直しの鍵（キャラの見た目・表情・立ち絵ごとのパーツ・表情ストリップの区間・重なるセリフ）。
+    置いたときと違えば作り直す。"""
     start, end = strip.left_handle, strip.right_handle
     return _still_key(ch, strip.get("tachie_expression", ""), face_segments(sed, ch, start, end),
-                      _talking_lines(sed, ch, start, end))
+                      _talking_lines(sed, ch, start, end), still_parts(strip))
 
 
-def _still_key(ch, preset: str, segments, talking) -> str:
+def _still_key(ch, preset: str, segments, talking, parts: dict | None = None) -> str:
     used = {preset} | {p for _, _, p in segments} | {p for _, _, p, _ in talking if p is not None}
-    return json.dumps([appearance_key(ch, used), preset, segments, talking], ensure_ascii=False)
+    key = [appearance_key(ch, used), preset, segments, talking]
+    if parts:
+        key.append(parts)
+    return json.dumps(key, ensure_ascii=False)
 
 
 def set_line_expression(context, clip_id: str, preset: str) -> list:
@@ -1173,22 +1216,25 @@ def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int,
 
 def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None,
                 channel: int | None = None, problems: list | None = None, flip: bool | None = None,
-                jump: dict | None = None, settings: dict | None = None):
+                jump: dict | None = None, settings: dict | None = None, parts: dict | None = None):
     """立ち絵（`tachie_still`）を置く。まばたきし、重なるそのキャラのセリフの間だけ口パクしてセリフの表情に
     なる（表情ストリップが重なればその表情）。口パクに使えなかったセリフ（動きの json が無い前の版のセリフなど）は
     `problems` に理由を足し、その間は口を閉じる。
 
     `flip` は立ち絵ごとの左右反転（`tachie_flip`、YMM4 の立ち絵アイテムと同じ。None ならキャラの設定に従う）、
     `jump` は跳ねながら登場退場（`tachie_jump`、`ymmp.jump_on_screen` の形。動きは motion が打つ）。
-    `settings` は不透明度・回転角・フェード・喋る時のみ表示（`STILL_SETTINGS`、None なら既定値）。"""
+    `settings` は不透明度・回転角・フェード・喋る時のみ表示（`STILL_SETTINGS`、None なら既定値）。
+    `parts` は立ち絵ごとのパーツ（`tachie_parts`、表情プリセットの上に重ねる）。セリフの表情が「立ち絵のまま」の間も
+    このパーツの見た目。表情プリセットを指定したセリフ・表情ストリップの区間はそのプリセットの表情。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
     lanes.ensure_layout(scene)  # 立ち絵のレーン（ch.channel）に置く
     if scene.view_settings.view_transform != "Standard":
         # 3D 用の AgX / Filmic のままだと立ち絵の色が淡くなる
         scene.view_settings.view_transform = "Standard"
-    cache = character_cache(context, ch, preset)
-    name = f"立ち絵 {ch.name}" + (f"({preset})" if preset else "")
+    parts = clean_still_parts(parts, ch, problems)
+    cache = character_cache(context, ch, preset, parts)
+    name = f"立ち絵 {ch.name}" + (f"({preset})" if preset else "") + ("*" if parts else "")
     if not channel or _overlaps(sed, channel, start, start + frames):  # 作り直す前のチャンネルが埋まっていればレーン
         channel = ch.channel
     end = start + frames
@@ -1196,7 +1242,8 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     talking = _talking_lines(sed, ch, start, end)
     lines = []
     lines_dir = output_dir(context) / "lines"
-    caches = {preset or "": cache}
+    # プリセットを指定したセリフ・表情ストリップの区間は立ち絵ごとのパーツを重ねない（同じプリセットでも）
+    caches = {} if parts else {preset or "": cache}
 
     def cache_of(p: str):
         if p not in caches:
@@ -1213,8 +1260,8 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
             if problems is not None:
                 problems.append(f"{ch.name}のセリフ {clip_id} の口の動きがありません（再生成すると口パクします）")
             continue
-        lines.append((offset, motion, cache_of(line_preset if line_preset is not None else preset or "")))
-    key = _still_key(ch, preset, segments, talking)
+        lines.append((offset, motion, cache if line_preset is None else cache_of(line_preset)))
+    key = _still_key(ch, preset, segments, talking, parts)
     if segments or lines:
         paths = still_frames(cache, [(a, b, cache_of(p)) for a, b, p in segments], lines, frames,
                              scene_fps(scene), seed=(ch.name, start))
@@ -1227,6 +1274,7 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
     strip["tachie_expression"] = preset or ""
+    set_still_parts(strip, parts)
     if flip is not None:
         strip["tachie_flip"] = bool(flip)
     if jump:
@@ -1271,9 +1319,10 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
 
     jump = jump_of(strip)
     look = still_settings(strip)
+    parts = still_parts(strip)
     sed.strips.remove(strip)
     return place_still(context, ch, preset, start, frames, pose, channel, problems,
-                       None if flip is None else bool(flip), jump, look)
+                       None if flip is None else bool(flip), jump, look, parts)
 
 
 def connect(context, strips) -> None:
@@ -2818,22 +2867,31 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
 
     prop: bpy.props.StringProperty()
     preset: bpy.props.StringProperty(description="空ならキャラクターの基本の表情、指定するとその表情プリセット")
+    still: bpy.props.BoolProperty(description="選択中の立ち絵のパーツ（その立ち絵だけ）")
     part: bpy.props.EnumProperty(items=_parts)
 
     @classmethod
     def poll(cls, context):
         return seq_scene(context).tachie.character() is not None
 
+    def _character(self, context):
+        settings = seq_scene(context).tachie
+        if self.still:
+            return find_character(settings, seq_scene(context).sequence_editor.active_strip["tachie_still"])
+        return settings.character()
+
     def invoke(self, context, event):
         global _part_items
         category = next(c for c, props in PART_PROPS.items() if self.prop in props)
         try:
-            character = load_material(seq_scene(context).tachie.character().folder)
-        except ERRORS as e:
+            character = load_material(self._character(context).folder)
+        except (*ERRORS, AttributeError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         names = sorted(character.parts.get(category, {}))
-        if self.preset:
+        if self.still:
+            empty = "（立ち絵の表情のまま）"
+        elif self.preset:
             empty = "（基本の表情のまま）"
         else:
             empty = "（なし）" if category in SLOT_CATEGORIES else "（既定）"
@@ -2842,9 +2900,61 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def execute(self, context):
+        value = "" if self.part == NONE else self.part
+        if self.still:
+            return self._set_still_part(context, value)
         ch = seq_scene(context).tachie.character()
         target = find_expression(ch, self.preset) if self.preset else ch
-        setattr(target, self.prop, "" if self.part == NONE else self.part)
+        setattr(target, self.prop, value)
+        return {"FINISHED"}
+
+    def _set_still_part(self, context, value: str):
+        sed = seq_scene(context).sequence_editor
+        strip = sed.active_strip
+        if strip is None or not strip.get("tachie_still"):
+            return {"CANCELLED"}
+        category = next(c for c, props in PART_PROPS.items() if self.prop in props)
+        parts = still_parts(strip)
+        if category in SLOT_CATEGORIES:  # 他・後はスロットごと（"" のスロットは表情のまま）
+            index = PART_PROPS[category].index(self.prop)
+            slots = list(parts.get(category) or [])
+            slots += [""] * (index + 1 - len(slots))
+            slots[index] = value
+            parts[category] = slots
+        else:
+            parts[category] = value
+        set_still_parts(strip, parts)
+        try:
+            sed.active_strip = remake_still(context, strip)
+            refresh_motion_now(seq_scene(context))
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class TACHIE_OT_clear_still_parts(bpy.types.Operator):
+    """選択中の立ち絵のパーツを元に戻す（表情プリセットの見た目にする）"""
+
+    bl_idname = "tachie.clear_still_parts"
+    bl_label = "パーツを元に戻す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        sed = seq_scene(context).sequence_editor
+        return bool(sed and sed.active_strip and sed.active_strip.get("tachie_parts"))
+
+    def execute(self, context):
+        sed = seq_scene(context).sequence_editor
+        strip = sed.active_strip
+        set_still_parts(strip, None)
+        try:
+            sed.active_strip = remake_still(context, strip)
+            refresh_motion_now(seq_scene(context))
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 
@@ -3644,6 +3754,7 @@ _classes = (
     TACHIE_OT_accent_join,
     TACHIE_OT_accent_split,
     TACHIE_OT_flip_still,
+    TACHIE_OT_clear_still_parts,
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,
     TACHIE_OT_expression_add,

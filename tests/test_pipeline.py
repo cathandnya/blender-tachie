@@ -678,3 +678,14 @@ def test_still_frames(tmp_path: Path, char_dir: Path):
     frames = still_frames(base, [], [(-2, motion, talk)], 4, 10, seed="s")
     states = mouth_states(motion, character, talk.expression)[1]
     assert [f.name.split("_", 1)[1] for f in frames] == [f"{k[0]}{v}.png" for k, v in states[2:6]]
+
+
+def test_overlay_parts():
+    """表情に、変えるパーツだけを重ねる（立ち絵ごとのパーツ）。他・後はスロットごと。"""
+    from tachie_studio.pipeline.config import overlay_parts
+    from tachie_studio.tachie import Expression
+
+    base = Expression(eye="普通", mouth="むふ", others=["左腕", "右腕"])
+    out = overlay_parts(base, {"目": "ジト目", "他": ["", "右腕_指差し"]})
+    assert out.eye == "ジト目" and out.mouth == "むふ" and out.others == ["左腕", "右腕_指差し"]
+    assert overlay_parts(base, {}) == base

@@ -569,6 +569,7 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     text: StringProperty(name="セリフ", default="",
                          description="追加するセリフ。字幕の改行は \\n（¥n）と書く（Blender の入力欄には改行を入れられない）")
     expression: StringProperty(name="表情", default="", description="追加するセリフの表情プリセット。空なら基本の表情")
+    show_still_parts: BoolProperty(name="パーツ", default=False, description="選択中の立ち絵のパーツ（その立ち絵だけ）を出す")
     script: PointerProperty(name="台本", type=bpy.types.Text,
                             description="テキストエディタの台本（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」）")
     line_gap: FloatProperty(name="セリフの間隔", default=0.2, min=0.0, max=10.0, unit="TIME_ABSOLUTE",

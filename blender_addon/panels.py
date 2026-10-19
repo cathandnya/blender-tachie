@@ -119,6 +119,7 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row = layout.row(align=True)
             row.label(text="表情")
             row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "STILL"
+            draw_still_parts(layout, context, strip)
             owner = seq_scene(context).tachie.characters.get(strip["tachie_still"])
             flipped = bool(owner and still_flip(strip, owner))
             row = layout.row(align=True)
@@ -391,6 +392,38 @@ def part_rows(ch):
     if simple:
         return [(c, PART_PROPS[c], SIMPLE_LABELS[c]) for c in ("体", "口")]
     return [(c, props, c) for c, props in PART_PROPS.items()]
+
+
+def draw_still_parts(layout, context, strip) -> None:
+    """選択中の立ち絵のパーツ（その立ち絵だけ、表情プリセットの上に重ねる。YMM4 の「表情: カスタム」）。"""
+    from .operators import still_parts
+
+    settings = seq_scene(context).tachie
+    ch = next((c for c in settings.characters if c.name == strip.get("tachie_still")), None)
+    parts = still_parts(strip)
+    row = layout.row(align=True)
+    row.prop(settings, "show_still_parts", text="パーツ（この立ち絵だけ）" + ("：変更あり" if parts else ""),
+             icon="TRIA_DOWN" if settings.show_still_parts else "TRIA_RIGHT", emboss=False)
+    if parts:
+        row.operator("tachie.clear_still_parts", text="", icon="LOOP_BACK")
+    if not settings.show_still_parts or ch is None:
+        return
+    rows = part_rows(ch)
+    if not rows:
+        layout.label(text="PSD 立ち絵は表情プリセットで変えてください", icon="INFO")
+        return
+    col = layout.column(align=True)
+    for category, props, title in rows:
+        for i, prop in enumerate(props):
+            value = parts.get(category)
+            if isinstance(value, list):
+                value = value[i] if i < len(value) else ""
+            elif len(props) > 1:
+                value = ""
+            r = col.row(align=True)
+            r.label(text=title if len(props) == 1 else f"{category}{i + 1}")
+            op = r.operator("tachie.pick_part", text=value or "（表情のまま）", depress=bool(value))
+            op.prop, op.still = prop, True
 
 
 class TACHIE_PT_expression(_WithTachie, _Panel, bpy.types.Panel):

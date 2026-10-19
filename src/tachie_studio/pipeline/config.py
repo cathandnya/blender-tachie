@@ -121,13 +121,19 @@ class CharacterConfig:
             return self.expression
         if preset not in self.expressions:
             raise ValueError(f"{self.name} に表情 {preset!r} がありません")
-        kwargs = _expression(self.expressions[preset], f"{self.name}.expressions.{preset}", as_kwargs=True)
-        if "layers" in kwargs:  # PSD 立ち絵: 基本の表情の上書きにプリセットの上書きを重ねる
-            kwargs["layers"] = {**self.expression.layers, **kwargs["layers"]}
-        for attr in ("others", "backs"):
-            if attr in kwargs:
-                kwargs[attr] = merge_slots(getattr(self.expression, attr), kwargs[attr])
-        return replace(self.expression, **kwargs)
+        return overlay_parts(self.expression, self.expressions[preset], f"{self.name}.expressions.{preset}")
+
+
+def overlay_parts(expression: Expression, parts: dict, where: str = "表情") -> Expression:
+    """表情に、変えるパーツだけの表（表情プリセットと同じ形）を重ねる。他・後はスロットごと（"" のスロットは元のまま）、
+    PSD のレイヤーは元の上書きに重ねる。立ち絵ごとのパーツ（アドオンの tachie_parts）もこれで重ねる。"""
+    kwargs = _expression(parts, where, as_kwargs=True)
+    if "layers" in kwargs:  # PSD 立ち絵: 元の上書きに重ねる
+        kwargs["layers"] = {**expression.layers, **kwargs["layers"]}
+    for attr in ("others", "backs"):
+        if attr in kwargs:
+            kwargs[attr] = merge_slots(getattr(expression, attr), kwargs[attr])
+    return replace(expression, **kwargs)
 
 
 def merge_slots(base: list[str], override: list[str]) -> list[str]:

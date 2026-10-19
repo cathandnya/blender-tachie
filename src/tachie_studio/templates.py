@@ -11,7 +11,8 @@
 - `{"kind": "still", "character", "expression", "parts", "pose", "flip", "jump"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
   `{"tachie_pos_x", "tachie_pos_y", "tachie_scale"}`。YMM4 の立ち絵アイテムは代わりに `x` / `y` / `zoom` を持ち、置くときに
   キャラの立ち位置・高さとの差にする。`flip` は左右反転（None ならキャラの設定）、`jump` は跳ねながら登場退場
-  （`ymmp.jump_on_screen` の形）、`settings` は不透明度・回転角・フェード・喋る時のみ表示（`ymmp.tachie_settings`））
+  （`ymmp.jump_on_screen` の形）、`settings` は不透明度・回転角・フェード・喋る時のみ表示（`ymmp.tachie_settings`）、
+  `custom_parts` は立ち絵ごとのパーツ（アドオンの `tachie_parts`、表情プリセットと同じ形））
 
 YMM4 のテンプレートは `user/setting/<版>/YukkuriMovieMaker.Settings.ItemSettings.json` の `Templates`
 （`{Name, Path: [フォルダ…], FPS, Width, Height, Items: [...]}`、Items は .ymmp のアイテムと同じ形）。
