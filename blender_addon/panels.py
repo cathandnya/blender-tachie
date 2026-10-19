@@ -394,6 +394,17 @@ def part_rows(ch):
     return [(c, props, c) for c, props in PART_PROPS.items()]
 
 
+def draw_part_row(col, material, category: str, label: str, value: str, text: str, depress: bool = False):
+    """パーツの欄の 1 行（ラベル・パーツの見本・選ぶボタン）。ボタン（tachie.pick_part）を返す。"""
+    from .operators import draw_swatch, part_icon
+
+    row = col.row(align=True)
+    row.label(text=label)
+    part = material.parts.get(category, {}).get(value) if material is not None and value else None
+    icon = part_icon(part.path) if part is not None else 0
+    return draw_swatch(row.row(align=True), icon).operator("tachie.pick_part", text=text, depress=depress)
+
+
 def draw_still_parts(layout, context, strip) -> None:
     """選択中の立ち絵のパーツ（その立ち絵だけ、表情プリセットの上に重ねる。YMM4 の「表情: カスタム」）。"""
     from .operators import still_parts
@@ -412,6 +423,7 @@ def draw_still_parts(layout, context, strip) -> None:
     if not rows:
         layout.label(text="PSD 立ち絵は表情プリセットで変えてください", icon="INFO")
         return
+    material = material_of(ch)
     col = layout.column(align=True)
     for category, props, title in rows:
         for i, prop in enumerate(props):
@@ -420,9 +432,8 @@ def draw_still_parts(layout, context, strip) -> None:
                 value = value[i] if i < len(value) else ""
             elif len(props) > 1:
                 value = ""
-            r = col.row(align=True)
-            r.label(text=title if len(props) == 1 else f"{category}{i + 1}")
-            op = r.operator("tachie.pick_part", text=value or "（表情のまま）", depress=bool(value))
+            op = draw_part_row(col, material, category, title if len(props) == 1 else f"{category}{i + 1}",
+                               value, value or "（表情のまま）", depress=bool(value))
             op.prop, op.still = prop, True
 
 
@@ -441,12 +452,10 @@ class TACHIE_PT_expression(_WithTachie, _Panel, bpy.types.Panel):
         col = layout.column(align=True)
         for category, props, title in part_rows(ch):
             for i, prop in enumerate(props):
-                row = col.row(align=True)
                 label = title if len(props) == 1 else f"{category}{i + 1}"
-                row.label(text=label)
                 value = getattr(ch, prop)
                 empty = "（なし）" if len(props) > 1 else "（既定）"
-                op = row.operator("tachie.pick_part", text=value or empty)
+                op = draw_part_row(col, material, category, label, value, value or empty)
                 op.prop = prop
         layout.label(text="変えたら「全セリフを再生成」で反映", icon="INFO")
 
@@ -475,9 +484,9 @@ class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
         col = layout.column(align=True)
         for category, props, title in part_rows(ch):
             for i, prop in enumerate(props):
-                row = col.row(align=True)
-                row.label(text=title if len(props) == 1 else f"{category}{i + 1}")
-                op = row.operator("tachie.pick_part", text=getattr(preset, prop) or "（基本のまま）")
+                value = getattr(preset, prop)
+                op = draw_part_row(col, material, category, title if len(props) == 1 else f"{category}{i + 1}",
+                                   value, value or "（基本のまま）")
                 op.prop = prop
                 op.preset = preset.name
 

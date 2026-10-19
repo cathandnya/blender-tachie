@@ -199,6 +199,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   パーツを選ぶ一覧（`tachie.pick_part` の invoke、`invoke_popup`）は YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた
   見本（`compose.part_thumbnail`、アドオンのユーザーフォルダの thumbs/ に残し `bpy.utils.previews` で読む、`part_icon`）を
   名前の左に並べ、押すと `tachie.set_part` で当てる（`apply_part`。スクリプトからは pick_part の execute でも当てられる）。
+  キャラの表情・表情プリセット・立ち絵のパーツの欄にも同じ見本を出す（`panels.draw_part_row`、見本の列は `operators.draw_swatch`、
+  大きさは `PART_ICON_SCALE`、背景は白）。
   「立ち絵だけを置く」は立ち絵を再生位置に置く（同じキャラの立ち絵とは重ねられない）。伸ばすと自動の反映で今の長さに作り直す
   （「作り直す」ボタンでも）。素材を選び直す・読み直すと、そのキャラの立ち絵を作り直す（キャッシュの画像を直接指しているため）。
   セリフごとの声（読み上げ速度・声の高さ・抑揚・音量・開始/終了無音・間の長さ、`properties.VOICE_PROPS`）は

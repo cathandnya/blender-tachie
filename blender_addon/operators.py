@@ -2916,14 +2916,7 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         current = self._current(context)
         col = self.layout.column(align=True)
         for value, label, icon in _part_rows:
-            split = col.split(factor=0.22, align=True)
-            if icon:
-                split.template_icon(icon_value=icon, scale=PART_ICON_SCALE)
-            else:
-                split.label(text="")
-            button = split.column(align=True)
-            button.scale_y = PART_ICON_SCALE  # 見本と同じ高さのボタン
-            op = button.operator("tachie.set_part", text=label, depress=value == current)
+            op = draw_swatch(col.row(align=True), icon).operator("tachie.set_part", text=label, depress=value == current)
             op.prop, op.preset, op.still, op.part = self.prop, self.preset, self.still, value
 
     def _current(self, context) -> str:
@@ -2996,12 +2989,25 @@ class TACHIE_OT_set_part(bpy.types.Operator):
         return apply_part(self, context, self.part)
 
 
-PART_ICON_SCALE = 2.4  # パーツを選ぶ一覧の見本の大きさ（UI の単位）
+PART_ICON_SCALE = 1.2  # パーツの見本の大きさ（UI の単位。パーツを選ぶ一覧と表情の欄）
 PART_ICON_SIZE = 96  # 見本の画像のピクセル
 # 見本の背景（YMM4 と同じく白。透明だと Blender の暗い画面で黒い目などが背景に沈む）
 PART_ICON_BACKGROUND = (255, 255, 255, 255)
 _part_rows: list = []
 _part_previews = None
+
+
+def draw_swatch(row, icon: int):
+    """行の左にパーツの見本（無ければ同じ幅の空き）を置き、右の見本と同じ高さのボタン用の列を返す。"""
+    swatch = row.column(align=True)
+    swatch.ui_units_x = PART_ICON_SCALE  # 見本の無い行も同じ幅を空けて、ボタンの位置をそろえる
+    if icon:
+        swatch.template_icon(icon_value=icon, scale=PART_ICON_SCALE)
+    else:
+        swatch.label(text="")
+    button = row.column(align=True)
+    button.scale_y = PART_ICON_SCALE  # 見本と同じ高さ
+    return button
 
 
 def part_icon(path: Path) -> int:
