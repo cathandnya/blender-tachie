@@ -296,6 +296,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
     書き換える）。`blender_addon/prefetch.py` の `paused()` で止めてから書き換える。オペレーターは `__init__.register` で
     execute / modal を包む（`guard_class`）。待っている間もタイマーで呼ばれる modal（YMM4 の読み込み・AI での表情の割り当て）と
     自動の反映（`_apply_faces_later`）は、書き換えるところだけ止める（止めるたびに先読みしたフレームが捨てられるため）。
+    戻すのは画面があるとき 0.5 秒待ってから（`prefetch.RESUME_SECONDS`、タイマー）。すぐ戻すと Blender がシーケンサーの中身を
+    更新し終える前の古い状態でプリフェッチが描き始め、落ちた（立ち絵を分割してドラッグしたあと）。画面が無いときはすぐ戻す。
+    続けて書き換えたら最後から数え直す。保存の前（`save_pre`）は待たずに戻し、止めたことのあるシーン（名前）は
+    undo / redo のあとに切れていたら戻す（操作の undo の段に use_prefetch = False が残るため）。
   - 既定のビュー変換 AgX だと立ち絵の色が淡くなるので、セリフ追加時に Standard へ切り替える。
   - 日本語フォントは `/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc`（ファイル名が NFD なので glob で探す）。
 - VOICEVOX エンジンは `http://127.0.0.1:50021`（0.25.2）。
