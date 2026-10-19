@@ -29,7 +29,7 @@ from .tachie_studio.tachie.compose import load_image
 from .tachie_studio.tachie.psd import (animation_config_path, apply_layers, load_ymm_presets, read_animation_config,
                                        write_animation_config, ymm_preset)
 from .tachie_studio.voicevox import VoicevoxClient, VoicevoxError
-from .tachie_studio.voicevox.accent import join_phrases, kana_from_phrases, split_kana_lines, split_phrase
+from .tachie_studio.voicevox.accent import join_phrases, kana_from_phrases, split_phrase
 
 MORA_UNITS = 2.4  # 抑揚の編集の 1 モーラの幅（UI の単位）
 
@@ -1683,26 +1683,21 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
         return {"FINISHED"}
 
 
-KANA_LINES = 3  # 発音を編集のダイアログの行の数
-
-
 class TACHIE_OT_edit_kana(bpy.types.Operator):
-    """選択中のセリフの発音を、広い欄で編集して作り直す（3 行をつなげたものが発音）"""
+    """選択中のセリフの発音を、広い欄で編集して作り直す"""
 
     bl_idname = "tachie.edit_kana"
     bl_label = "発音を編集"
     bl_options = {"REGISTER", "UNDO"}
 
-    line_1: bpy.props.StringProperty(name="1 行目", options={"SKIP_SAVE"})
-    line_2: bpy.props.StringProperty(name="2 行目", options={"SKIP_SAVE"})
-    line_3: bpy.props.StringProperty(name="3 行目", options={"SKIP_SAVE"})
+    text: bpy.props.StringProperty(name="発音", options={"SKIP_SAVE"})
 
     @classmethod
     def poll(cls, context):
         return active_line_id(context) is not None
 
     def kana(self) -> str:
-        return "".join(getattr(self, f"line_{i + 1}") for i in range(KANA_LINES)).strip()
+        return self.text.strip()
 
     @staticmethod
     def initial_kana(context) -> str:
@@ -1717,18 +1712,15 @@ class TACHIE_OT_edit_kana(bpy.types.Operator):
         return (sound.get("tachie_kana") or "").strip()
 
     def invoke(self, context, event):
-        for i, line in enumerate(split_kana_lines(self.initial_kana(context), KANA_LINES)):
-            setattr(self, f"line_{i + 1}", line)
+        self.text = self.initial_kana(context)
         return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映して作り直す")
 
     def draw(self, context):
-        col = self.layout.column(align=True)
-        for i in range(KANA_LINES):
-            col.prop(self, f"line_{i + 1}", text="")
+        self.layout.prop(self, "text", text="")
         row = self.layout.row(align=True)
         op = row.operator("tachie.preview_line", text="この発音で試聴", icon="PLAY")
         op.kana, op.use_kana = self.kana(), True
-        self.layout.label(text="3 行をつなげたものが発音（' はアクセント、/ と 、 は句の区切り）。空にすると自動の読み",
+        self.layout.label(text="' はアクセント、/ と 、 は句の区切り。空にすると自動の読み",
                           icon="INFO")
 
     def execute(self, context):

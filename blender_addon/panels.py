@@ -159,7 +159,13 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                 row.operator("tachie.edit_kana", text="発音を編集", icon="GREASEPENCIL")
                 row.operator("tachie.preview_line", text="", icon="PLAY")
                 row.operator("tachie.reset_kana", text="", icon="FILE_REFRESH")
-                draw_kana(layout, context, sound.get("tachie_kana", ""))
+                from .operators import input_text
+
+                # テキストを置いたときから書き換えていれば、前の発音は使わない（再生成で新しいテキストの自動の読み）
+                changed = input_text(strip.get("tachie_text", "")) != input_text(sound.get("tachie_placed_text",
+                                                                                           strip.get("tachie_text", "")))
+                draw_kana(layout, context, "" if changed else sound.get("tachie_kana", ""),
+                          empty="（テキストを変えたので、再生成すると自動の読み）" if changed else "（自動の読み）")
                 row = layout.row(align=True)
                 edited = bool(sound.get("tachie_accent"))
                 row.operator("tachie.edit_accent", text="抑揚を編集（編集済み）" if edited else "抑揚を編集",
@@ -397,8 +403,8 @@ def part_rows(ch):
     return [(c, props, c) for c, props in PART_PROPS.items()]
 
 
-def draw_kana(layout, context, kana: str, max_lines: int = 3) -> None:
-    """発音を折り返して見せる（句の区切りで改行、最大 `max_lines` 行。編集は「発音を編集」のダイアログで）。"""
+def draw_kana(layout, context, kana: str, max_lines: int = 3, empty: str = "（自動の読み）") -> None:
+    """発音を折り返して見せる（句の区切りで改行、最大 `max_lines` 行）。押すと「発音を編集」のダイアログを開く。"""
     width = context.region.width if context.region else 300
     per_line = max(8, int(width / (14 * context.preferences.system.ui_scale)) - 2)  # 全角の文字数（だいたい）
     lines, current = [], ""
@@ -416,8 +422,10 @@ def draw_kana(layout, context, kana: str, max_lines: int = 3) -> None:
         lines = lines[:max_lines - 1] + ["".join(lines[max_lines - 1:])]
     box = layout.box().column(align=True)
     box.scale_y = 0.8
-    for line in lines or ["（自動の読み）"]:
-        box.label(text=line)
+    for line in lines or [empty]:
+        row = box.row()
+        row.alignment = "LEFT"  # 文字の幅のボタンにして左に寄せる（表示と同じ見た目）
+        row.operator("tachie.edit_kana", text=line, emboss=False)  # 押すと「発音を編集」のダイアログ
 
 
 def draw_part_row(col, material, category: str, label: str, value: str, text: str, depress: bool = False):

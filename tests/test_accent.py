@@ -51,13 +51,3 @@ def test_split():
     assert head[2]["accent"] == 1 and head[2]["pause_mora"] is None and head[3]["pause_mora"] == PAUSE
     with pytest.raises(ValueError):
         split_phrase(phrases(), 0, 0)
-
-
-def test_split_kana_lines():
-    from tachie_studio.voicevox.accent import split_kana_lines
-
-    kana = "キョ'オワ、ゼ'ンカイノ/ナス'ヨオ/ピイシ'イノ/ツズキ'"
-    lines = split_kana_lines(kana)
-    assert len(lines) == 3 and "".join(lines) == kana and all(lines)
-    assert all(not line.startswith(("/", "、")) for line in lines)  # 区切りは前の行の終わり
-    assert split_kana_lines("ア'", 3) == ["ア'", "", ""] and split_kana_lines("", 3) == ["", "", ""]

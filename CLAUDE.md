@@ -219,9 +219,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （そのテキストの自動の読み）に持つ。再生成は `tachie_kana` が自動と違い、かつテキストが置いたときのまま
   （`tachie_placed_text`）のときだけ使う（`line_kana`）。発音は `POST /accent_phrases?is_kana=true` で accent_phrases を
   差し替える。エンジンは長音を「オ」、無声化を `_` で表記し、アクセントの無い句はエラーにする。
-  パネルは発音を折り返して見せるだけ（`panels.draw_kana`。Blender の入力欄は 1 行）で、編集は「発音を編集」
-  （`tachie.edit_kana`、`invoke_props_dialog` の 3 行の欄。`voicevox.accent.split_kana_lines` で句の区切りに分け、つなげたものが
-  発音。確定で再生成、空なら自動の読み。試聴は `tachie.preview_line` の `kana`）。
+  パネルは発音を折り返して見せ（`panels.draw_kana`。Blender の入力欄は 1 行。各行は押すと「発音を編集」を開くボタン）、編集は「発音を編集」
+  （`tachie.edit_kana`、`invoke_props_dialog` の幅の広い 1 つの欄。確定で再生成、空なら自動の読み。試聴は
+  `tachie.preview_line` の `kana`）。
   台本・セリフ入力欄・置いたセリフのテキスト（再生成時）では最後に `{発音}` と書ける（`script.split_kana`）。
   試聴は `aud` で出力フォルダの `preview.wav` を鳴らす（画面の無い Blender では鳴らさない。`aud.Device()` は `-noaudio` でも
   音声デバイスを開くので、smoke.sh の試聴のテストで実際に声が鳴っていた）。
