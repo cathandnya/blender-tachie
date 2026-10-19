@@ -14,7 +14,7 @@ from bpy.props import (
 )
 
 from . import prefetch
-from .tachie_studio.subtitle import chars_per_line, wrap
+from .tachie_studio.subtitle import breaks, chars_per_line, wrap
 from .tachie_studio.pipeline.config import VOICE_DEFAULTS
 from .tachie_studio.voicevox import DEFAULT_URL
 
@@ -304,7 +304,7 @@ LINE_PITCH = 1.16
 def name_height(ch, text: str) -> float:
     """キャラ名を置く高さ（字幕の上。字幕の行数から見積もる）。"""
     render = ch.id_data.render
-    lines = wrap(text, chars_per_line(render.resolution_x, ch.font_size)).count("\n") + 1
+    lines = wrap(breaks(text), chars_per_line(render.resolution_x, ch.font_size)).count("\n") + 1
     margin = ch.box_margin if ch.subtitle_box else 0.0
     # 1 行目の高さ + 2 行目からの行の間隔
     text_height = ch.font_size * (1.25 + (lines - 1) * LINE_PITCH * ch.line_spacing)
@@ -326,7 +326,7 @@ def place_text(strip, ch, text: str) -> None:
 
 def apply_subtitle(strip, ch, text: str) -> None:
     """字幕ストリップにキャラクターの字幕スタイルを設定する（改行も入れ直す）。"""
-    strip.text = wrap(text, chars_per_line(ch.id_data.render.resolution_x, ch.font_size))
+    strip.text = wrap(breaks(text), chars_per_line(ch.id_data.render.resolution_x, ch.font_size))
     strip.font_size = ch.font_size
     font = load_font(ch.font_path)
     if font is not None:
@@ -412,6 +412,34 @@ LINE_LAYOUTS = [
     ("SUBTITLE", "音声と字幕", "音声と字幕を置く", 1),
     ("AUDIO", "音声だけ", "字幕を出さない", 2),
 ]
+
+
+_clearing_text = False
+
+
+def _update_text(self, context):
+    """セリフの入力欄で Enter（入力の確定）したら、そのセリフを追加する。Blender の入力欄は Enter と Shift+Enter を
+    区別できず改行も入れられないので、改行は \\n と書く。画面の無いとき（smoke）と入力欄を空にしたときは何もしない。"""
+    if _clearing_text or bpy.app.background or not self.text.strip():
+        return
+    scene_name = self.id_data.name
+
+    def run():
+        from .operators import add_line_from_input
+
+        add_line_from_input(scene_name)
+    # 更新の中からはオペレーターを呼ばない（タイマーで、シーケンサーの画面のコンテキストで呼ぶ）
+    bpy.app.timers.register(run, first_interval=0.0)
+
+
+def clear_text_input(settings) -> None:
+    """セリフの入力欄を空にする（`_update_text` を走らせない）。"""
+    global _clearing_text
+    _clearing_text = True
+    try:
+        settings.text = ""
+    finally:
+        _clearing_text = False
 
 
 def _update_lanes(self, context):
@@ -560,7 +588,8 @@ class TachieYmmpCharacter(bpy.types.PropertyGroup):
 class TachieSceneSettings(bpy.types.PropertyGroup):
     characters: CollectionProperty(type=TachieCharacter)
     active_character: IntProperty(name="キャラクター", default=0)
-    text: StringProperty(name="セリフ", default="")
+    text: StringProperty(name="セリフ", default="", update=_update_text,
+                         description="Enter で選択中のキャラクターのセリフとして追加する。改行は \\n（¥n）と書く")
     expression: StringProperty(name="表情", default="", description="追加するセリフの表情プリセット。空なら基本の表情")
     script: PointerProperty(name="台本", type=bpy.types.Text,
                             description="テキストエディタの台本（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」）")

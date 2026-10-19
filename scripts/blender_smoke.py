@@ -865,6 +865,16 @@ for x in [x for x in sed.strips if x.get("tachie_character") == nar.name
 s.characters.remove(len(s.characters) - 1)
 s.active_character = 0
 ops.refresh_faces(bpy.context)
+# 入力欄には改行を入れられないので、\n（¥n）を改行にする（字幕は改行し、読み上げは続けて読む）
+scene.frame_current = max(r for _, r, _ in lines().values()) + 30
+s.active_character, s.expression, s.text = 0, "", "改行の\\nテスト¥nなのだ。"
+run(bpy.ops.tachie.add_line)
+nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"].startswith("改行の"))
+assert nl[0]["tachie_text"] == "改行の\\nテスト\\nなのだ。", nl[0]["tachie_text"]  # パネルで見える書き方のまま持つ
+assert not s.text  # 追加したら入力欄を空にする
+assert ops.line_subtitle(nl).text.split("\n")[:3] == ["改行の", "テスト", "なのだ。"], ops.line_subtitle(nl).text
+for x in nl:
+    sed.strips.remove(x)
 scene.frame_end = frame_end_before
 
 # YMM4 のプロジェクトの読み込み: 今あるキャラ（ずんだもん）はそのまま、無いキャラは素材フォルダから追加する

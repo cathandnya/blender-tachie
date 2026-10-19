@@ -63,7 +63,7 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
 
         ch = s.character()
-        layout.prop(s, "text", text="")
+        layout.prop(s, "text", text="", icon="GREASEPENCIL")
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
         row.enabled = tachie
@@ -151,9 +151,8 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row.operator("tachie.pick_speaker", text=name, icon="VIEWZOOM").target = "LINE"
             layout.prop(strip, '["tachie_text"]', text="")
             if sound is not None and "tachie_kana" in sound:
-                split = layout.split(factor=0.18, align=True)
-                split.label(text="発音")
-                row = split.row(align=True)
+                layout.label(text="発音")  # 発音は長いので、ラベルと分けて幅いっぱいに
+                row = layout.row(align=True)
                 row.prop(sound, '["tachie_kana"]', text="")
                 row.operator("tachie.preview_line", text="", icon="PLAY")
                 row.operator("tachie.reset_kana", text="", icon="FILE_REFRESH")

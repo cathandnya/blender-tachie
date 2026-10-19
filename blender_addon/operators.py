@@ -15,11 +15,12 @@ from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import channels as lanes
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, place_text, still_flip, system_fonts, text_offset
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, clear_text_input, place_text, still_flip, system_fonts, text_offset
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, link_frames, still_frames
 from .tachie_studio.pipeline.script import script_format, split_kana
+from .tachie_studio.subtitle import breaks, mark_breaks
 from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
                                             load_material_defaults, load_material_table, merge_tables,
                                             parse_characters)
@@ -71,8 +72,15 @@ def engine_url(context, ch=None) -> str:
     return ENGINE_PRESETS[ch.engine][1]
 
 
+class _Client(VoicevoxClient):
+    """セリフのテキストの改行の書き方（\\n）を改行にしてから読ませる（そのままだと「エヌ」と読む）。"""
+
+    def audio_query(self, text: str, speaker: int):
+        return super().audio_query(breaks(text), speaker)
+
+
 def client(context, ch=None, timeout: float = 60.0) -> VoicevoxClient:
-    return VoicevoxClient(engine_url(context, ch), timeout=timeout)
+    return _Client(engine_url(context, ch), timeout=timeout)
 
 
 def output_dir(context) -> Path:
@@ -399,7 +407,8 @@ def clip_job(context, ch, text: str, preset: str | None = None, speaker: int | N
                              expression=expression_of(ch, preset), mouth=ch.mouth)
     clip_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     lines_dir = output_dir(context) / "lines"
-    line = Line(0, ch.name, text, preset or None, speaker, voice if voice is not None else character_voice(ch),
+    # 読み上げとまばたきの seed は改行で（\\n の書き方でも改行でも同じセリフにする）
+    line = Line(0, ch.name, breaks(text), preset or None, speaker, voice if voice is not None else character_voice(ch),
                 kana or None, accent or None, accent_kana=accent_kana, fade_in=audio.get("fade_in", 0.0),
                 fade_out=audio.get("fade_out", 0.0), after=audio.get("after", 0.0), wav=wav)
     engine, fps = client(context, ch), scene_fps(seq_scene(context))
@@ -463,6 +472,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         channels = {role: lay.channel(role, ch.name) for role in ("audio", "subtitle", "name")}
         channels["name"] = channels["name"] or lanes.free_channel(None, lay, start, start + 1)
     sed = scene.sequence_editor or scene.sequence_editor_create()
+    text = mark_breaks(text)  # YMM4 のセリフなどの改行も、パネルで見える \\n の書き方で持つ
     label = f"{ch.name}: " + (text if len(text) <= 16 else text[:15] + "…")
     sound = sed.strips.new_sound(name=f"音声 {label}", filepath=_path_for_blend(lines_dir / clip.wav),
                                  channel=channels["audio"], frame_start=start)
@@ -545,11 +555,13 @@ def line_accent(strips, text: str, kana: str | None, speaker: int, auto: str | N
         accent = json.loads(sound["tachie_accent"])
     except ValueError:
         return None
-    if text != sound.get("tachie_placed_text", text):
+    if input_text(text) != input_text(sound.get("tachie_placed_text", text)):
         return None  # テキストが変わった（自動の読みも変わる）
     if auto is None:
         auto = sound.get("tachie_kana_auto", "")
-    if key != [text, kana or auto, speaker]:
+    if key[:1] and isinstance(key[0], str):
+        key[0] = input_text(key[0])  # 前の版は改行をそのまま持っていた
+    if key != [input_text(text), kana or auto, speaker]:
         return None
     return accent
 
@@ -598,7 +610,8 @@ def line_kana(strips, text: str) -> str | None:
     if sound is None:
         return None
     kana = (sound.get("tachie_kana") or "").strip()
-    if not kana or kana == sound.get("tachie_kana_auto") or text != sound.get("tachie_placed_text", text):
+    # 前の版（YMM4 の読み込み）は改行をそのまま持っていたので、\\n の書き方にそろえて比べる
+    if not kana or kana == sound.get("tachie_kana_auto") or input_text(text) != input_text(sound.get("tachie_placed_text", text)):
         return None
     return kana
 
@@ -649,7 +662,7 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
         raise ValueError("セリフのストリップが見つかりません")
     text = text if text is not None else line_text(old)
     # セリフ入力欄と同じく、テキストの最後の {発音} は発音として使う（字幕と読み上げに括弧を残さない）
-    text, inline_kana = split_kana(text.strip())
+    text, inline_kana = split_kana(input_text(text).strip())
     if inline_kana and kana is None:
         kana = inline_kana
     preset = preset if preset is not None else old[0].get("tachie_expression", "")
@@ -1213,6 +1226,40 @@ def active_line_id(context) -> str | None:
 
 # ---- オペレーター ----
 
+def input_text(text: str) -> str:
+    """入力欄・パネルで書いたセリフの改行の書き方をそろえる（¥n → \\n）。ストリップのテキストは \\n のまま持ち
+    （入力欄に改行を入れると見えない）、字幕と読み上げのときに改行にする（`subtitle.breaks`）。"""
+    return mark_breaks(text)
+
+
+_auto_added_at = 0.0  # 最後にセリフを追加した時刻（Enter とボタンの二重の追加を防ぐ）
+
+
+def add_line_from_input(scene_name: str) -> None:
+    """入力欄の Enter でセリフを追加する（`properties._update_text` からタイマーで呼ぶ）。追加できたら入力欄を空にする。"""
+    wm = bpy.context.window_manager
+    scene = bpy.data.scenes.get(scene_name)
+    if scene is None or not wm.windows or not scene.tachie.text.strip():
+        return  # ボタンで先に追加した（入力欄が空になった）
+    # シーケンサーの画面があるウィンドウ（3 本をつなぐ connect に画面のコンテキストが要る）
+    window, area = wm.windows[0], None
+    for w in wm.windows:
+        area = next((a for a in w.screen.areas if a.type == "SEQUENCE_EDITOR"), None)
+        if area is not None:
+            window = w
+            break
+    override = {"window": window}
+    if area is not None:
+        override.update(area=area, region=next((r for r in area.regions if r.type == "WINDOW"), None))
+    try:
+        with bpy.context.temp_override(**override):
+            result = bpy.ops.tachie.add_line("EXEC_DEFAULT", True)  # タイマーからでも元に戻すの段を積む
+    except RuntimeError:  # 失敗の理由はオペレーターがステータスバーに出す。入力欄はそのまま（直して Enter し直せる）
+        return
+    if result == {"FINISHED"}:
+        clear_text_input(scene.tachie)
+
+
 class TACHIE_OT_add_line(bpy.types.Operator):
     """選択中のキャラクターでセリフを合成し、音声と字幕を再生位置に置く（重なる立ち絵が口パクする）"""
 
@@ -1221,11 +1268,15 @@ class TACHIE_OT_add_line(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
+        global _auto_added_at
         settings = seq_scene(context).tachie
         ch = settings.character()
-        text, kana = split_kana(settings.text.strip())
+        text, kana = split_kana(input_text(settings.text).strip())
         if ch is None:
             self.report({"ERROR"}, "キャラクターを追加してください")
+            return {"CANCELLED"}
+        if not text and time.monotonic() - _auto_added_at < 1.0:
+            # 入力中にボタンを押すと、入力の確定（Enter と同じ）で追加したあとにボタンでも呼ばれる
             return {"CANCELLED"}
         if not text:
             self.report({"ERROR"}, "セリフを入力してください")
@@ -1242,6 +1293,8 @@ class TACHIE_OT_add_line(bpy.types.Operator):
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         connect(context, strips)
+        _auto_added_at = time.monotonic()
+        clear_text_input(settings)  # YMM4 と同じく、追加したら入力欄を空にする
         if settings.advance:
             seq_scene(context).frame_current = line_end(strips)
         clashes = subtitle_clashes(seq_scene(context).sequence_editor, strips)
@@ -1492,7 +1545,7 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
         strips = line_strips(sed, active_line_id(context))
         sound = line_sound(strips)
         # 再生成と同じテキストと発音（テキストの最後の {発音} > 編集した発音 > 自動の読み）
-        text, kana = split_kana(sed.active_strip["tachie_text"].strip())
+        text, kana = split_kana(input_text(sed.active_strip["tachie_text"]).strip())
         try:
             ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
             speaker = int((sound or strips[0]).get("tachie_speaker", ch.speaker))
@@ -1544,7 +1597,7 @@ def _line_context(context):
     sed = seq_scene(context).sequence_editor
     strips = line_strips(sed, active_line_id(context))
     sound = line_sound(strips)
-    text, kana = split_kana(sed.active_strip["tachie_text"].strip())
+    text, kana = split_kana(input_text(sed.active_strip["tachie_text"]).strip())
     ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
     speaker = int((sound or strips[0]).get("tachie_speaker", ch.speaker))
     return strips, text, ch, speaker, kana or line_kana(strips, text)
@@ -2942,7 +2995,7 @@ def subtitle_cues(scene) -> list:
         start, end = max(s.left_handle, first), min(s.right_handle, last)
         if end <= start:
             continue
-        text = s.get("tachie_placed_text", s.get("tachie_text", s.text))
+        text = breaks(s.get("tachie_placed_text", s.get("tachie_text", s.text)))
         cues.append(Cue((start - first) / fps, (end - first) / fps, text, s.get("tachie_character", "")))
     return cues
 

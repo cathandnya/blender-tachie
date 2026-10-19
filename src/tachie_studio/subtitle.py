@@ -10,6 +10,19 @@ _NO_LINE_START = set("、。，．,.!?！？」』）)]】〉》ー…‥ぁぃ�
 _NO_LINE_END = set("「『（([【〈《")
 
 
+BREAK = "\\n"  # セリフの改行の書き方（Blender の入力欄には改行を入れられないので、文字で書く）
+
+
+def mark_breaks(text: str) -> str:
+    """改行と ¥n（Mac の JIS キーボードの \\）を \\n の書き方にそろえる（入力欄・ストリップに持つテキストの形）。"""
+    return text.replace("\r\n", "\n").replace("\n", BREAK).replace("¥n", BREAK)
+
+
+def breaks(text: str) -> str:
+    """\\n の書き方（と ¥n）を改行にする（字幕・字幕ファイル・読み上げに渡すとき）。"""
+    return mark_breaks(text).replace(BREAK, "\n")
+
+
 def char_width(ch: str) -> float:
     """全角 = 1、半角 = 0.5。"""
     return 1.0 if unicodedata.east_asian_width(ch) in ("F", "W", "A") else 0.5

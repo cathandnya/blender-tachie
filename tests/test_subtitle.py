@@ -23,3 +23,12 @@ def test_wrap_keeps_newlines_and_max_lines():
 
 def test_chars_per_line():
     assert chars_per_line(1920, 64) == 1920 * 0.8 / 64
+
+
+def test_breaks():
+    """セリフの改行は \\n の書き方で持ち（Blender の入力欄に改行を入れられない）、字幕・読み上げのときに改行にする。"""
+    from tachie_studio.subtitle import breaks, mark_breaks
+
+    assert mark_breaks("一行目\r\n二行目¥n三行目") == "一行目\\n二行目\\n三行目"
+    assert breaks("一行目\\n二行目¥n三行目") == "一行目\n二行目\n三行目"
+    assert breaks(mark_breaks("a\nb")) == "a\nb"
