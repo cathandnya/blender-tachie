@@ -275,3 +275,20 @@ def test_simple_material_frames_and_default(tmp_path: Path):
     assert compose(c, Expression(mouth_frame=-1)).getpixel((0, 0))[0] == px[opened]
     assert compose(c, Expression(mouth_frame=0)).getpixel((0, 0))[0] == px[closed]
     assert compose(c, Expression(mouth_vowel="a")).getpixel((0, 0))[0] == px[opened]
+
+
+def test_part_thumbnail(tmp_path):
+    """パーツの見本: 写っている範囲を切り抜いて正方形に収める。透明なパーツは透明。"""
+    from PIL import Image
+
+    from tachie_studio.tachie.compose import part_thumbnail
+
+    big = Image.new("RGBA", (400, 800), (0, 0, 0, 0))
+    big.paste((255, 0, 0, 255), (100, 300, 140, 320))  # 40 x 20 の目
+    big.save(tmp_path / "eye.png")
+    thumb = part_thumbnail(tmp_path / "eye.png", 64)
+    assert thumb.size == (64, 64)
+    box = thumb.getchannel("A").getbbox()
+    assert box[2] - box[0] == 64 and 30 <= box[3] - box[1] <= 34  # 横いっぱい、縦は比を保つ
+    Image.new("RGBA", (10, 10), (0, 0, 0, 0)).save(tmp_path / "none.png")
+    assert part_thumbnail(tmp_path / "none.png", 32).getchannel("A").getbbox() is None

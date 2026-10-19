@@ -224,3 +224,18 @@ def psd_part(character: Character, expr: Expression, key: str) -> Part | None:
         return None
     frames = [Path(f"n{n.index}") for n in reversed(anim)]
     return PsdPart(category="口" if key == "mouth" else "目", name=anim[0].label, path=character.path, frames=frames)
+
+
+def part_thumbnail(path: Path, size: int = 96) -> Image.Image:
+    """パーツの画像の見本（パーツを選ぶ一覧に出す。YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた正方形）。
+    透明なパーツ（_ など）は透明の正方形。"""
+    image = load_image(path)
+    box = image.getchannel("A").getbbox()
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    if box is None:
+        return out
+    part = image.crop(box)
+    scale = size / max(part.size)  # 小さなパーツ（目・口）も見本いっぱいに拡大する
+    part = part.resize((max(1, round(part.width * scale)), max(1, round(part.height * scale))), Image.Resampling.LANCZOS)
+    out.paste(part, ((size - part.width) // 2, (size - part.height) // 2))
+    return out

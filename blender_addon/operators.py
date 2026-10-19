@@ -2884,14 +2884,15 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         return settings.character()
 
     def invoke(self, context, event):
-        global _part_items
+        global _part_items, _part_rows
         category = next(c for c, props in PART_PROPS.items() if self.prop in props)
         try:
             character = load_material(self._character(context).folder)
         except (*ERRORS, AttributeError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        names = sorted(character.parts.get(category, {}))
+        parts = character.parts.get(category, {})
+        names = sorted(parts)
         if self.still:
             empty = "（立ち絵の表情のまま）"
         elif self.preset:
@@ -2899,41 +2900,132 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         else:
             empty = "（なし）" if category in SLOT_CATEGORIES else "（既定）"
         _part_items = [(NONE, empty, "")] + [(n, n, "") for n in names]
-        context.window_manager.invoke_search_popup(self)
-        return {"RUNNING_MODAL"}
+        # YMM4 と同じく、パーツの見本（写っている範囲を切り抜いた画像）を名前の左に並べた一覧
+        wm = context.window_manager
+        wm.progress_begin(0, len(names))
+        try:
+            _part_rows = [("", empty, 0)]
+            for i, n in enumerate(names):
+                _part_rows.append((n, n, part_icon(parts[n].path)))
+                wm.progress_update(i + 1)
+        finally:
+            wm.progress_end()
+        return wm.invoke_popup(self, width=360)
+
+    def draw(self, context):
+        current = self._current(context)
+        col = self.layout.column(align=True)
+        for value, label, icon in _part_rows:
+            split = col.split(factor=0.22, align=True)
+            if icon:
+                split.template_icon(icon_value=icon, scale=PART_ICON_SCALE)
+            else:
+                split.label(text="")
+            button = split.column(align=True)
+            button.scale_y = PART_ICON_SCALE  # 見本と同じ高さのボタン
+            op = button.operator("tachie.set_part", text=label, depress=value == current)
+            op.prop, op.preset, op.still, op.part = self.prop, self.preset, self.still, value
+
+    def _current(self, context) -> str:
+        """今のパーツ（一覧で押されて見える）。"""
+        try:
+            if self.still:
+                category = next(c for c, props in PART_PROPS.items() if self.prop in props)
+                value = still_parts(seq_scene(context).sequence_editor.active_strip).get(category, "")
+                if isinstance(value, list):
+                    index = PART_PROPS[category].index(self.prop)
+                    value = value[index] if index < len(value) else ""
+                return value
+            ch = self._character(context)
+            return getattr(find_expression(ch, self.preset) if self.preset else ch, self.prop)
+        except (*ERRORS, AttributeError):
+            return ""
 
     def execute(self, context):
-        value = "" if self.part == NONE else self.part
-        if self.still:
-            return self._set_still_part(context, value)
-        ch = seq_scene(context).tachie.character()
-        target = find_expression(ch, self.preset) if self.preset else ch
-        setattr(target, self.prop, value)
-        return {"FINISHED"}
+        return apply_part(self, context, "" if self.part == NONE else self.part)
 
-    def _set_still_part(self, context, value: str):
-        sed = seq_scene(context).sequence_editor
-        strip = sed.active_strip
-        if strip is None or not strip.get("tachie_still"):
-            return {"CANCELLED"}
-        category = next(c for c, props in PART_PROPS.items() if self.prop in props)
-        parts = still_parts(strip)
-        if category in SLOT_CATEGORIES:  # 他・後はスロットごと（"" のスロットは表情のまま）
-            index = PART_PROPS[category].index(self.prop)
-            slots = list(parts.get(category) or [])
-            slots += [""] * (index + 1 - len(slots))
-            slots[index] = value
-            parts[category] = slots
-        else:
-            parts[category] = value
-        set_still_parts(strip, parts)
+
+def apply_part(op, context, value: str):
+    """パーツを当てる（キャラの基本の表情・表情プリセット・選択中の立ち絵のパーツ）。"""
+    if op.still:
+        return _set_still_part(op, context, value)
+    ch = seq_scene(context).tachie.character()
+    target = find_expression(ch, op.preset) if op.preset else ch
+    setattr(target, op.prop, value)
+    return {"FINISHED"}
+
+
+def _set_still_part(self, context, value: str):
+    sed = seq_scene(context).sequence_editor
+    strip = sed.active_strip
+    if strip is None or not strip.get("tachie_still"):
+        return {"CANCELLED"}
+    category = next(c for c, props in PART_PROPS.items() if self.prop in props)
+    parts = still_parts(strip)
+    if category in SLOT_CATEGORIES:  # 他・後はスロットごと（"" のスロットは表情のまま）
+        index = PART_PROPS[category].index(self.prop)
+        slots = list(parts.get(category) or [])
+        slots += [""] * (index + 1 - len(slots))
+        slots[index] = value
+        parts[category] = slots
+    else:
+        parts[category] = value
+    set_still_parts(strip, parts)
+    try:
+        sed.active_strip = remake_still(context, strip)
+        refresh_motion_now(seq_scene(context))
+    except ERRORS as e:
+        self.report({"ERROR"}, str(e))
+        return {"CANCELLED"}
+    return {"FINISHED"}
+
+
+class TACHIE_OT_set_part(bpy.types.Operator):
+    """このパーツにする"""
+
+    bl_idname = "tachie.set_part"
+    bl_label = "パーツを選ぶ"
+    bl_options = {"UNDO", "INTERNAL"}
+
+    prop: bpy.props.StringProperty(options={"SKIP_SAVE"})
+    preset: bpy.props.StringProperty(options={"SKIP_SAVE"})
+    still: bpy.props.BoolProperty(options={"SKIP_SAVE"})
+    part: bpy.props.StringProperty(options={"SKIP_SAVE"}, description="空なら（なし）・（既定）・（表情のまま）")
+
+    def execute(self, context):
+        return apply_part(self, context, self.part)
+
+
+PART_ICON_SCALE = 2.4  # パーツを選ぶ一覧の見本の大きさ（UI の単位）
+PART_ICON_SIZE = 96  # 見本の画像のピクセル
+_part_rows: list = []
+_part_previews = None
+
+
+def part_icon(path: Path) -> int:
+    """パーツの見本のアイコン（作った見本はアドオンのユーザーフォルダの thumbs/ に残す）。"""
+    global _part_previews
+    from bpy.utils import previews
+
+    from .tachie_studio.tachie.compose import part_thumbnail
+
+    if _part_previews is None:
+        _part_previews = previews.new()
+    try:
+        stamp = path.stat().st_mtime_ns
+    except OSError:
+        return 0
+    key = hashlib.sha1(f"{path}|{stamp}|{PART_ICON_SIZE}".encode("utf-8")).hexdigest()[:16]
+    if key in _part_previews:
+        return _part_previews[key].icon_id
+    thumb = Path(bpy.utils.extension_path_user(__package__, path="thumbs", create=True)) / f"{key}.png"
+    if not thumb.is_file():
         try:
-            sed.active_strip = remake_still(context, strip)
-            refresh_motion_now(seq_scene(context))
-        except ERRORS as e:
-            self.report({"ERROR"}, str(e))
-            return {"CANCELLED"}
-        return {"FINISHED"}
+            part_thumbnail(path, PART_ICON_SIZE).save(thumb)
+        except Exception as e:  # 壊れた・大きすぎる画像（DecompressionBombError は OSError ではない）でも一覧は出す
+            print("パーツの見本を作れません:", path, e)
+            return 0
+    return _part_previews.load(key, str(thumb), "IMAGE").icon_id
 
 
 class TACHIE_OT_clear_still_parts(bpy.types.Operator):
@@ -3758,6 +3850,7 @@ _classes = (
     TACHIE_OT_accent_split,
     TACHIE_OT_flip_still,
     TACHIE_OT_clear_still_parts,
+    TACHIE_OT_set_part,
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,
     TACHIE_OT_expression_add,
@@ -3815,6 +3908,12 @@ def register():
 
 
 def unregister():
+    global _part_previews
+    if _part_previews is not None:
+        from bpy.utils import previews
+
+        previews.remove(_part_previews)
+        _part_previews = None
     if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
     if _move_temp_output in bpy.app.handlers.save_pre:
