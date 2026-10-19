@@ -226,16 +226,16 @@ def psd_part(character: Character, expr: Expression, key: str) -> Part | None:
     return PsdPart(category="口" if key == "mouth" else "目", name=anim[0].label, path=character.path, frames=frames)
 
 
-def part_thumbnail(path: Path, size: int = 96) -> Image.Image:
+def part_thumbnail(path: Path, size: int = 96, background: tuple = (0, 0, 0, 0)) -> Image.Image:
     """パーツの画像の見本（パーツを選ぶ一覧に出す。YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた正方形）。
-    透明なパーツ（_ など）は透明の正方形。"""
+    `background` は背景の色（既定は透明）。透明なパーツ（_ など）は背景だけ。"""
     image = load_image(path)
     box = image.getchannel("A").getbbox()
-    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out = Image.new("RGBA", (size, size), background)
     if box is None:
         return out
     part = image.crop(box)
     scale = size / max(part.size)  # 小さなパーツ（目・口）も見本いっぱいに拡大する
     part = part.resize((max(1, round(part.width * scale)), max(1, round(part.height * scale))), Image.Resampling.LANCZOS)
-    out.paste(part, ((size - part.width) // 2, (size - part.height) // 2))
+    out.alpha_composite(part, ((size - part.width) // 2, (size - part.height) // 2))
     return out

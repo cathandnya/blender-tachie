@@ -2998,6 +2998,8 @@ class TACHIE_OT_set_part(bpy.types.Operator):
 
 PART_ICON_SCALE = 2.4  # パーツを選ぶ一覧の見本の大きさ（UI の単位）
 PART_ICON_SIZE = 96  # 見本の画像のピクセル
+# 見本の背景（YMM4 と同じく白。透明だと Blender の暗い画面で黒い目などが背景に沈む）
+PART_ICON_BACKGROUND = (255, 255, 255, 255)
 _part_rows: list = []
 _part_previews = None
 
@@ -3015,13 +3017,13 @@ def part_icon(path: Path) -> int:
         stamp = path.stat().st_mtime_ns
     except OSError:
         return 0
-    key = hashlib.sha1(f"{path}|{stamp}|{PART_ICON_SIZE}".encode("utf-8")).hexdigest()[:16]
+    key = hashlib.sha1(f"{path}|{stamp}|{PART_ICON_SIZE}|{PART_ICON_BACKGROUND}".encode("utf-8")).hexdigest()[:16]
     if key in _part_previews:
         return _part_previews[key].icon_id
     thumb = Path(bpy.utils.extension_path_user(__package__, path="thumbs", create=True)) / f"{key}.png"
     if not thumb.is_file():
         try:
-            part_thumbnail(path, PART_ICON_SIZE).save(thumb)
+            part_thumbnail(path, PART_ICON_SIZE, PART_ICON_BACKGROUND).save(thumb)
         except Exception as e:  # 壊れた・大きすぎる画像（DecompressionBombError は OSError ではない）でも一覧は出す
             print("パーツの見本を作れません:", path, e)
             return 0

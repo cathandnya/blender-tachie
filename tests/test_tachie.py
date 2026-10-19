@@ -292,3 +292,5 @@ def test_part_thumbnail(tmp_path):
     assert box[2] - box[0] == 64 and 30 <= box[3] - box[1] <= 34  # 横いっぱい、縦は比を保つ
     Image.new("RGBA", (10, 10), (0, 0, 0, 0)).save(tmp_path / "none.png")
     assert part_thumbnail(tmp_path / "none.png", 32).getchannel("A").getbbox() is None
+    white = part_thumbnail(tmp_path / "eye.png", 64, (255, 255, 255, 255))
+    assert white.getpixel((0, 0)) == (255, 255, 255, 255) and white.getpixel((32, 32))[:3] == (255, 0, 0)
