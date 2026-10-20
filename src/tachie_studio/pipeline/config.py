@@ -129,11 +129,41 @@ def overlay_parts(expression: Expression, parts: dict, where: str = "表情") ->
     PSD のレイヤーは元の上書きに重ねる。立ち絵ごとのパーツ（アドオンの tachie_parts）もこれで重ねる。"""
     kwargs = _expression(parts, where, as_kwargs=True)
     if "layers" in kwargs:  # PSD 立ち絵: 元の上書きに重ねる
-        kwargs["layers"] = {**expression.layers, **kwargs["layers"]}
+        kwargs["layers"] = merge_layers(expression.layers, kwargs["layers"])
     for attr in ("others", "backs"):
         if attr in kwargs:
             kwargs[attr] = merge_slots(getattr(expression, attr), kwargs[attr])
     return replace(expression, **kwargs)
+
+
+def merge_layers(base: dict[str, bool], override: dict[str, bool]) -> dict[str, bool]:
+    """PSD のレイヤーの上書きを重ねる。重ねるものは後ろへ並べ直す（`*` のレイヤーは並びの後のものが選ばれるので、
+    辞書の和のように元の位置に残すと、3 段重ねたときに上の段の選択が下の段に負ける）。"""
+    out = {k: v for k, v in base.items() if k not in override}
+    out.update(override)
+    return out
+
+
+def merge_parts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """パーツの表（表情プリセットと同じ形）どうしを重ねる。他・後はスロットごと（"" のスロットは元のまま）、PSD の
+    レイヤーは `merge_layers`、ほかは `override` の値（空は元のまま）。"""
+    out = dict(base)
+    for key, value in override.items():
+        if key == LAYERS_KEY and isinstance(value, dict):
+            out[key] = merge_layers(out.get(key) or {}, value)
+        elif key in PART_KEYS and PART_KEYS[key] in ("others", "backs"):
+            slots = merge_slots([str(v or "") for v in _as_list(out.get(key))], [str(v or "") for v in _as_list(value)])
+            if slots:
+                out[key] = slots
+        elif value:
+            out[key] = value
+    return out
+
+
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    return [value] if isinstance(value, str) else list(value)
 
 
 def merge_slots(base: list[str], override: list[str]) -> list[str]:

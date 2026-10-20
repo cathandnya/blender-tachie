@@ -20,7 +20,7 @@ from . import prefetch
 from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
-    ERRORS, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
+    ERRORS, _parts_dict, add_character, add_voice_character, new_face,
     character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_layout,
     line_texts, load_material, place_still, place_strips, refresh_faces, render_clip, scene_fps, seq_scene,
     set_text_offset, subtitle_clashes, item_still_pose,
@@ -704,12 +704,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 nonlocal faces
                 if end <= start:
                     return
-                face = sed.strips.new_effect(name=_face_name(name, preset), type="COLOR",
-                                             channel=_free_face_channel(sed, settings, start, end, name),
-                                             frame_start=start, length=end - start)
-                face.color, face.color_tag, face.mute = (0.95, 0.6, 0.25), "COLOR_02", True
-                face["tachie_face"] = name
-                face["tachie_expression"] = preset
+                new_face(sed, settings, name, preset, start, end)
                 faces += 1
 
             for span in project.faces:

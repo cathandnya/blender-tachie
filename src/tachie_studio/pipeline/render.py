@@ -40,7 +40,10 @@ class FrameCache:
         self.character = character
         self.expression = expression
         self.scale = scale
-        key = json.dumps([str(character.path), asdict(expression), scale], ensure_ascii=False, sort_keys=True)
+        data = asdict(expression)
+        if expression.layers:  # PSD のレイヤーの上書きは並びに意味がある（後の `*` が選ばれる）ので並べ替えない
+            data["layers"] = list(expression.layers.items())
+        key = json.dumps([str(character.path), data, scale], ensure_ascii=False, sort_keys=True)
         self.directory = directory / _slug(key)
         self._paths: dict[tuple[int, MouthState], Path] = {}
 

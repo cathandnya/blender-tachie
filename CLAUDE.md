@@ -103,8 +103,17 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   再生成は同じ `tachie_id` のストリップを消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。
   立ち絵（`tachie_still` = キャラ名、`tachie_expression`、「立ち絵だけを置く」・YMM4 の立ち絵アイテム）はセリフとは別に置き、
   まばたきし、重なるそのキャラのセリフ（ミュートは除く）の間だけ口パクする（`render.still_frames`、口はセリフ全体で計算した
-  `mouth_states` をずれの分ずらす。同じキャラのセリフが重なれば後から始まるもの。余韻は閉じた口）。表情は
-  立ち絵の表情 < セリフの表情（"" は立ち絵のまま、キャラに無いプリセットも）< 表情ストリップ。目はセリフの間も立ち絵のまばたき
+  `mouth_states` をずれの分ずらす。同じキャラのセリフが重なれば後から始まるもの。余韻は閉じた口）。
+  表情は YMM4 と同じく、アイテム（セリフの全ストリップ・立ち絵・表情ストリップ）ごとにパーツ `tachie_look`（キャラの基本との
+  差分の JSON、表情プリセットと同じ形。空でも `{}` を書く）で持つ。表情プリセットは選んだときにパーツを写すもの
+  （`preset_parts`）で、後でプリセットを編集・削除しても置いたものは変わらない。`tachie_expression` は最後に選んだプリセットの
+  名前（表示用。`expression_label` がパーツと比べて「名前」「名前*」「（カスタム）」「基本の表情」を出す）。見た目は
+  基本 + 立ち絵のパーツ、セリフの区間はその上にセリフのパーツ（指定したパーツだけ。{} は立ち絵のまま）、表情ストリップの区間は
+  立ち絵 + 表情ストリップのパーツ（表情ストリップ > セリフ）。`character_cache(context, ch, *layers)` が基本に順に重ねる。
+  セリフ・表情ストリップの「基本の表情」（`BASE`、`base_parts`）は基本の全パーツで、立ち絵で変えたパーツも打ち消す
+  （表情ストリップの "" も基本の表情）。前の版（`tachie_look` が無く名前だけ。立ち絵は + `tachie_parts`）は `strip_parts` が
+  読み替え、`migrate_parts`（`load_post` と `refresh_faces` の頭）が書く。PSD のレイヤーを重ねるときは重ねたものを後ろへ
+  並べ直す（`config.merge_layers`。`*` は並びの後のものが選ばれる）。目はセリフの間も立ち絵のまばたき
   （seed は (キャラ名, 立ち絵の始まり)）。セリフの動きの頭は音声ストリップの `content_start`、長さは `tachie_frames`。
   json が無い・長さが違うセリフ（前の版）は閉じた口で、`problems` に出す。コマは `cache/` の合成画像を `elements` で直接並べる
   （`_image_strip`。同じファイル名を何度並べてもよい。いくつもの表情にまたがれば directory を `cache/`、ファイル名を
@@ -113,13 +122,13 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   ストリップを消さずに変わったコマのファイル名だけ書き換える（`place_still` の `reuse`。消して作ると `elements.append` が
   長さの 2 乗で遅い: 9000 コマで 0.4 秒）。`refresh_faces` は終わりに署名を記録するので、操作の中で呼べば直後の自動の反映は
   何もしない（`_needs_apply` を見て、プリフェッチも止めない）。
-  作り直しの鍵 `tachie_faced`（`still_key`: キャラの見た目 `appearance_key`（素材・高さ・基本の表情と、使っている表情プリセットの
-  パーツ）・表情・表情ストリップの区間・重なるセリフの (id, ずれ, 表情, 長さ)）が変わったものと、
+  作り直しの鍵 `tachie_faced`（`still_key`: キャラの見た目 `appearance_key`（素材・高さ・基本の表情。プリセットは入れない）・
+  立ち絵のパーツ・表情ストリップの区間とパーツ・重なるセリフの (id, ずれ, パーツ, 長さ)）が変わったものと、
   長さを変えた（ハンドルを動かした）ものを `apply_faces` が作り直す（`remake_still`、今のチャンネルと位置・大きさを引き継ぐ）。
   自動の待機・立ち絵ごと置くセリフ（前の版の FULL）はやめた。前の .blend に残った待機・セリフの立ち絵はそのまま（作り直さない）。
   表情ストリップ（`tachie_face` = キャラ名、`tachie_expression`）はミュートしたカラーストリップで、そのキャラの表情のレーン
   （重なる表情があればその上＝あふれ、`channels.face_channel`）に置く。重なる範囲だけ立ち絵がその表情になる。重なったらチャンネルが上、
-  同じなら後から始まるものが優先。キャラに無い表情の表情ストリップは無視する。
+  同じなら後から始まるものが優先。
   置くのは `new_face`（「表情を置く」・AI の割り当ての FACE_STRIP・`tachie.line_faces`）。「表情を表情ストリップにする」
   （`tachie.line_faces`、YMM4 のボイスの表情を表情アイテムにする機能）は選んだセリフの表情で、セリフの区間（`_talking_lines` と同じ
   音声の content_start から `tachie_frames`）に表情ストリップを置く（セリフの表情は変えないので、表情ストリップを縮める・動かしてもセリフの区間はセリフの表情のまま）。表情ストリップか同じキャラの
@@ -188,7 +197,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （`TachieTemplate`: name / data = JSON / behind）。JSON のアイテムは media（`ymmp.Media` の値、YMM4 と同じ座標）・line・face・still
   （立ち絵。登録した立ち絵は `pose`、YMM4 の立ち絵アイテムは x / y / zoom を持ち、置くときにキャラの立ち位置・高さとの差の
   `tachie_pos_*` / `tachie_scale` にする（`_still_pose`）。左右反転（`flip`）・跳ねながら登場退場（`jump`）・不透明度などの
-  `settings`（`STILL_SETTINGS`）・立ち絵ごとのパーツ（`custom_parts`）も持つ。同じキャラの立ち絵に重なれば置かない）。
+  `settings`（`STILL_SETTINGS`）も持つ。同じキャラの立ち絵に重なれば置かない）。登録した line / face / still は表情のパーツ
+  `look` を持ち、置くときにそのまま写す（`_item_look`。前の版の立ち絵の `custom_parts` はプリセットのパーツに重ねる）。
   登録は選んだストリップから（`template_from_strips`、transform は `MediaPlacer` の逆、スピードコントロールはキーフレームから
   再生速度を戻す。写せるのはフレーム番号の速度だけ）、置くのは `insert_template`（media は `MediaPlacer(behind=…)`、
   behind はテキスト以外だけ。セリフは `render_clip` → `place_strips`、同じキャラの次のセリフに重なれば余韻を縮めて合成し直す。
@@ -204,19 +214,19 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   番号の範囲で縛ると 0 番ばかり返した）、それも断られたらスキーマ無しで名前を書かせる（`Client.complete_json` の `forms` の段。
   断られた段は同じ Client では次から送らない）。apfel（`apfel --serve`、`http://127.0.0.1:11434`、
   モデル `apple-foundationmodel`）で 4 行 2.8 秒（手元の計測）。通信は別スレッド + モーダル（タイマー）で、bpy に触るのはメインスレッドだけ（バックグラウンドは
-  execute で待つ）。書き込み先 `faceassign_target`: LINE は `operators.set_line_expression`（セリフの `tachie_expression` を
-  書くだけ。重なる立ち絵が作り直される。音声は合成し直さない）、FACE_STRIP はセリフの区間の表情ストリップ（同じ区間のものが
-  あれば中身を変える）。設定はアドオン設定の
+  execute で待つ）。書き込み先 `faceassign_target`: LINE は `operators.set_line_expression`（選んだプリセットのパーツを
+  セリフに写す。「基本の表情」は `BASE`。重なる立ち絵が作り直される。音声は合成し直さない）、FACE_STRIP はセリフの区間の
+  表情ストリップ（同じ区間のものがあれば中身を変える、`set_face_expression`）。「そのまま」かはパーツで比べる。設定はアドオン設定の
   `llm_*` / `faceassign_*`、API キーは環境変数 `TACHIE_LLM_API_KEY` が優先。結果はテキスト「表情の割り当て結果」。
   スモークテストは偽の LLM サーバ（`http.server`）で回す。実機は apfel で確認した（他の LLM は未確認）。
   まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・立ち絵・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
   音声ストリップに直接書き、表情だけなら `set_line_expression`、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。
-  立ち絵ごとのパーツ（YMM4 の「表情: カスタム」）は立ち絵ストリップの `tachie_parts`（表情プリセットと同じ形で変えるパーツだけ、
-  `still_parts` / `set_still_parts`）。`config.overlay_parts` でプリセットの上に重ね、セリフの表情が「立ち絵のまま」の間も
-  その見た目。プリセットを指定したセリフ・表情ストリップの区間はそのプリセット。作り直しの鍵に入れ、作り直し・テンプレート
-  （`custom_parts`）で引き継ぐ。選択中の立ち絵の「パーツ（この立ち絵だけ）」（`tachie.pick_part` の `still`、
-  `tachie.clear_still_parts`）。PSD 立ち絵は無し。
+  アイテムごとのパーツの編集（YMM4 の「表情: カスタム」）: 選択中の立ち絵・セリフ・表情ストリップの「パーツ（この〇〇だけ）」
+  （`panels.draw_item_expression`、`tachie.pick_part` の `item` = STILL / LINE / FACE、`_set_item_part`。セリフは全ストリップに
+  書く `set_line_parts`）。プリセットの名前は残すので欄は「名前*」。`tachie.clear_item_parts` は選んだプリセットのパーツに
+  戻す（プリセットが無ければ {}）。立ち絵のプリセットを選び直すと変えたパーツは捨てる（`remake_still(preset=…)`）。
+  PSD 立ち絵はパーツの欄なし（プリセットを選ぶだけ）。
   パーツを選ぶ一覧（`tachie.pick_part` の invoke、`invoke_popup`）は YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた
   見本（`compose.part_thumbnail`、アドオンのユーザーフォルダの thumbs/ に残し `bpy.utils.previews` で読む、`part_icon`）を
   名前の左に並べ、押すと `tachie.set_part` で当てる（`apply_part`。スクリプトからは pick_part の execute でも当てられる）。

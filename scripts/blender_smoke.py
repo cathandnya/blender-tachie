@@ -5,6 +5,7 @@ TOML への書き出しを確かめ、途中のフレームを PNG に書き出�
 引数: -- <キャラ設定 TOML> <出力フォルダ>
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -99,7 +100,7 @@ def expression_dir(strip, frame):
 
 
 def cache_dir(ch, preset):
-    return ops.character_cache(bpy.context, ch, preset).directory.name
+    return ops.character_cache(bpy.context, ch, ops.preset_parts(ch, preset)).directory.name
 
 
 def dump(title):
@@ -441,10 +442,10 @@ zs = still("ずんだもん")
 assert expression_dir(zs, l) == komari and expression_dir(zs, l + 3) == doya
 # 表情の見本（顔のまわりを切り抜いた合成画像。表情ごとに違う画像）
 zunda_ch = s.characters["ずんだもん"]
-thumbs = [ops._thumb_path(*ops.expression_thumb(zunda_ch, name)) for name in ("", "困り", "ドヤ")]
+thumbs = [ops._thumb_path(*ops.expression_thumb(zunda_ch, ops.preset_parts(zunda_ch, name)))
+          for name in ("", "困り", "ドヤ")]
 assert len({t.read_bytes() for t in thumbs}) == 3, thumbs
-assert ops.expression_thumb(zunda_ch, "無い表情") is None
-ops.expression_icon(zunda_ch, "困り")  # 画面が無いとアイコンは 0 だが、落ちないこと
+ops.expression_icon(zunda_ch, ops.preset_parts(zunda_ch, "困り"))  # 画面が無いとアイコンは 0 だが、落ちないこと
 s.active_character = list(s.characters).index(zunda_ch)
 run(bpy.ops.tachie.expression_select, index=1)  # 表情プリセットの一覧のボタン
 assert zunda_ch.active_expression == 1
@@ -471,10 +472,10 @@ zs = still("ずんだもん")
 assert [expression_dir(zs, f) == komari for f in range(ml + 1, ml + 8)] == [False] + [True] * 5 + [False]
 assert {mouth(zs, f) for f in range(ml + 2, ml + 7)} == {"l0"}
 check_stills()
-# キャラに無い表情の表情ストリップは無視する
+# 表情ストリップの表情はパーツで持つ（表示用のプリセットの名前を書き換えても見た目は変わらない）
 face3["tachie_expression"] = "無い表情"
 run(bpy.ops.tachie.apply_faces)
-assert expression_dir(still("ずんだもん"), ml + 2) == base
+assert expression_dir(still("ずんだもん"), ml + 2) == komari
 check_stills()
 # 表情ストリップを消すと元に戻る
 for f in [face, face2, face3]:
@@ -538,19 +539,76 @@ s.expression = ""
 # 立ち絵ごとのパーツ（その立ち絵だけ。表情プリセットの上に重ねる）。セリフの表情が立ち絵のままの間もその見た目
 activate(still("ずんだもん"))
 ops._part_items = [("怒り眉", "怒り眉", "")]
-run(bpy.ops.tachie.pick_part, prop="part_eyebrow", still=True, part="怒り眉")
+run(bpy.ops.tachie.pick_part, prop="part_eyebrow", item="STILL", part="怒り眉")
 zs = still("ずんだもん")
-custom = ops.character_cache(bpy.context, zunda, "", {"眉": "怒り眉"}).directory.name
-assert ops.still_parts(zs) == {"眉": "怒り眉"} and expression_dir(zs, 1) == custom != base
+custom = ops.character_cache(bpy.context, zunda, {"眉": "怒り眉"}).directory.name
+assert ops.item_parts(zs) == {"眉": "怒り眉"} and expression_dir(zs, 1) == custom != base
 assert expression_dir(zs, l) == custom and len({mouth(zs, f) for f in range(l, r)}) > 1
 check_stills()
 activate(zs)
 ops._part_items = [("右腕_指差し", "右腕_指差し", "")]
-run(bpy.ops.tachie.pick_part, prop="part_other2", still=True, part="右腕_指差し")  # 他はスロットごと
-assert ops.still_parts(still("ずんだもん")) == {"眉": "怒り眉", "他": ["", "右腕_指差し"]}
+run(bpy.ops.tachie.pick_part, prop="part_other2", item="STILL", part="右腕_指差し")  # 他はスロットごと
+assert ops.item_parts(still("ずんだもん")) == {"眉": "怒り眉", "他": ["", "右腕_指差し"]}
 activate(still("ずんだもん"))
-run(bpy.ops.tachie.clear_still_parts)
-assert not ops.still_parts(still("ずんだもん")) and expression_dir(still("ずんだもん"), 1) == base
+run(bpy.ops.tachie.clear_item_parts)
+assert not ops.item_parts(still("ずんだもん")) and expression_dir(still("ずんだもん"), 1) == base
+# 表情は選んだときにパーツを写す（後でプリセットを編集しても置いた立ち絵は変わらない。欄には「名前*」と出る）
+activate(still("ずんだもん"))
+ops._expression_items = [("困り", "困り", "")]
+run(bpy.ops.tachie.pick_expression, target="STILL", expression="困り")
+assert ops.item_parts(still("ずんだもん")) == ops.preset_parts(zunda, "困り")
+assert expression_dir(still("ずんだもん"), 1) == komari
+komari_preset = ops.find_expression(zunda, "困り")
+old_brow, komari_preset.part_eyebrow = komari_preset.part_eyebrow, "怒り眉"
+ops._apply_faces_later()
+assert expression_dir(still("ずんだもん"), 1) == komari
+assert ops.expression_label(zunda, still("ずんだもん"), "（基本）") == "困り*"
+komari_preset.part_eyebrow = old_brow
+assert ops.expression_label(zunda, still("ずんだもん"), "（基本）") == "困り"
+activate(still("ずんだもん"))
+ops._expression_items = [(ops.NONE, "（基本）", "")]
+run(bpy.ops.tachie.pick_expression, target="STILL", expression=ops.NONE)
+# セリフでもパーツを 1 つずつ変えられる。セリフのパーツは指定したものだけ立ち絵の上に重ねる（立ち絵で変えた眉は残る）
+activate(still("ずんだもん"))
+ops._part_items = [("怒り眉", "怒り眉", "")]
+run(bpy.ops.tachie.pick_part, prop="part_eyebrow", item="STILL", part="怒り眉")
+activate(sound(zunda_id))
+ops._part_items = [("なごみ目", "なごみ目", "")]
+run(bpy.ops.tachie.pick_part, prop="part_eye", item="LINE", part="なごみ目")
+assert all(ops.item_parts(x) == {"目": "なごみ目"} for x in ops.line_strips(sed, zunda_id))
+zs = still("ずんだもん")
+both = ops.character_cache(bpy.context, zunda, {"眉": "怒り眉"}, {"目": "なごみ目"}).directory.name
+assert expression_dir(zs, l) == both and expression_dir(zs, r) == custom  # セリフの外は立ち絵のまま
+assert len({mouth(zs, f) for f in range(l, r)}) > 1
+check_stills()
+# セリフの「基本の表情」は立ち絵で変えたパーツも打ち消し、「立ち絵のまま」は何も重ねない
+activate(sound(zunda_id))
+ops._expression_items = [(ops.BASE, "基本の表情", "")]
+run(bpy.ops.tachie.pick_expression, target="LINE", expression=ops.BASE)
+assert ops.item_parts(sound(zunda_id)) == ops.base_parts(zunda)
+reset = ops.character_cache(bpy.context, zunda, {"眉": "怒り眉"}, ops.base_parts(zunda))
+assert expression_dir(still("ずんだもん"), l) == reset.directory.name and reset.expression.eyebrow != "怒り眉"
+activate(sound(zunda_id))
+ops._expression_items = [(ops.NONE, "（立ち絵のまま）", "")]
+run(bpy.ops.tachie.pick_expression, target="LINE", expression=ops.NONE)
+assert ops.item_parts(sound(zunda_id)) == {} and expression_dir(still("ずんだもん"), l) == custom
+# 前の版のアイテム（表情プリセットの名前だけ。立ち絵は + 立ち絵ごとのパーツ）は、開いたときにパーツを書く
+for x in ops.line_strips(sed, zunda_id):
+    del x["tachie_look"]
+    x["tachie_expression"] = "困り"
+zs = still("ずんだもん")
+del zs["tachie_look"]
+zs["tachie_expression"], zs["tachie_parts"] = "ドヤ", json.dumps({"眉": "怒り眉"}, ensure_ascii=False)
+assert ops.migrate_parts(scene) == len(ops.line_strips(sed, zunda_id)) + 1
+assert ops.item_parts(sound(zunda_id)) == ops.preset_parts(zunda, "困り")
+assert ops.item_parts(still("ずんだもん")) == {**ops.preset_parts(zunda, "ドヤ"), "眉": "怒り眉"}
+assert "tachie_parts" not in still("ずんだもん")
+ops.set_line_expression(bpy.context, zunda_id, "")
+activate(still("ずんだもん"))
+ops._expression_items = [(ops.NONE, "（基本）", "")]
+run(bpy.ops.tachie.pick_expression, target="STILL", expression=ops.NONE)
+assert expression_dir(still("ずんだもん"), 1) == base and expression_dir(still("ずんだもん"), l) == base
+check_stills()
 
 # まとめて変える（ダイアログは画面が要るので execute だけ）
 def select_only(strips_):

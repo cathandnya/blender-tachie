@@ -140,25 +140,26 @@ def apply_outcomes(context, plan: Plan, results: list, target: str) -> tuple[int
                 preset = job.values[o.preset]
                 shown = preset or BASE_LABEL
                 try:
+                    ch = ops.find_character(settings, job.character)
+                    sound = ops.line_sound(strips) or strips[0]
+                    # 「基本の表情」は基本の表情のパーツ（立ち絵ごとのパーツも打ち消す）
+                    want = ops.look_of(ch, preset)
                     if target == "FACE_STRIP":
                         start, end = min(s.left_handle for s in strips), ops.line_end(strips)
                         face = _face_strip_for(sed, job.character, start, end)
                         if face is not None:
-                            same = face.get("tachie_expression", "") == preset
-                            face["tachie_expression"] = preset
-                            face.name = ops._face_name(job.character, preset)
+                            same = ops.strip_parts(face, ch) == want
+                            ops.set_face_expression(face, ch, preset)
                         else:
-                            same = preset == strips[0].get("tachie_expression", "") and not ops.face_segments(
-                                sed, ops.find_character(settings, job.character), start, end)
+                            same = ops.strip_parts(sound, ch) == want and not ops.face_segments(sed, ch, start, end)
                             if not same:
                                 ops.new_face(sed, settings, job.character, preset, start, end)
                     else:
-                        same = strips[0].get("tachie_expression", "") == preset
+                        same = ops.strip_parts(sound, ch) == want
                         if not same:
-                            ops.set_line_expression(context, cid, preset)
+                            ops.set_line_expression(context, cid, preset or ops.BASE)
                             strips = ops.line_strips(sed, cid)
-                            if ops.face_segments(sed, ops.find_character(settings, job.character),
-                                                 min(s.left_handle for s in strips), ops.line_end(strips)):
+                            if ops.face_segments(sed, ch, min(s.left_handle for s in strips), ops.line_end(strips)):
                                 reason += "（表情ストリップが重なる区間はそちらが優先）"
                 except ops.ERRORS as e:
                     rows.append(f"{label} → {shown}: 書けません: {e}")

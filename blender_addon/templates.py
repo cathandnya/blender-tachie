@@ -17,8 +17,8 @@ from bpy_extras.io_utils import ImportHelper
 
 from .motion import _channelbag, jump_of
 from .operators import (
-    ERRORS, _applied_signatures, _face_name, _free_face_channel, _still_overlaps, auto_signature,
-    character_audio, character_voice, get_pose, place_still, item_still_pose, still_parts, still_settings,
+    ERRORS, _applied_signatures, _still_overlaps, auto_signature, new_face, preset_parts, strip_parts,
+    character_audio, character_voice, get_pose, place_still, item_still_pose, still_settings,
     ensure_sequencer_scene, line_accent, line_audio, line_channels, line_end, line_kana, line_layout,
     line_layout_of, line_sound, line_strips, line_subtitle, line_text, line_texts, line_voice, place_strips, prefs,
     refresh_faces, render_clip, scene_fps, seq_scene, set_text_offset,
@@ -27,6 +27,7 @@ from .properties import place_text, text_offset
 from .tachie_studio.templates import (
     dumps, end_frame, load_ymm4_templates, loads, media_from_dict, media_to_dict, normalize,
 )
+from .tachie_studio.pipeline.config import merge_parts
 from .tachie_studio.ymmp import Media, Project, overlay
 from . import channels as lanes
 from .ymmp_media import MediaFinder, MediaPlacer, box_height
@@ -168,19 +169,23 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
                 "accent_kana": (kana or sound.get("tachie_kana_auto", "")) if accent else None, "style": speaker,
                 "voice": line_voice(group, ch), "audio": {**line_audio(group, ch), "volume": sound.volume,
                                                           "pan": sound.pan},
-                "expression": group[0].get("tachie_expression", ""), "layout": line_layout_of(group),
+                "expression": group[0].get("tachie_expression", ""), "look": strip_parts(sound, ch),
+                "layout": line_layout_of(group),
                 "subtitle_offset": list(text_offset(subtitle)) if subtitle is not None else None,
                 "subtitle_hidden": any(t.mute for t in line_texts(group)), "face_parts": None})
         elif s.get("tachie_face"):
+            face_ch = next((c for c in settings.characters if c.name == s["tachie_face"]), None)
             items.append({"kind": "face", "frame": s.left_handle - t0, "length": s.right_handle - s.left_handle,
                           "layer": s.channel, "character": s["tachie_face"],
-                          "expression": s.get("tachie_expression", ""), "parts": None})
+                          "expression": s.get("tachie_expression", ""), "parts": None,
+                          **({"look": strip_parts(s, face_ch)} if face_ch is not None else {})})
         elif s.get("tachie_still"):
+            still_ch = next((c for c in settings.characters if c.name == s["tachie_still"]), None)
             items.append({"kind": "still", "frame": s.left_handle - t0, "length": s.right_handle - s.left_handle,
                           "layer": s.channel, "character": s["tachie_still"],
                           "expression": s.get("tachie_expression", ""), "parts": None, "pose": get_pose(s),
-                          "flip": s.get("tachie_flip"), "settings": still_settings(s), "custom_parts": still_parts(s),
-                          "jump": jump_of(s)})
+                          "flip": s.get("tachie_flip"), "settings": still_settings(s), "jump": jump_of(s),
+                          **({"look": strip_parts(s, still_ch)} if still_ch is not None else {})})
         elif s.get("tachie_idle"):
             skipped.append(f"前の版の待機の立ち絵（{s.name}）")
         else:
@@ -205,6 +210,16 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
 
 
 # ---- 置く ----
+
+def _item_look(ch, item: dict, preset: str) -> dict | None:
+    """アイテムの表情のパーツ。登録したもの（`look`）はそのまま、前の版のテンプレートの立ち絵ごとのパーツ
+    （`custom_parts`）はプリセットのパーツに重ねる。None ならプリセット `preset` のパーツ（置く側で写す）。"""
+    if isinstance(item.get("look"), dict):
+        return item["look"]
+    if item["kind"] == "still" and item.get("custom_parts"):
+        return merge_parts(preset_parts(ch, preset), item["custom_parts"])
+    return None
+
 
 def _resolve_expression(ch, item: dict, problems: list[str], tachie: dict | None = None) -> str:
     """セリフ・表情ストリップ・立ち絵の表情プリセット。YMM4 のパーツなら、キャラの基本の表情との差分のプリセットにする。
@@ -313,7 +328,8 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             problems.append(f"「{item['text'][:20]}」: {e}")
             continue
         strips = place_strips(context, ch, clip, lines_dir, item["text"], at, voice=voice, accent=item.get("accent"),
-                              audio=audio, channels=channels, layout=layout)
+                              audio=audio, channels=channels, layout=layout,
+                              parts=_item_look(ch, item, preset) if ch.folder else None)
         sound = strips[0]
         sound.volume = audio.get("volume", sound.volume)
         sound.pan = max(-1.0, min(1.0, audio.get("pan", sound.pan)))
@@ -335,11 +351,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             problems.append(f"{ch.name} の表情ストリップ: {e}")
             continue
         a, b = frame(item["frame"]), max(frame(item["frame"]) + 1, frame(item["frame"] + item["length"]))
-        face = sed.strips.new_effect(name=_face_name(ch.name, preset), type="COLOR",
-                                     channel=_free_face_channel(sed, settings, a, b, ch.name), frame_start=a, length=b - a)
-        face.color, face.color_tag, face.mute = (0.95, 0.6, 0.25), "COLOR_02", True
-        face["tachie_face"] = ch.name
-        face["tachie_expression"] = preset
+        new_face(sed, settings, ch.name, preset, a, b, _item_look(ch, item, preset))
         placed["face"] += 1
     # 立ち絵（同じキャラの立ち絵に重なるものは置かない）
     for item in (i for i in items if i["kind"] == "still"):
@@ -356,7 +368,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             flip = item.get("flip")  # YMM4 と同じく立ち絵ごと。キャラの設定と同じならキャラに従う
             place_still(context, ch, preset, a, b - a, _still_pose(ch, item, data), problems=problems,
                         flip=None if flip is None or bool(flip) == ch.flip_x else bool(flip), jump=item.get("jump"),
-                        settings=item.get("settings"), parts=item.get("custom_parts"))
+                        settings=item.get("settings"), parts=_item_look(ch, item, preset))
         except ERRORS as e:
             problems.append(f"{ch.name} の立ち絵: {e}")
             continue

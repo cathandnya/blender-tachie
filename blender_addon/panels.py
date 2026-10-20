@@ -3,7 +3,7 @@ import bpy
 from .tachie_studio.subtitle import breaks
 
 from .operators import (STILL_SETTINGS, active_selected, line_layout_of, line_sound, line_strips, line_subtitle,
-                        load_material, output_dir, prefs, selected_targets, seq_scene, still_parts)
+                        load_material, output_dir, prefs, selected_targets, seq_scene)
 from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
 
 
@@ -63,7 +63,7 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
         row.enabled = tachie
-        draw_expression_row(row, ch, s.expression, "ADD", s.expression or "（基本）")
+        draw_expression_row(row, ch, "ADD", s.expression or "（基本）", [_preset_look(ch, s.expression)])
         row = layout.row()
         row.scale_y = 1.4
         row.enabled = ch is not None
@@ -107,16 +107,12 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             layout.separator()
         if strip is not None and strip.get("tachie_face"):
             layout.label(text=f"{strip['tachie_face']}の表情ストリップ", icon="SHADERFX")
-            draw_expression_row(layout.row(align=True), seq_scene(context).tachie.characters.get(strip["tachie_face"]),
-                                strip.get("tachie_expression", ""), "FACE", strip.get("tachie_expression") or "（基本）")
+            draw_item_expression(layout, context, strip, "FACE")
             layout.label(text="重なる範囲だけこの表情になります", icon="INFO")
             layout.operator("tachie.apply_faces", icon="FILE_REFRESH")
         elif strip is not None and strip.get("tachie_still"):
             layout.label(text=f"{strip['tachie_still']}の立ち絵", icon="USER")
-            draw_expression_row(layout.row(align=True), seq_scene(context).tachie.characters.get(strip["tachie_still"]),
-                                strip.get("tachie_expression", ""), "STILL", strip.get("tachie_expression") or "（基本）",
-                                still_parts(strip))
-            draw_still_parts(layout, context, strip)
+            draw_item_expression(layout, context, strip, "STILL")
             owner = seq_scene(context).tachie.characters.get(strip["tachie_still"])
             flipped = bool(owner and still_flip(strip, owner))
             row = layout.row(align=True)
@@ -175,8 +171,7 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row.operator_menu_enum("tachie.pick_line_layout", "line_layout",
                                    text=next(n for k, n, *_ in LINE_LAYOUTS if k == shape))
             if owner is not None and owner.folder:  # 重なる立ち絵がセリフの間だけこの表情になる
-                draw_expression_row(layout.row(align=True), owner, strip.get("tachie_expression", ""), "LINE",
-                                    strip.get("tachie_expression") or "（立ち絵のまま）")
+                draw_item_expression(layout, context, sound or strip, "LINE")
             col = layout.column(align=True)
             if sound is not None and "tachie_voice_speed_scale" in sound:
                 for prop, (_, label, *_) in VOICE_PROPS.items():
@@ -428,14 +423,68 @@ def draw_wrapped(layout, context, text: str, operator: str, max_lines: int = 3, 
         row.operator(operator, text=line or " ", emboss=False)
 
 
-def draw_expression_row(row, ch, value: str, target: str, text: str, parts: dict | None = None) -> None:
-    """表情の欄（ラベル・表情の見本・選ぶボタン tachie.pick_expression）。セリフの「立ち絵のまま」は見本なし。
-    `parts` は立ち絵ごとのパーツ（見本に重ねる）。"""
+def _preset_look(ch, name: str) -> dict | None:
+    """表情プリセットのパーツ（見本用。無いプリセット・立ち絵の無いキャラは None）。"""
+    from .operators import preset_parts
+
+    try:
+        return preset_parts(ch, name) if ch is not None else None
+    except ValueError:
+        return None
+
+
+def draw_expression_row(row, ch, target: str, text: str, layers: list | None) -> None:
+    """表情の欄（ラベル・表情の見本・選ぶボタン tachie.pick_expression）。`layers` は見本の表情（基本に重ねる
+    パーツの並び。None なら見本なし）。"""
     from .operators import draw_swatch, expression_icon
 
     row.label(text="表情")
-    icon = expression_icon(ch, value, parts) if value or target != "LINE" else 0
+    icon = expression_icon(ch, *layers) if layers is not None and None not in layers else 0
     draw_swatch(row.row(align=True), icon).operator("tachie.pick_expression", text=text).target = target
+
+
+# アイテムの種類ごとの (空の表情の表示, パーツの欄の見出し)
+ITEM_TEXTS = {"STILL": ("（基本）", "パーツ（この立ち絵だけ）"), "LINE": ("（立ち絵のまま）", "パーツ（このセリフだけ）"),
+              "FACE": ("（立ち絵のまま）", "パーツ（この表情ストリップだけ）")}
+
+
+def draw_item_expression(layout, context, strip, item: str) -> None:
+    """選択中の立ち絵・セリフ・表情ストリップの表情の欄と、パーツの欄（YMM4 と同じく、プリセットを選ぶとパーツが
+    それになり、パーツを 1 つずつ変えられる）。セリフ・表情ストリップのパーツは重なる立ち絵の上に重ねる。"""
+    from .operators import expression_label, item_character, strip_parts
+
+    settings = seq_scene(context).tachie
+    ch = settings.characters.get(item_character(strip))
+    empty, title = ITEM_TEXTS[item]
+    parts = strip_parts(strip, ch) if ch is not None else {}
+    label = expression_label(ch, strip, empty)
+    draw_expression_row(layout.row(align=True), ch, item, label,
+                        [parts] if item == "STILL" or parts else None)
+    changed = label.endswith("*") or label == "（カスタム）"
+    row = layout.row(align=True)
+    row.prop(settings, "show_still_parts", text=title + ("：変更あり" if changed else ""),
+             icon="TRIA_DOWN" if settings.show_still_parts else "TRIA_RIGHT", emboss=False)
+    if changed:
+        row.operator("tachie.clear_item_parts", text="", icon="LOOP_BACK")
+    if not settings.show_still_parts or ch is None:
+        return
+    rows = part_rows(ch)
+    if not rows:
+        layout.label(text="PSD 立ち絵は表情プリセットで変えてください", icon="INFO")
+        return
+    material = material_of(ch)
+    col = layout.column(align=True)
+    keep = "（基本のまま）" if item == "STILL" else "（立ち絵のまま）"
+    for category, props, row_title in rows:
+        for i, prop in enumerate(props):
+            value = parts.get(category)
+            if isinstance(value, list):
+                value = value[i] if i < len(value) else ""
+            elif len(props) > 1:
+                value = ""
+            op = draw_part_row(col, material, category, row_title if len(props) == 1 else f"{category}{i + 1}",
+                               value or "", value or keep, depress=bool(value))
+            op.prop, op.item = prop, item
 
 
 def draw_part_row(col, material, category: str, label: str, value: str, text: str, depress: bool = False):
@@ -447,38 +496,6 @@ def draw_part_row(col, material, category: str, label: str, value: str, text: st
     part = material.parts.get(category, {}).get(value) if material is not None and value else None
     icon = part_icon(part.path) if part is not None else 0
     return draw_swatch(row.row(align=True), icon).operator("tachie.pick_part", text=text, depress=depress)
-
-
-def draw_still_parts(layout, context, strip) -> None:
-    """選択中の立ち絵のパーツ（その立ち絵だけ、表情プリセットの上に重ねる。YMM4 の「表情: カスタム」）。"""
-    from .operators import still_parts
-
-    settings = seq_scene(context).tachie
-    ch = next((c for c in settings.characters if c.name == strip.get("tachie_still")), None)
-    parts = still_parts(strip)
-    row = layout.row(align=True)
-    row.prop(settings, "show_still_parts", text="パーツ（この立ち絵だけ）" + ("：変更あり" if parts else ""),
-             icon="TRIA_DOWN" if settings.show_still_parts else "TRIA_RIGHT", emboss=False)
-    if parts:
-        row.operator("tachie.clear_still_parts", text="", icon="LOOP_BACK")
-    if not settings.show_still_parts or ch is None:
-        return
-    rows = part_rows(ch)
-    if not rows:
-        layout.label(text="PSD 立ち絵は表情プリセットで変えてください", icon="INFO")
-        return
-    material = material_of(ch)
-    col = layout.column(align=True)
-    for category, props, title in rows:
-        for i, prop in enumerate(props):
-            value = parts.get(category)
-            if isinstance(value, list):
-                value = value[i] if i < len(value) else ""
-            elif len(props) > 1:
-                value = ""
-            op = draw_part_row(col, material, category, title if len(props) == 1 else f"{category}{i + 1}",
-                               value, value or "（表情のまま）", depress=bool(value))
-            op.prop, op.still = prop, True
 
 
 class TACHIE_PT_expression(_WithTachie, _Panel, bpy.types.Panel):
@@ -520,7 +537,7 @@ class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
         if not ch.expressions:
             col.label(text="（表情プリセットはありません）")
         for i, e in enumerate(ch.expressions):
-            draw_swatch(col.row(align=True), expression_icon(ch, e.name)).operator(
+            draw_swatch(col.row(align=True), expression_icon(ch, _preset_look(ch, e.name))).operator(
                 "tachie.expression_select", text=e.name, depress=i == ch.active_expression).index = i
         col = row.column(align=True)
         col.operator("tachie.expression_add", text="", icon="ADD")

@@ -689,3 +689,15 @@ def test_overlay_parts():
     out = overlay_parts(base, {"目": "ジト目", "他": ["", "右腕_指差し"]})
     assert out.eye == "ジト目" and out.mouth == "むふ" and out.others == ["左腕", "右腕_指差し"]
     assert overlay_parts(base, {}) == base
+
+
+def test_merge_parts_and_layers():
+    """パーツの表を重ねる: スロットごと、空は元のまま。PSD のレイヤーは重ねたものを後ろへ（3 段でも上の段の選択が勝つ）。"""
+    from tachie_studio.pipeline.config import LAYERS_KEY, merge_layers, merge_parts
+
+    assert merge_parts({"目": "a", "他": ["x", "y"]}, {"目": "b", "眉": "", "他": ["", "z"]}) == {"目": "b", "他": ["x", "z"]}
+    assert merge_parts({}, {"他": ["", ""]}) == {}
+    assert list(merge_layers({"X/*a": True, "Y": True}, {"X/*b": True})) == ["X/*a", "Y", "X/*b"]
+    stacked = merge_layers(merge_layers({"X/*a": True}, {"X/*b": True}), {"X/*a": True})
+    assert list(stacked)[-1] == "X/*a"  # 3 段目で選び直した a が最後（選ばれる）
+    assert merge_parts({LAYERS_KEY: {"X/*a": True}}, {LAYERS_KEY: {"X/*b": True}})[LAYERS_KEY] == {"X/*a": True, "X/*b": True}
