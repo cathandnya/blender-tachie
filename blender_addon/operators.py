@@ -1175,10 +1175,10 @@ def _apply_faces_later():
                 return None
             problems = []
             # 動きだけが変わったとき（セリフごとの位置を変えた・動きのあるセリフを動かしたなど）は、
-            # 立ち絵の描き直しと待機の作り直しをせずにキーフレームだけ作り直す
+            # 立ち絵を描き直さずにキーフレームだけ作り直す
             if signature[:2] != applied[:2]:
                 if signature[0] != applied[0]:
-                    refresh_faces(bpy.context, problems)  # 待機を作り直すときに動きも作り直す
+                    refresh_faces(bpy.context, problems)  # 立ち絵を描き直すときに動きも作り直す
                 refresh_motion_now(scene)  # ダッキングも作り直す
             else:  # BGM のダッキングだけ（BGM を動かした・音量を変えたなど）
                 from .ducking import refresh_ducking

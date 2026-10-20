@@ -87,7 +87,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   なくなった）。口の動きは音声ストリップの wav の隣を先に探す（`motion.motion_paths`）。
   Blender の入力欄には改行を入れられない（Enter も Shift+Enter も入力の確定）ので、字幕の改行は `\n`（¥n）と書く。
   新しいセリフは「〇〇のセリフを追加」で開くダイアログ（`tachie.add_line` の invoke、`text`）で入力する（パネルに入力欄は無い。
-  スクリプトから text を渡さずに呼ぶとシーンの `settings.text`、追加したら空にする `clear_text_input`）。選択中のセリフの
+  スクリプトから text を渡さずに呼ぶとシーンの `settings.text`。追加したとき・ダイアログを開くとき・.blend を開いたとき
+  （`load_post` の `_clear_input_on_load`、前の版の残り）に空にする `clear_text_input`）。選択中のセリフの
   テキストも折り返して見せ（`panels.draw_wrapped`）、押すと「セリフを編集」（`tachie.edit_line_text`、確定で再生成。
   「字幕だけ変える」`subtitle_only` なら音声は作り直さず、全ストリップの `tachie_text` と `tachie_placed_text`（編集した発音・
   抑揚のキーの text も）を書き換えて字幕・キャラ名を当て直す。今の読みは `tachie_kana_auto` を空にして編集した発音として持つ
@@ -177,7 +178,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   テンプレート（#14、`blender_addon/templates.py`、形式は `tachie_studio/templates.py`）: アドオン設定の `templates`
   （`TachieTemplate`: name / data = JSON / behind）。JSON のアイテムは media（`ymmp.Media` の値、YMM4 と同じ座標）・line・face・still
   （立ち絵。登録した立ち絵は `pose`、YMM4 の立ち絵アイテムは x / y / zoom を持ち、置くときにキャラの立ち位置・高さとの差の
-  `tachie_pos_*` / `tachie_scale` にする（`_still_pose`）。左右反転（`flip`）と跳ねながら登場退場（`jump`）も持つ。同じキャラの立ち絵に重なれば置かない）。
+  `tachie_pos_*` / `tachie_scale` にする（`_still_pose`）。左右反転（`flip`）・跳ねながら登場退場（`jump`）・不透明度などの
+  `settings`（`STILL_SETTINGS`）・立ち絵ごとのパーツ（`custom_parts`）も持つ。同じキャラの立ち絵に重なれば置かない）。
   登録は選んだストリップから（`template_from_strips`、transform は `MediaPlacer` の逆、スピードコントロールはキーフレームから
   再生速度を戻す。写せるのはフレーム番号の速度だけ）、置くのは `insert_template`（media は `MediaPlacer(behind=…)`、
   behind はテキスト以外だけ。セリフは `render_clip` → `place_strips`、同じキャラの次のセリフに重なれば余韻を縮めて合成し直す。
@@ -190,13 +192,14 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。
   文脈は束の手前 `llm_context_lines` 行と対象の間の直前 1 行。取りこぼしは一度だけ聞き直す。json_schema を断るサーバには
   候補の名前の文字列の enum（`build_schema(names=True)`。apfel = Apple の端末内モデルは文字列の enum しか縛れない。
-  番号の範囲で縛ると 0 番ばかり返した）、それも断られたらスキーマ無しで名前を書かせる。apfel（`apfel --serve`、`http://127.0.0.1:11434`、
+  番号の範囲で縛ると 0 番ばかり返した）、それも断られたらスキーマ無しで名前を書かせる（`Client.complete_json` の `forms` の段。
+  断られた段は同じ Client では次から送らない）。apfel（`apfel --serve`、`http://127.0.0.1:11434`、
   モデル `apple-foundationmodel`）で 4 行 2.8 秒（手元の計測）。通信は別スレッド + モーダル（タイマー）で、bpy に触るのはメインスレッドだけ（バックグラウンドは
   execute で待つ）。書き込み先 `faceassign_target`: LINE は `operators.set_line_expression`（セリフの `tachie_expression` を
   書くだけ。重なる立ち絵が作り直される。音声は合成し直さない）、FACE_STRIP はセリフの区間の表情ストリップ（同じ区間のものが
   あれば中身を変える）。設定はアドオン設定の
   `llm_*` / `faceassign_*`、API キーは環境変数 `TACHIE_LLM_API_KEY` が優先。結果はテキスト「表情の割り当て結果」。
-  スモークテストは偽の LLM サーバ（`http.server`）で回す。実機の LLM は未確認。
+  スモークテストは偽の LLM サーバ（`http.server`）で回す。実機は apfel で確認した（他の LLM は未確認）。
   まとめて変える（`tachie.batch_edit`）: 選択中のセリフ（`tachie_id` 単位）・立ち絵・表情ストリップを対象に、
   ダイアログで値を変えた項目（`use_*`、値の update で自動で立つ）だけを全部に当てる。音量・パンだけなら作り直さず
   音声ストリップに直接書き、表情だけなら `set_line_expression`、他は後ろのセリフから `regenerate` する。表情はキャラ全員が持つプリセットだけ選べる。
@@ -208,6 +211,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   パーツを選ぶ一覧（`tachie.pick_part` の invoke、`invoke_popup`）は YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた
   見本（`compose.part_thumbnail`、アドオンのユーザーフォルダの thumbs/ に残し `bpy.utils.previews` で読む、`part_icon`）を
   名前の左に並べ、押すと `tachie.set_part` で当てる（`apply_part`。スクリプトからは pick_part の execute でも当てられる）。
+  pick_part の引数は `SKIP_SAVE`（前に押したときの立ち絵・プリセットの指定を引きずらないように）。
   キャラの表情・表情プリセット・立ち絵のパーツの欄にも同じ見本を出す（`panels.draw_part_row`、見本の列は `operators.draw_swatch`、
   大きさは `PART_ICON_SCALE`、背景は白）。
   表情（基本・表情プリセット）の見本は合成した立ち絵を顔（眉・目・口の写っている範囲の `FACE_MARGIN` 倍）のまわりで
@@ -235,7 +239,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   パネルは発音を折り返して見せ（`panels.draw_kana`。Blender の入力欄は 1 行。各行は押すと「発音を編集」を開くボタン）、編集は「発音を編集」
   （`tachie.edit_kana`、`invoke_props_dialog` の幅の広い 1 つの欄。確定で再生成、空なら自動の読み。試聴は
   `tachie.preview_line` の `kana`）。
-  台本・セリフ入力欄・置いたセリフのテキスト（再生成時）では最後に `{発音}` と書ける（`script.split_kana`）。
+  台本・「セリフを追加」「セリフを編集」のダイアログ・置いたセリフのテキスト（再生成時）では最後に `{発音}` と書ける
+  （`script.split_kana`。「字幕だけ変える」では使わず警告する）。
   試聴は `aud` で出力フォルダの `preview.wav` を鳴らす（画面の無い Blender では鳴らさない。`aud.Device()` は `-noaudio` でも
   音声デバイスを開くので、smoke.sh の試聴のテストで実際に声が鳴っていた）。
   抑揚の編集（モーラごとの pitch / consonant_length / vowel_length）は音声ストリップの `tachie_accent`（accent_phrases の JSON）と

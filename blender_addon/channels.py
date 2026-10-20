@@ -53,7 +53,7 @@ def scene_chars(scene) -> list[LaneChar]:
     orphans: dict[str, set[str]] = {}
     for s in sed.strips if sed else ():
         key = lane_key(s)
-        if key and key[1] and key[1] not in known and not s.get("tachie_idle"):  # 待機は作り直すので数えない
+        if key and key[1] and key[1] not in known and not s.get("tachie_idle"):  # 前の版の待機は消す（_move_strips）ので数えない
             orphans.setdefault(key[1], set()).add(key[0])
     for name, roles in orphans.items():
         chars.append(LaneChar(name, bool(roles & {"image", "face"}), "name" in roles, registered=False))
@@ -159,7 +159,7 @@ def relayout(scene, layout: Layout | None = None, force: bool = False) -> list[s
 def _move_strips(sed, layout: Layout, old: Layout | None, registered: set[str],
                  force: bool = False) -> tuple[bool, list[str]]:
     """(動かせたか, 問題)。動かせなかった（行き先が決まらない）ときは何も動かさない。"""
-    # 一覧にいないキャラの待機は消す（待機は作り直すもので、消したキャラの分は要らない）
+    # 一覧にいないキャラの前の版の待機は消す（消したキャラの分は要らない）
     for s in [s for s in sed.strips if s.get("tachie_idle") and s["tachie_idle"] not in registered]:
         sed.strips.remove(s)
     strips = list(sed.strips)
