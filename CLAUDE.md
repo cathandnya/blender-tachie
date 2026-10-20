@@ -228,7 +228,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   書く `set_line_parts`）。プリセットの名前は残すので欄は「名前*」。`tachie.clear_item_parts` は選んだプリセットのパーツに
   戻す（プリセットが無ければ {}）。立ち絵のプリセットを選び直すと変えたパーツは捨てる（`remake_still(preset=…)`）。
   PSD 立ち絵はパーツの欄なし（プリセットを選ぶだけ）。
-  パーツを選ぶ一覧（`tachie.pick_part` の invoke、`invoke_popup`）は YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた
+  パーツを選ぶ一覧（`tachie.pick_part` の invoke、`popup_menu`。押すと閉じる。`invoke_popup` は押しても開いたままだった）は YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた
   見本（`compose.part_thumbnail`、アドオンのユーザーフォルダの thumbs/ に残し `bpy.utils.previews` で読む、`part_icon`）を
   名前の左に並べ、押すと `tachie.set_part` で当てる（`apply_part`。スクリプトからは pick_part の execute でも当てられる）。
   pick_part の引数は `SKIP_SAVE`（前に押したときの立ち絵・プリセットの指定を引きずらないように）。
@@ -236,7 +236,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   大きさは `PART_ICON_SCALE`、背景は白）。
   表情（基本・表情プリセット）の見本は合成した立ち絵を顔（眉・目・口の写っている範囲の `FACE_MARGIN` 倍）のまわりで
   切り抜いたもの（`compose.expression_thumbnail`、PSD・シンプル立ち絵は上から幅いっぱいの正方形。`operators.expression_icon`）。
-  表情を選ぶ一覧（`tachie.pick_expression` の invoke、`invoke_popup`。押すと EXEC_DEFAULT で同じオペレーターを実行）・
+  表情を選ぶ一覧（`tachie.pick_expression` の invoke、`popup_menu`。押すと EXEC_DEFAULT で同じオペレーターを実行して閉じる）・
   表情の欄（`panels.draw_expression_row`）・表情プリセットの一覧（パーツの欄と同じ大きさにするため UIList ではなく
   見本 + `tachie.expression_select` のボタンの並び。名前は下の欄で変える）に出す。画面の無い Blender ではアイコンが 0 なので、
   スモークテストは見本の画像（`_thumb_path`）で確かめる。
