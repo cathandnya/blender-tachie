@@ -17,3 +17,13 @@ export TACHIE_CACHE_DIR="$OUT/cache"  # 立ち絵の合成キャッシュも一�
 rm -rf "$OUT"; mkdir -p "$OUT"
 "$BLENDER" --command extension install-file -r user_default -e "$ZIP" </dev/null
 "$BLENDER" -b -noaudio --factory-startup --python-exit-code 1 --python scripts/blender_smoke.py -- "$PWD/examples/characters.toml" "$OUT" </dev/null
+# 画面の無い Blender で開く（`blender -b x.blend -a` での書き出し）と、合成キャッシュが無い立ち絵をその場で作り直す
+rm -rf "$TACHIE_CACHE_DIR"
+"$BLENDER" -b -noaudio "$OUT/smoke.blend" --python-exit-code 1 --python-expr '
+import bpy
+from bl_ext.user_default.blender_tachie import operators as ops
+stills = [s for sc in bpy.data.scenes if sc.sequence_editor for s in sc.sequence_editor.strips
+          if s.type == "IMAGE" and s.get("tachie_still")]
+assert stills and not any(ops.missing_images(s) for s in stills), "開いたときに立ち絵を作り直していない"
+print("OK (background reopen)")
+' </dev/null

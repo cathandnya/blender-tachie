@@ -170,9 +170,10 @@ def _migrate_on_load(*_args):
                 continue
             problems = []
             try:
-                with bpy.context.temp_override(scene=scene):
+                # seq_scene はワークスペースの sequencer_scene を先に見るので、それもこのシーンにする
+                with bpy.context.temp_override(scene=scene, sequencer_scene=scene):
                     apply_faces(bpy.context, missing, problems)
-            except (*ERRORS, RuntimeError) as e:
+            except (*ERRORS, OSError, RuntimeError) as e:  # キャッシュに書けないなど。他のシーンは続ける
                 problems.append(str(e))
             for p in problems:
                 print("立ち絵を作り直せません:", p)
@@ -181,7 +182,8 @@ def _migrate_on_load(*_args):
 @persistent
 def _move_temp_output(filepath, *_args):
     """未保存のときに一時フォルダへ書き出したもの（音声・口の動き。前の版の立ち絵の連番も）を、保存する .blend のフォルダの
-    tachie/ へコピーしてストリップの参照を付け替える（立ち絵の合成画像は共有キャッシュにあるので移さない）（保存の前に呼ぶので、保存した .blend には新しい場所が入る）。
+    tachie/ へコピーしてストリップの参照を付け替える。立ち絵の合成画像は共有キャッシュにあるので移さない。
+    保存の前に呼ぶので、保存した .blend には新しい場所が入る。
     一時フォルダは OS が消すことがあり、出力フォルダも保存すると //tachie に変わるので、そのままだと口の動きが
     見つからず閉じた口になり、いずれ音声も消える。出力フォルダを指定しているときは何もしない。"""
     if not filepath or prefs(bpy.context).output_dir:
