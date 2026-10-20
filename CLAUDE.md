@@ -189,7 +189,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   移したもの）: 選んだセリフ（プリセットのあるキャラのセリフ）をキャラごとに、シーンのセリフ全部を台本にして
   OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。
   文脈は束の手前 `llm_context_lines` 行と対象の間の直前 1 行。取りこぼしは一度だけ聞き直す。json_schema を断るサーバには
-  スキーマ無しで送り直す。通信は別スレッド + モーダル（タイマー）で、bpy に触るのはメインスレッドだけ（バックグラウンドは
+  整数の enum を範囲（minimum / maximum）にしたスキーマ（`faceassign.range_schema`。apfel = Apple の端末内モデルは文字列の
+  enum しか縛れない）、それも断られたらスキーマ無しで送り直す。apfel（`apfel --serve`、`http://127.0.0.1:11434`、
+  モデル `apple-foundationmodel`）で 4 行 2.8 秒（手元の計測）。通信は別スレッド + モーダル（タイマー）で、bpy に触るのはメインスレッドだけ（バックグラウンドは
   execute で待つ）。書き込み先 `faceassign_target`: LINE は `operators.set_line_expression`（セリフの `tachie_expression` を
   書くだけ。重なる立ち絵が作り直される。音声は合成し直さない）、FACE_STRIP はセリフの区間の表情ストリップ（同じ区間のものが
   あれば中身を変える）。設定はアドオン設定の

@@ -7,7 +7,9 @@ ymm4faceassign の実測（docs/measurements.md）で決めたこと:
 - 出力は候補の番号（名前を書かせると遅い）。JSON スキーマの enum で実在する番号だけに縛る。-1 は「どれも合わない」
 - 台本はキャラごとに束ね、他のキャラのセリフは ID 無しの文脈として混ぜる。文脈は束の手前 `context_lines` 行と、
   対象の間の直前 1 行だけ（全部送ると 1 行の推定に数十秒かかる）
-- 返ってこなかった行は一度だけ聞き直し、駄目なら変えない。json_schema を断るサーバにはスキーマ無しで送り直す
+- 返ってこなかった行は一度だけ聞き直し、駄目なら変えない。json_schema を断るサーバには、整数の enum を範囲
+  （minimum / maximum）にしたスキーマ（apfel など。Apple の端末内モデルは文字列の enum しか縛れない）、それも
+  断られたらスキーマ無しで送り直す
 """
 
 from __future__ import annotations
@@ -87,6 +89,7 @@ class Outcome:
 class Client:
     def __init__(self, endpoint: Endpoint):
         self.endpoint = endpoint
+        self._schema_level = 0  # 断られたスキーマの段は次から飛ばす（0: そのまま、1: 範囲、2: スキーマ無し）
 
     def _post(self, url: str, body: dict, timeout: float) -> str:
         headers = {"Content-Type": "application/json; charset=utf-8"}
@@ -136,13 +139,20 @@ class Client:
             return False
 
     def complete_json(self, system: str, user: str, schema: dict | None, name: str = "face_assignments") -> dict:
-        """JSON スキーマで縛ってチャット補完を 1 回呼ぶ。スキーマを断られたら、スキーマ無しで 1 回だけ送り直す。"""
-        try:
-            return parse_content(self._chat(system, user, schema, name))
-        except LlmError as e:
-            if schema is None or not e.schema_rejected:
-                raise
-            return parse_content(self._chat(system, user, None, name))
+        """JSON スキーマで縛ってチャット補完を 1 回呼ぶ。スキーマを断られたら、整数の enum を範囲にしたスキーマ、
+        それも断られたらスキーマ無しで送り直す。断られた段は同じ Client では次から送らない。"""
+        attempts = [(0, schema)]
+        if schema is not None:
+            relaxed = range_schema(schema)
+            attempts += [(1, relaxed), (2, None)] if relaxed != schema else [(2, None)]
+            attempts = [a for a in attempts if a[0] >= self._schema_level] or attempts[-1:]
+        for n, (_, attempt) in enumerate(attempts, 1):
+            try:
+                return parse_content(self._chat(system, user, attempt, name))
+            except LlmError as e:
+                if n == len(attempts) or not e.schema_rejected:
+                    raise
+                self._schema_level = attempts[n][0]
 
     def _chat(self, system: str, user: str, schema: dict | None, name: str) -> str:
         body: dict = {"model": self.endpoint.model, "temperature": self.endpoint.temperature, "stream": False,
@@ -182,6 +192,21 @@ def sanitize(content: str) -> str:
     s = re.sub(r"^```(?:json)?|```$", "", s, flags=re.M).strip()
     start, end = s.find("{"), s.rfind("}")
     return s[start:end + 1] if 0 <= start < end else s
+
+
+def range_schema(schema):
+    """整数の enum を範囲（minimum / maximum）にしたスキーマ。整数の enum を縛れないサーバ向け（範囲の中の
+    実在しない番号は `interpret` が候補に無い番号として扱う）。"""
+    if isinstance(schema, list):
+        return [range_schema(v) for v in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: range_schema(v) for k, v in schema.items()}
+    values = out.get("enum")
+    if out.get("type") == "integer" and isinstance(values, list) and values and all(isinstance(v, int) for v in values):
+        del out["enum"]
+        out["minimum"], out["maximum"] = min(values), max(values)
+    return out
 
 
 def build_schema(candidates: list[str], include_reason: bool) -> dict:

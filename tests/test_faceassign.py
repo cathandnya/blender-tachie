@@ -150,7 +150,34 @@ def test_assign_without_schema_support(llm):
     server = llm(reply)
     out = fa.assign(Client(Endpoint(server.url)), [Line(0, "z", "はい")], ["基本"])
     assert out == [fa.Outcome(0, "基本")]
+    assert len(server.chats()) == 3  # enum のスキーマ → 範囲のスキーマ → スキーマ無し
+
+
+def test_assign_with_range_schema(llm):
+    """整数の enum を断るサーバ（apfel: Apple の端末内モデル）には、番号を範囲で縛ったスキーマで送り直す。"""
+    def reply(body):
+        schema = body.get("response_format", {}).get("json_schema", {}).get("schema")
+        p = schema["properties"]["a"]["items"]["properties"]["p"] if schema else None
+        if p is None or "enum" in p:
+            return 400, json.dumps({"error": {"message": 'Invalid response_format.json_schema: "enum" at '
+                                              '#/properties/a/items/properties/p cannot be enforced'}})
+        assert (p["minimum"], p["maximum"]) == (-1, 1)
+        return 200, json.dumps({"a": [{"i": 0, "p": 1}]})
+
+    server = llm(reply)
+    client = Client(Endpoint(server.url))
+    out = fa.assign(client, [Line(0, "z", "はい")], ["基本", "笑顔"])
+    assert out == [fa.Outcome(0, "笑顔")]
     assert len(server.chats()) == 2
+    fa.assign(client, [Line(0, "z", "はい")], ["基本", "笑顔"])
+    assert len(server.chats()) == 3  # 断られた enum のスキーマは次から送らない
+
+
+def test_range_schema():
+    schema = fa.build_schema(["基本", "笑顔", "怒り"], include_reason=False)
+    p = fa.range_schema(schema)["properties"]["a"]["items"]["properties"]["p"]
+    assert p == {"type": "integer", "minimum": -1, "maximum": 2}
+    assert "enum" in schema["properties"]["a"]["items"]["properties"]["p"]  # 元のスキーマは変えない
 
 
 def test_assign_failure_keeps_lines(llm):

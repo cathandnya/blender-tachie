@@ -163,6 +163,7 @@ uv run python -m tachie_studio.tachie.psd_animation <動く立ち絵の素材フ
    |---|---|---|
    | LM Studio | `http://127.0.0.1:1234` | サーバ機能を有効にする |
    | Ollama | `http://127.0.0.1:11434` | |
+   | Apple Intelligence（[apfel](https://github.com/Arthur-Ficial/apfel)） | `http://127.0.0.1:11434` | macOS 26 以降。`brew install apfel` → `apfel --serve`。モデルは `apple-foundationmodel`。Mac の中で動く |
    | Gemini | `https://generativelanguage.googleapis.com/v1beta/openai/` | API キーが要る。モデル名は `models/` から始まる。reasoning_effort は空に |
 
    「接続テスト」でモデルの一覧が出れば繋がっています（モデル名が空なら一覧の先頭が入ります）。
