@@ -126,7 +126,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   何もしない（`_needs_apply` を見て、プリフェッチも止めない）。
   作り直しの鍵 `tachie_faced`（`still_key`: キャラの見た目 `appearance_key`（素材・高さ・基本の表情。プリセットは入れない）・
   立ち絵のパーツ・表情ストリップの区間とパーツ・重なるセリフの (id, ずれ, パーツ, 長さ)）が変わったものと、
-  長さを変えた（ハンドルを動かした）ものを `apply_faces` が作り直す（`remake_still`、今のチャンネルと位置・大きさを引き継ぐ）。
+  長さを変えた（ハンドルを動かした）もの、コマの画像（合成キャッシュ）が無いもの（`missing_images`。`tachie/cache` を消した・
+  別の Mac に持っていった・前の版の `faces/` を消した）を `apply_faces` が作り直す（`remake_still`、今のチャンネルと位置・
+  大きさを引き継ぐ。画像が無かったものは `_caches` を捨て、`invalidate_cache("RAW")` で読み直させる）。.blend を開いたら
+  `load_post`（`_migrate_on_load`）が自動の反映を 1 回走らせる。ファイルを開くと Blender は persistent でないタイマーを消すので、
+  そこで `_face_timer_running` も戻す（戻さないと待っている印が残って自動の反映が止まる）。
   自動の待機・立ち絵ごと置くセリフ（前の版の FULL）はやめた。前の .blend に残った待機・セリフの立ち絵はそのまま（作り直さない）。
   表情ストリップ（`tachie_face` = キャラ名、`tachie_expression`）はミュートしたカラーストリップで、そのキャラの表情のレーン
   （重なる表情があればその上＝あふれ、`channels.face_channel`）に置く。重なる範囲だけ立ち絵がその表情になる。重なったらチャンネルが上、

@@ -119,13 +119,22 @@ def _clear_input_on_load(*_args):
 
 @persistent
 def _migrate_on_load(*_args):
-    """前の版の .blend のセリフ・立ち絵・表情ストリップ（表情プリセットの名前だけ）にパーツを書く。"""
+    """前の版の .blend のセリフ・立ち絵・表情ストリップ（表情プリセットの名前だけ）にパーツを書く。開いたら自動の反映を
+    1 回走らせて、コマの画像（合成キャッシュ）が無い立ち絵を作り直す（別の Mac に持っていった・cache を消したなど）。"""
+    global _face_timer_running
     for scene in bpy.data.scenes:
         if scene.library is None:
             try:
                 migrate_parts(scene)
             except ERRORS as e:
                 print("表情のパーツを書けません:", e)
+    _applied_signatures.clear()  # 前に開いていた .blend の記録（同じ名前のシーンでも別のもの）
+    # ファイルを開くと Blender は登録してあったタイマー（persistent でないもの）を消すので、待っていた自動の反映の印も戻す
+    # （戻さないと「待っている」のまま残り、以後の自動の反映が止まる）
+    _face_timer_running = not bpy.app.background
+    # persistent のタイマーは続けて開いたときに残っているので、重ねて登録しない
+    if _face_timer_running and not bpy.app.timers.is_registered(_apply_faces_later):
+        bpy.app.timers.register(_apply_faces_later, first_interval=0.5, persistent=True)
 
 
 @persistent
@@ -196,7 +205,8 @@ def load_material(folder: str):
 
 def _cache(character, expr: Expression, directory: Path, scale: float) -> FrameCache:
     key = (str(character.path), repr(expr), round(scale, 4), str(directory))
-    if key not in _caches:
+    # 合成画像のフォルダごと消えていれば（cache を消したなど）覚えているパスも捨てる（無い画像を指さないように）
+    if key not in _caches or not _caches[key].directory.is_dir():
         _caches[key] = FrameCache(character, expr, directory, scale)
     return _caches[key]
 
@@ -1128,7 +1138,8 @@ def apply_faces(context, strips=None, problems: list | None = None) -> int:
     作り直す。作り直した本数を返す。
 
     鍵（`still_key`）が置いたときと違うもの（セリフや表情ストリップを足した・動かした・消したなど）と、
-    長さを変えた（ハンドルを動かした）ものを作り直す。前の版で置いたセリフの立ち絵・待機はそのまま。
+    長さを変えた（ハンドルを動かした）もの、コマの画像（合成キャッシュ）が無いもの（`tachie/cache` を消した・
+    別の Mac に持っていった・前の版の `faces/` を消した）を作り直す。前の版で置いたセリフの立ち絵・待機はそのまま。
     作り直せなかったものと、口パクに使えなかったセリフは `problems` に理由を足す。
     """
     scene = seq_scene(context)
@@ -1139,22 +1150,35 @@ def apply_faces(context, strips=None, problems: list | None = None) -> int:
     if strips is None:
         strips = [s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_still")]
     count = 0
+    cleared = False
     for strip in list(strips):
         ch = next((c for c in settings.characters if c.name == strip.get("tachie_still")), None)
         if ch is None or not ch.folder:
             continue
         start, end = strip.left_handle, strip.right_handle
         stretched = int(strip.content_start) != start or len(strip.elements) != end - start
-        if not stretched and strip.get("tachie_faced", "") == still_key(context, sed, ch, strip):
+        missing = missing_images(strip)
+        if not stretched and not missing and strip.get("tachie_faced", "") == still_key(context, sed, ch, strip):
             continue
+        if missing and not cleared:
+            _caches.clear()  # 覚えている合成画像のパスも消えている（作り直させる。1 回の反映で 1 度だけ）
+            cleared = True
         try:
-            remake_still(context, strip, problems=problems)
+            strip = remake_still(context, strip, problems=problems)
+            if missing:
+                strip.invalidate_cache("RAW")  # 同じファイル名を指したままなので、読めなかった画像を読み直させる
         except ERRORS as e:
             if problems is not None:
                 problems.append(str(e))
             continue
         count += 1
     return count
+
+
+def missing_images(strip) -> bool:
+    """立ち絵のコマの画像が 1 枚でも無いか（同じ画像を何度も並べるので、名前の種類ごとに確かめる）。"""
+    directory = Path(bpy.path.abspath(strip.directory))
+    return any(not (directory / name).is_file() for name in {e.filename for e in strip.elements})
 
 
 def line_sounds(sed, name: str) -> list:

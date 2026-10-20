@@ -609,6 +609,17 @@ ops._expression_items = [(ops.NONE, "（基本）", "")]
 run(bpy.ops.tachie.pick_expression, target="STILL", expression=ops.NONE)
 assert expression_dir(still("ずんだもん"), 1) == base and expression_dir(still("ずんだもん"), l) == base
 check_stills()
+# コマの画像（合成キャッシュ）が無ければ作り直す（tachie/cache を消した・別の Mac に持っていったとき）
+import shutil  # noqa: E402
+
+zs = still("ずんだもん")
+gone = {(Path(bpy.path.abspath(zs.directory)) / e.filename).parent for e in zs.elements}
+for folder in gone:
+    shutil.rmtree(folder)
+assert ops.missing_images(zs)
+run(bpy.ops.tachie.apply_faces)
+assert not ops.missing_images(still("ずんだもん")) and all(f.is_dir() for f in gone)
+check_stills()
 
 # まとめて変える（ダイアログは画面が要るので execute だけ）
 def select_only(strips_):
