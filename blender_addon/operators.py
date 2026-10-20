@@ -42,6 +42,8 @@ _part_items = []
 _font_items = []
 _font_paths = {}
 _expression_items = []
+_expression_rows: list = []  # 表情を選ぶ一覧の (値, 表示名, 見本のアイコン)
+_expression_current = ""
 _character_items = []
 _dict_words = None  # ユーザー辞書の一覧 [(uuid, 表記, 読み, アクセント)]。None は未取得
 _preview = None  # 試聴中の aud のハンドル
@@ -3196,30 +3198,85 @@ def draw_swatch(row, icon: int):
     return button
 
 
-def part_icon(path: Path) -> int:
-    """パーツの見本のアイコン（作った見本はアドオンのユーザーフォルダの thumbs/ に残す）。"""
+def _thumb_path(key: str, make) -> Path | None:
+    """見本の画像。`make()` で作った画像はアドオンのユーザーフォルダの thumbs/<key>.png に残す。"""
+    thumb = Path(bpy.utils.extension_path_user(__package__, path="thumbs", create=True)) / f"{key}.png"
+    if not thumb.is_file():
+        try:
+            make().save(thumb)
+        except Exception as e:  # 壊れた・大きすぎる画像（DecompressionBombError は OSError ではない）でも一覧は出す
+            print("見本を作れません:", key, e)
+            return None
+    return thumb
+
+
+def _thumb_icon(key: str, make) -> int:
+    """見本の画像のアイコン（画面の無い Blender では 0）。"""
     global _part_previews
     from bpy.utils import previews
 
-    from .tachie_studio.tachie.compose import part_thumbnail
-
     if _part_previews is None:
         _part_previews = previews.new()
+    if key in _part_previews:
+        return _part_previews[key].icon_id
+    thumb = _thumb_path(key, make)
+    return _part_previews.load(key, str(thumb), "IMAGE").icon_id if thumb is not None else 0
+
+
+def part_icon(path: Path) -> int:
+    """パーツの見本のアイコン（パーツ単体を写っている範囲で切り抜いた画像）。"""
+    from .tachie_studio.tachie.compose import part_thumbnail
+
     try:
         stamp = path.stat().st_mtime_ns
     except OSError:
         return 0
     key = hashlib.sha1(f"{path}|{stamp}|{PART_ICON_SIZE}|{PART_ICON_BACKGROUND}".encode("utf-8")).hexdigest()[:16]
-    if key in _part_previews:
-        return _part_previews[key].icon_id
-    thumb = Path(bpy.utils.extension_path_user(__package__, path="thumbs", create=True)) / f"{key}.png"
-    if not thumb.is_file():
-        try:
-            part_thumbnail(path, PART_ICON_SIZE, PART_ICON_BACKGROUND).save(thumb)
-        except Exception as e:  # 壊れた・大きすぎる画像（DecompressionBombError は OSError ではない）でも一覧は出す
-            print("パーツの見本を作れません:", path, e)
-            return 0
-    return _part_previews.load(key, str(thumb), "IMAGE").icon_id
+    return _thumb_icon(key, lambda: part_thumbnail(path, PART_ICON_SIZE, PART_ICON_BACKGROUND))
+
+
+_expression_icons: dict = {}  # {(キャラの見た目, 表情): アイコン}。パネルを描くたびに合成の設定を作らないため
+
+
+def _material_stamp(character, expression) -> str:
+    """表情の見本に使う画像ファイルの更新時刻（素材のパーツを書き換えたら見本を作り直す）。"""
+    from .tachie_studio.tachie.compose import build_layers
+
+    try:
+        paths = [character.path] if character.is_psd else [l.image_path for l in build_layers(character, expression)]
+        return ",".join(str(Path(p).stat().st_mtime_ns) for p in paths)
+    except (ValueError, OSError):
+        return ""
+
+
+def expression_thumb(ch, preset: str = "", parts: dict | None = None) -> tuple[str, object] | None:
+    """表情（基本の表情か表情プリセット、`parts` は立ち絵ごとのパーツ）の見本の (鍵, 作る関数)。
+    立ち絵の無いキャラ・無い表情は None。"""
+    from .tachie_studio.tachie.compose import expression_thumbnail
+
+    if ch is None or not ch.folder:
+        return None
+    try:
+        character = load_material(ch.folder)
+        expression = expression_of(ch, preset or None)
+        if parts:
+            expression = overlay_parts(expression, parts, f"{ch.name} の立ち絵のパーツ")
+    except (*ERRORS, OSError):
+        return None
+    key = hashlib.sha1(f"expression|{character.path}|{expression!r}|{_material_stamp(character, expression)}|"
+                       f"{PART_ICON_SIZE}|{PART_ICON_BACKGROUND}".encode("utf-8")).hexdigest()[:16]
+    return key, lambda: expression_thumbnail(character, expression, PART_ICON_SIZE, PART_ICON_BACKGROUND)
+
+
+def expression_icon(ch, preset: str = "", parts: dict | None = None) -> int:
+    """表情の見本のアイコン。合成した立ち絵を顔のまわりで切り抜いた画像。立ち絵の無いキャラ・無い表情は 0。"""
+    if ch is None or not ch.folder:
+        return 0
+    memo = json.dumps([appearance_key(ch, {preset} if preset else set()), preset, parts or {}], ensure_ascii=False)
+    if memo not in _expression_icons:  # 作れない表情（無いプリセット・読めない素材）も 0 を覚え、描くたびに読み直さない
+        thumb = expression_thumb(ch, preset, parts)
+        _expression_icons[memo] = _thumb_icon(*thumb) if thumb is not None else 0
+    return _expression_icons[memo]
 
 
 class TACHIE_OT_clear_still_parts(bpy.types.Operator):
@@ -3382,6 +3439,7 @@ class TACHIE_OT_reload_character(bpy.types.Operator):
     def execute(self, context):
         _characters.clear()
         _caches.clear()
+        _expression_icons.clear()  # 表情の見本も作り直す（鍵に画像の更新時刻を含む）
         load_image.cache_clear()
         shutil.rmtree(output_dir(context) / "cache", ignore_errors=True)
         # 立ち絵はキャッシュの画像を直接指しているので作り直す
@@ -3935,7 +3993,6 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
 
     bl_idname = "tachie.pick_expression"
     bl_label = "表情を選ぶ"
-    bl_property = "expression"
     bl_options = {"REGISTER", "UNDO"}
 
     target: bpy.props.EnumProperty(items=[("ADD", "追加するセリフ", ""), ("LINE", "選択中のセリフ", ""),
@@ -3951,7 +4008,7 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
         return settings.character()
 
     def invoke(self, context, event):
-        global _expression_items
+        global _expression_items, _expression_rows, _expression_current
         if self.target != "ADD" and active_selected(context) is None:
             self.report({"WARNING"}, "ストリップを選んでください")
             return {"CANCELLED"}
@@ -3963,10 +4020,36 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
         if ch is None:
             return {"CANCELLED"}
         # セリフの "" は重なる立ち絵の表情のまま
-        _expression_items = [(NONE, "（立ち絵のまま）" if self.target == "LINE" else "（基本）", "")] + [
-            (e.name, e.name, "") for e in ch.expressions]
-        context.window_manager.invoke_search_popup(self)
-        return {"RUNNING_MODAL"}
+        empty = "（立ち絵のまま）" if self.target == "LINE" else "（基本）"
+        _expression_items = [(NONE, empty, "")] + [(e.name, e.name, "") for e in ch.expressions]
+        # パーツの一覧と同じく、表情の見本（顔のまわりを切り抜いた立ち絵）を名前の左に並べる
+        wm = context.window_manager
+        parts = still_parts(active_selected(context)) if self.target == "STILL" else None  # 立ち絵ごとのパーツも重ねる
+        wm.progress_begin(0, len(ch.expressions))
+        try:
+            _expression_rows = [(NONE, empty, 0 if self.target == "LINE" else expression_icon(ch, "", parts))]
+            for i, e in enumerate(ch.expressions):
+                _expression_rows.append((e.name, e.name, expression_icon(ch, e.name, parts)))
+                wm.progress_update(i + 1)
+        finally:
+            wm.progress_end()
+        _expression_current = self._current(context) or NONE
+        return wm.invoke_popup(self, width=300)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.operator_context = "EXEC_DEFAULT"  # 押したらこの表情を当てる（一覧を開き直さない）
+        for value, label, icon in _expression_rows:
+            op = draw_swatch(col.row(align=True), icon).operator("tachie.pick_expression", text=label,
+                                                                 depress=value == _expression_current)
+            op.target, op.expression = self.target, value
+
+    def _current(self, context) -> str:
+        """今の表情（一覧で押されて見える）。"""
+        if self.target == "ADD":
+            return seq_scene(context).tachie.expression
+        strip = active_selected(context)
+        return strip.get("tachie_expression", "") if strip is not None else ""
 
     def execute(self, context):
         value = "" if self.expression == NONE else self.expression
@@ -4115,6 +4198,7 @@ def unregister():
 
         previews.remove(_part_previews)
         _part_previews = None
+        _expression_icons.clear()
     if _on_depsgraph_update in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_depsgraph_update)
     if _move_temp_output in bpy.app.handlers.save_pre:

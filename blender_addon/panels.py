@@ -3,7 +3,7 @@ import bpy
 from .tachie_studio.subtitle import breaks
 
 from .operators import (STILL_SETTINGS, active_selected, line_layout_of, line_sound, line_strips, line_subtitle,
-                        load_material, output_dir, prefs, selected_targets, seq_scene)
+                        load_material, output_dir, prefs, selected_targets, seq_scene, still_parts)
 from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
 
 
@@ -22,7 +22,13 @@ class TACHIE_UL_characters(bpy.types.UIList):
 
 class TACHIE_UL_expressions(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        layout.prop(item, "name", text="", emboss=False, icon="SHADERFX")
+        from .operators import expression_icon
+
+        icon = expression_icon(data, item.name)
+        if icon:
+            layout.prop(item, "name", text="", emboss=False, icon_value=icon)
+        else:
+            layout.prop(item, "name", text="", emboss=False, icon="SHADERFX")
 
 
 class TACHIE_MT_characters(bpy.types.Menu):
@@ -68,8 +74,7 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
         row.enabled = tachie
-        row.label(text="表情")
-        row.operator("tachie.pick_expression", text=s.expression or "（基本）").target = "ADD"
+        draw_expression_row(row, ch, s.expression, "ADD", s.expression or "（基本）")
         row = layout.row()
         row.scale_y = 1.4
         row.enabled = ch is not None
@@ -112,16 +117,15 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             layout.separator()
         if strip is not None and strip.get("tachie_face"):
             layout.label(text=f"{strip['tachie_face']}の表情ストリップ", icon="SHADERFX")
-            row = layout.row(align=True)
-            row.label(text="表情")
-            row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "FACE"
+            draw_expression_row(layout.row(align=True), seq_scene(context).tachie.characters.get(strip["tachie_face"]),
+                                strip.get("tachie_expression", ""), "FACE", strip.get("tachie_expression") or "（基本）")
             layout.label(text="重なる範囲だけこの表情になります", icon="INFO")
             layout.operator("tachie.apply_faces", icon="FILE_REFRESH")
         elif strip is not None and strip.get("tachie_still"):
             layout.label(text=f"{strip['tachie_still']}の立ち絵", icon="USER")
-            row = layout.row(align=True)
-            row.label(text="表情")
-            row.operator("tachie.pick_expression", text=strip.get("tachie_expression") or "（基本）").target = "STILL"
+            draw_expression_row(layout.row(align=True), seq_scene(context).tachie.characters.get(strip["tachie_still"]),
+                                strip.get("tachie_expression", ""), "STILL", strip.get("tachie_expression") or "（基本）",
+                                still_parts(strip))
             draw_still_parts(layout, context, strip)
             owner = seq_scene(context).tachie.characters.get(strip["tachie_still"])
             flipped = bool(owner and still_flip(strip, owner))
@@ -181,10 +185,8 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row.operator_menu_enum("tachie.pick_line_layout", "line_layout",
                                    text=next(n for k, n, *_ in LINE_LAYOUTS if k == shape))
             if owner is not None and owner.folder:  # 重なる立ち絵がセリフの間だけこの表情になる
-                row = layout.row(align=True)
-                row.label(text="表情")
-                row.operator("tachie.pick_expression",
-                             text=strip.get("tachie_expression") or "（立ち絵のまま）").target = "LINE"
+                draw_expression_row(layout.row(align=True), owner, strip.get("tachie_expression", ""), "LINE",
+                                    strip.get("tachie_expression") or "（立ち絵のまま）")
             col = layout.column(align=True)
             if sound is not None and "tachie_voice_speed_scale" in sound:
                 for prop, (_, label, *_) in VOICE_PROPS.items():
@@ -434,6 +436,16 @@ def draw_wrapped(layout, context, text: str, operator: str, max_lines: int = 3, 
         row = box.row()
         row.alignment = "LEFT"  # 文字の幅のボタンにして左に寄せる（表示と同じ見た目）
         row.operator(operator, text=line or " ", emboss=False)
+
+
+def draw_expression_row(row, ch, value: str, target: str, text: str, parts: dict | None = None) -> None:
+    """表情の欄（ラベル・表情の見本・選ぶボタン tachie.pick_expression）。セリフの「立ち絵のまま」は見本なし。
+    `parts` は立ち絵ごとのパーツ（見本に重ねる）。"""
+    from .operators import draw_swatch, expression_icon
+
+    row.label(text="表情")
+    icon = expression_icon(ch, value, parts) if value or target != "LINE" else 0
+    draw_swatch(row.row(align=True), icon).operator("tachie.pick_expression", text=text).target = target
 
 
 def draw_part_row(col, material, category: str, label: str, value: str, text: str, depress: bool = False):

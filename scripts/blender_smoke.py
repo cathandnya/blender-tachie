@@ -439,6 +439,12 @@ assert face2.channel > face.channel  # 重なる表情は上（あふれ）に�
 komari = cache_dir(zunda, "困り")
 zs = still("ずんだもん")
 assert expression_dir(zs, l) == komari and expression_dir(zs, l + 3) == doya
+# 表情の見本（顔のまわりを切り抜いた合成画像。表情ごとに違う画像）
+zunda_ch = s.characters["ずんだもん"]
+thumbs = [ops._thumb_path(*ops.expression_thumb(zunda_ch, name)) for name in ("", "困り", "ドヤ")]
+assert len({t.read_bytes() for t in thumbs}) == 3, thumbs
+assert ops.expression_thumb(zunda_ch, "無い表情") is None
+ops.expression_icon(zunda_ch, "困り")  # 画面が無いとアイコンは 0 だが、落ちないこと
 # 表情ストリップの表情を変える
 activate(face2)
 ops._expression_items = [("ドヤ", "ドヤ", "")]

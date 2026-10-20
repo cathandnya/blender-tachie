@@ -294,3 +294,16 @@ def test_part_thumbnail(tmp_path):
     assert part_thumbnail(tmp_path / "none.png", 32).getchannel("A").getbbox() is None
     white = part_thumbnail(tmp_path / "eye.png", 64, (255, 255, 255, 255))
     assert white.getpixel((0, 0)) == (255, 255, 255, 255) and white.getpixel((32, 32))[:3] == (255, 0, 0)
+
+
+def test_expression_thumbnail(char_dir: Path):
+    """表情の見本: 眉・目・口の範囲のまわりを正方形に切り抜く（背景の色の上に）。"""
+    from tachie_studio.tachie.compose import expression_thumbnail
+
+    c = load_character(char_dir)
+    thumb = expression_thumbnail(c, Expression(eye="静止"), 32, (255, 255, 255, 255))
+    assert thumb.size == (32, 32)
+    # 眉（上 3 行）〜口（7 行目）の 8 x 7 の範囲の FACE_MARGIN（2.6）倍: 立ち絵（8 x 8）は真ん中に小さく、まわりは背景
+    assert thumb.getpixel((0, 0)) == (255, 255, 255, 255)
+    assert thumb.getpixel((16, 16))[3] == 255 and thumb.getpixel((16, 16)) != (255, 255, 255, 255)
+    assert thumb.tobytes() != expression_thumbnail(c, Expression(eye="開き"), 32, (255, 255, 255, 255)).tobytes()  # 表情の違いが写る

@@ -239,3 +239,41 @@ def part_thumbnail(path: Path, size: int = 96, background: tuple = (0, 0, 0, 0))
     part = part.resize((max(1, round(part.width * scale)), max(1, round(part.height * scale))), Image.Resampling.LANCZOS)
     out.alpha_composite(part, ((size - part.width) // 2, (size - part.height) // 2))
     return out
+
+
+FACE_CATEGORIES = ("眉", "目", "口")
+FACE_MARGIN = 2.6  # 表情の見本の幅・高さは、眉・目・口の写っている範囲の大きいほうのこの倍
+
+
+def expression_thumbnail(character: Character, expr: Expression | None = None, size: int = 96,
+                         background: tuple = (0, 0, 0, 0)) -> Image.Image:
+    """表情の見本（表情プリセットの一覧に出す）。合成した立ち絵を顔のまわりで正方形に切り抜く。
+
+    顔の位置は眉・目・口のパーツの写っている範囲。それが分からない素材（PSD・シンプル立ち絵）は、
+    写っている範囲の上から幅いっぱいの正方形（縦長の立ち絵なら頭のまわり）。"""
+    expr = expr or Expression()
+    image = compose(character, expr)
+    out = Image.new("RGBA", (size, size), background)
+    face = None
+    if not character.is_psd and not character.simple:
+        for l in build_layers(character, expr):
+            if l.part.category in FACE_CATEGORIES:
+                box = load_image(l.image_path).getchannel("A").getbbox()
+                if box is not None:
+                    face = box if face is None else (min(face[0], box[0]), min(face[1], box[1]),
+                                                     max(face[2], box[2]), max(face[3], box[3]))
+    if face is not None:
+        side = max(face[2] - face[0], face[3] - face[1]) * FACE_MARGIN
+        cx, cy = (face[0] + face[2]) / 2, (face[1] + face[3]) / 2
+        box = (cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+    else:
+        body = image.getchannel("A").getbbox()
+        if body is None:
+            return out
+        side = body[2] - body[0]
+        cx = (body[0] + body[2]) / 2
+        box = (cx - side / 2, body[1], cx + side / 2, body[1] + side)
+    crop = image.crop(tuple(round(v) for v in box))  # 画像の外は透明
+    crop = crop.resize((size, size), Image.Resampling.LANCZOS)
+    out.alpha_composite(crop)
+    return out
