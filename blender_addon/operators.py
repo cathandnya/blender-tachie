@@ -4104,6 +4104,23 @@ class TACHIE_OT_expression_add(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class TACHIE_OT_expression_select(bpy.types.Operator):
+    """この表情プリセットを編集する"""
+
+    bl_idname = "tachie.expression_select"
+    bl_label = "表情プリセットを選ぶ"
+    bl_options = {"UNDO", "INTERNAL"}
+
+    index: bpy.props.IntProperty(options={"SKIP_SAVE"})
+
+    def execute(self, context):
+        ch = seq_scene(context).tachie.character()
+        if ch is None or not 0 <= self.index < len(ch.expressions):
+            return {"CANCELLED"}
+        ch.active_expression = self.index
+        return {"FINISHED"}
+
+
 class TACHIE_OT_expression_remove(bpy.types.Operator):
     """表情プリセットを削除する（このプリセットを使ったセリフは再生成できなくなる）"""
 
@@ -4137,6 +4154,7 @@ _classes = (
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,
     TACHIE_OT_expression_add,
+    TACHIE_OT_expression_select,
     TACHIE_OT_expression_remove,
     TACHIE_OT_regenerate,
     TACHIE_OT_regenerate_all,

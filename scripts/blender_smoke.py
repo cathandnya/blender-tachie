@@ -445,6 +445,9 @@ thumbs = [ops._thumb_path(*ops.expression_thumb(zunda_ch, name)) for name in (""
 assert len({t.read_bytes() for t in thumbs}) == 3, thumbs
 assert ops.expression_thumb(zunda_ch, "無い表情") is None
 ops.expression_icon(zunda_ch, "困り")  # 画面が無いとアイコンは 0 だが、落ちないこと
+s.active_character = list(s.characters).index(zunda_ch)
+run(bpy.ops.tachie.expression_select, index=1)  # 表情プリセットの一覧のボタン
+assert zunda_ch.active_expression == 1
 # 表情ストリップの表情を変える
 activate(face2)
 ops._expression_items = [("ドヤ", "ドヤ", "")]

@@ -211,7 +211,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   表情（基本・表情プリセット）の見本は合成した立ち絵を顔（眉・目・口の写っている範囲の `FACE_MARGIN` 倍）のまわりで
   切り抜いたもの（`compose.expression_thumbnail`、PSD・シンプル立ち絵は上から幅いっぱいの正方形。`operators.expression_icon`）。
   表情を選ぶ一覧（`tachie.pick_expression` の invoke、`invoke_popup`。押すと EXEC_DEFAULT で同じオペレーターを実行）・
-  表情の欄（`panels.draw_expression_row`）・表情プリセットの一覧に出す。画面の無い Blender ではアイコンが 0 なので、
+  表情の欄（`panels.draw_expression_row`）・表情プリセットの一覧（パーツの欄と同じ大きさにするため UIList ではなく
+  見本 + `tachie.expression_select` のボタンの並び。名前は下の欄で変える）に出す。画面の無い Blender ではアイコンが 0 なので、
   スモークテストは見本の画像（`_thumb_path`）で確かめる。
   「立ち絵だけを置く」は立ち絵を再生位置に置く（同じキャラの立ち絵とは重ねられない）。伸ばすと自動の反映で今の長さに作り直す
   （「作り直す」ボタンでも）。素材を選び直す・読み直すと、そのキャラの立ち絵を作り直す（キャッシュの画像を直接指しているため）。

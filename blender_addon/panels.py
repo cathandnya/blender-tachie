@@ -20,17 +20,6 @@ class TACHIE_UL_characters(bpy.types.UIList):
         row.label(text=item.speaker_name or f"ID {item.speaker}")
 
 
-class TACHIE_UL_expressions(bpy.types.UIList):
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        from .operators import expression_icon
-
-        icon = expression_icon(data, item.name)
-        if icon:
-            layout.prop(item, "name", text="", emboss=False, icon_value=icon)
-        else:
-            layout.prop(item, "name", text="", emboss=False, icon="SHADERFX")
-
-
 class TACHIE_MT_characters(bpy.types.Menu):
     bl_label = "キャラクター設定"
 
@@ -522,8 +511,16 @@ class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         ch = seq_scene(context).tachie.character()
+        from .operators import draw_swatch, expression_icon
+
+        # 一覧はパーツの欄と同じ大きさの見本を名前の左に並べる（UIList の行はアイコンが小さい）
         row = layout.row()
-        row.template_list("TACHIE_UL_expressions", "", ch, "expressions", ch, "active_expression", rows=3)
+        col = row.column(align=True)
+        if not ch.expressions:
+            col.label(text="（表情プリセットはありません）")
+        for i, e in enumerate(ch.expressions):
+            draw_swatch(col.row(align=True), expression_icon(ch, e.name)).operator(
+                "tachie.expression_select", text=e.name, depress=i == ch.active_expression).index = i
         col = row.column(align=True)
         col.operator("tachie.expression_add", text="", icon="ADD")
         col.operator("tachie.expression_remove", text="", icon="REMOVE")
@@ -531,6 +528,7 @@ class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
         if preset is None:
             layout.label(text="台本では「キャラ名(表情): セリフ」で使えます", icon="INFO")
             return
+        layout.prop(preset, "name", text="名前")
         material = material_of(ch)
         if material is not None and material.is_psd:
             draw_psd_layers(layout, ch, preset.name)
@@ -828,7 +826,6 @@ def draw_char_lanes(layout, scene, name: str) -> None:
 
 _classes = (
     TACHIE_UL_characters,
-    TACHIE_UL_expressions,
     TACHIE_MT_characters,
     TACHIE_PT_main,
     TACHIE_PT_line,
