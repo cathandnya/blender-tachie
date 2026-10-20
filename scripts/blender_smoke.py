@@ -939,6 +939,15 @@ assert not s.text  # 追加したら入力欄を空にする
 assert ops.line_subtitle(nl).text.split("\n")[:3] == ["改行の", "テスト", "なのだ。"], ops.line_subtitle(nl).text
 for x in nl:
     sed.strips.remove(x)
+# 追加のダイアログ（execute だけ。text を渡す）と、セリフを編集のダイアログ（そのテキストで作り直す）
+run(bpy.ops.tachie.add_line, text="ダイアログから追加なのだ")
+nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"] == "ダイアログから追加なのだ")
+activate(ops.line_subtitle(nl))
+run(bpy.ops.tachie.edit_line_text, text="編集した\\nセリフなのだ")
+nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"].startswith("編集した"))
+assert ops.line_subtitle(nl).text.split("\n")[:2] == ["編集した", "セリフなのだ"], ops.line_subtitle(nl).text
+for x in nl:
+    sed.strips.remove(x)
 scene.frame_end = frame_end_before
 
 # YMM4 のプロジェクトの読み込み: 今あるキャラ（ずんだもん）はそのまま、無いキャラは素材フォルダから追加する

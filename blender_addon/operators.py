@@ -1378,12 +1378,32 @@ class TACHIE_OT_add_line(bpy.types.Operator):
 
     bl_idname = "tachie.add_line"
     bl_label = "セリフを追加"
-    bl_options = {"REGISTER", "UNDO"}
+    # 「最後の操作を調整」に出さない（テキストを変えるたびに合成し直さないように）。元に戻すは UNDO で効く
+    bl_options = {"UNDO"}
+
+    text: bpy.props.StringProperty(name="セリフ", options={"SKIP_SAVE"},
+                                   description="追加するセリフ。字幕の改行は \\n（¥n）、最後に {発音} と書ける")
+
+    def invoke(self, context, event):
+        ch = seq_scene(context).tachie.character()
+        if ch is None:
+            self.report({"ERROR"}, "キャラクターを追加してください")
+            return {"CANCELLED"}
+        # 空のまま「追加」しても、パネルから見えないシーンの入力（前の版の残りなど）で置かないように
+        clear_text_input(seq_scene(context).tachie)
+        return context.window_manager.invoke_props_dialog(self, width=760, title=f"{ch.name}のセリフを追加",
+                                                          confirm_text="追加")
+
+    def draw(self, context):
+        self.layout.activate_init = True  # 開いたらすぐ入力できるように
+        self.layout.prop(self, "text", text="")
+        self.layout.label(text="字幕の改行は \\n、最後に {発音} と書ける", icon="INFO")
 
     def execute(self, context):
         settings = seq_scene(context).tachie
         ch = settings.character()
-        text, kana = split_kana(input_text(settings.text).strip())  # 字幕の改行は \n（¥n）
+        # ダイアログの入力（スクリプトから text を渡さずに呼んだときは、シーンの入力 settings.text）
+        text, kana = split_kana(input_text(self.text or settings.text).strip())  # 字幕の改行は \n（¥n）
         if ch is None:
             self.report({"ERROR"}, "キャラクターを追加してください")
             return {"CANCELLED"}
@@ -1537,12 +1557,12 @@ class TACHIE_OT_regenerate(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _regenerate_active(op, context, **kwargs):
-    """選択中のセリフを作り直す（テキストと表情は選択中のストリップから）。"""
+def _regenerate_active(op, context, text: str | None = None, **kwargs):
+    """選択中のセリフを作り直す（テキストは `text` か選択中のストリップ、表情は選択中のストリップから）。"""
     sed = seq_scene(context).sequence_editor
     active = sed.active_strip
     try:
-        strips = regenerate(context, active_line_id(context), active["tachie_text"],
+        strips = regenerate(context, active_line_id(context), active["tachie_text"] if text is None else text,
                             active.get("tachie_expression", ""), **kwargs)
         refresh_faces(context)
     except ERRORS as e:
@@ -1683,12 +1703,46 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class TACHIE_OT_edit_line_text(bpy.types.Operator):
+    """選択中のセリフのテキストを、広い欄で編集して作り直す"""
+
+    bl_idname = "tachie.edit_line_text"
+    bl_label = "セリフを編集"
+    # 「最後の操作を調整」に出さない（テキストを変えるたびに合成し直さないように）。元に戻すは UNDO で効く
+    bl_options = {"UNDO"}
+
+    text: bpy.props.StringProperty(name="セリフ", options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return active_line_id(context) is not None
+
+    def invoke(self, context, event):
+        self.text = input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", ""))
+        return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映して作り直す")
+
+    def draw(self, context):
+        self.layout.activate_init = True
+        self.layout.prop(self, "text", text="")
+        self.layout.label(text="字幕の改行は \\n、最後に {発音} と書ける", icon="INFO")
+
+    def execute(self, context):
+        if not self.text.strip():
+            self.report({"ERROR"}, "セリフを入力してください")
+            return {"CANCELLED"}
+        active = seq_scene(context).sequence_editor.active_strip
+        if input_text(self.text).strip() == input_text(active.get("tachie_text", "")).strip():
+            return {"CANCELLED"}  # 変えていなければ合成し直さない
+        return _regenerate_active(self, context, text=self.text)
+
+
 class TACHIE_OT_edit_kana(bpy.types.Operator):
     """選択中のセリフの発音を、広い欄で編集して作り直す"""
 
     bl_idname = "tachie.edit_kana"
     bl_label = "発音を編集"
-    bl_options = {"REGISTER", "UNDO"}
+    # 「最後の操作を調整」に出さない（テキストを変えるたびに合成し直さないように）。元に戻すは UNDO で効く
+    bl_options = {"UNDO"}
 
     text: bpy.props.StringProperty(name="発音", options={"SKIP_SAVE"})
 
@@ -3944,6 +3998,7 @@ _classes = (
     TACHIE_OT_flip_still,
     TACHIE_OT_clear_still_parts,
     TACHIE_OT_edit_kana,
+    TACHIE_OT_edit_line_text,
     TACHIE_OT_set_part,
     TACHIE_OT_import_script,
     TACHIE_OT_pick_expression,

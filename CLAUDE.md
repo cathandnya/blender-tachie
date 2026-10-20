@@ -86,7 +86,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   音声・立ち絵の参照を付け替える（一時フォルダは OS が消すことがあり、保存すると出力フォルダも変わって口の動きが見つから
   なくなった）。口の動きは音声ストリップの wav の隣を先に探す（`motion.motion_paths`）。
   Blender の入力欄には改行を入れられない（Enter も Shift+Enter も入力の確定）ので、字幕の改行は `\n`（¥n）と書く。
-  ボタンで追加し、追加したら入力欄を空にする（`clear_text_input`）。ストリップの
+  新しいセリフは「〇〇のセリフを追加」で開くダイアログ（`tachie.add_line` の invoke、`text`）で入力する（パネルに入力欄は無い。
+  スクリプトから text を渡さずに呼ぶとシーンの `settings.text`、追加したら空にする `clear_text_input`）。選択中のセリフの
+  テキストも折り返して見せ（`panels.draw_wrapped`）、押すと「セリフを編集」（`tachie.edit_line_text`、確定で再生成）。ストリップの
   `tachie_text` も `\n` の書き方のまま持ち（本当の改行はパネルの欄で見えない）、字幕（`properties.apply_subtitle` の
   `subtitle.breaks`）・字幕ファイル・読み上げ（`operators._Client.audio_query`）のときに改行にする。YMM4 のセリフの改行も
   `place_strips` が `\n` にそろえる（`subtitle.mark_breaks`）。

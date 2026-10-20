@@ -1,5 +1,7 @@
 import bpy
 
+from .tachie_studio.subtitle import breaks
+
 from .operators import (STILL_SETTINGS, active_selected, line_layout_of, line_sound, line_strips, line_subtitle,
                         load_material, output_dir, prefs, selected_targets, seq_scene)
 from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
@@ -63,7 +65,6 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
 
         ch = s.character()
-        layout.prop(s, "text", text="", icon="GREASEPENCIL")  # 字幕の改行は \n と書く
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
         row.enabled = tachie
@@ -152,7 +153,8 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                           if c.name == strip.get("tachie_character")), None)
             name = owner.speaker_name if owner and owner.speaker == speaker and owner.speaker_name else f"ID {speaker}"
             row.operator("tachie.pick_speaker", text=name, icon="VIEWZOOM").target = "LINE"
-            layout.prop(strip, '["tachie_text"]', text="")
+            # テキストは折り返して見せ、押すと「セリフを編集」のダイアログ（入力欄は 1 行しか作れない）
+            draw_wrapped(layout, context, breaks(strip.get("tachie_text", "")), "tachie.edit_line_text")
             if sound is not None and "tachie_kana" in sound:
                 row = layout.row(align=True)
                 row.label(text="発音")
@@ -404,20 +406,26 @@ def part_rows(ch):
 
 
 def draw_kana(layout, context, kana: str, max_lines: int = 3, empty: str = "（自動の読み）") -> None:
-    """発音を折り返して見せる（句の区切りで改行、最大 `max_lines` 行）。押すと「発音を編集」のダイアログを開く。"""
+    """発音を折り返して見せる（句の区切りで改行）。押すと「発音を編集」のダイアログを開く。"""
+    draw_wrapped(layout, context, kana, "tachie.edit_kana", max_lines, empty, breaks_at="/、")
+
+
+def draw_wrapped(layout, context, text: str, operator: str, max_lines: int = 3, empty: str = "",
+                 breaks_at: str = "") -> None:
+    """テキストを折り返して見せる（改行と、幅に入りきらないところで。`breaks_at` の文字の後ろで折り返しやすい）。
+    各行は押すと `operator`（編集のダイアログ）を開く枠の無いボタン。表示だけなので複数行にできる。"""
     width = context.region.width if context.region else 300
     per_line = max(8, int(width / (14 * context.preferences.system.ui_scale)) - 2)  # 全角の文字数（だいたい）
-    lines, current = [], ""
-    for ch in kana:
-        current += ch
-        if ch in "/、" and len(current) >= per_line * 0.6:
+    lines = []
+    for paragraph in text.split("\n") if text else []:
+        current = ""
+        for ch in paragraph:
+            current += ch
+            if (ch in breaks_at and len(current) >= per_line * 0.6) or len(current) >= per_line:
+                lines.append(current)
+                current = ""
+        if current or not paragraph:  # 空の行（字幕の空行）も 1 行として見せる
             lines.append(current)
-            current = ""
-        elif len(current) >= per_line:
-            lines.append(current)
-            current = ""
-    if current:
-        lines.append(current)
     if len(lines) > max_lines:
         lines = lines[:max_lines - 1] + ["".join(lines[max_lines - 1:])]
     box = layout.box().column(align=True)
@@ -425,7 +433,7 @@ def draw_kana(layout, context, kana: str, max_lines: int = 3, empty: str = "（�
     for line in lines or [empty]:
         row = box.row()
         row.alignment = "LEFT"  # 文字の幅のボタンにして左に寄せる（表示と同じ見た目）
-        row.operator("tachie.edit_kana", text=line, emboss=False)  # 押すと「発音を編集」のダイアログ
+        row.operator(operator, text=line or " ", emboss=False)
 
 
 def draw_part_row(col, material, category: str, label: str, value: str, text: str, depress: bool = False):
