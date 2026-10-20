@@ -885,7 +885,8 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
 
     指定しなかった値は置いてあるセリフから取る（声とスタイルは音声ストリップ、形は `tachie_layout`）。
     `character` で別のキャラにすると、
-    スタイルと声はそのキャラの既定値になり、そのキャラに無い表情プリセットは基本の表情に戻る。
+    スタイルと声はそのキャラの既定値になり、表情は同じ名前のプリセットがあればそのパーツ、無ければ立ち絵のまま。
+    `preset` を渡すとそのプリセットのパーツを写す（None なら置いてあるセリフのパーツを引き継ぐ）。
     `kana` は "" で自動の読みに戻す（抑揚の編集も捨てる）。`accent` は編集した accent_phrases、[] で編集を捨てる。
     """
     settings = seq_scene(context).tachie
@@ -1720,28 +1721,17 @@ class TACHIE_OT_regenerate(bpy.types.Operator):
         return active_line_id(context) is not None
 
     def execute(self, context):
-        sed = seq_scene(context).sequence_editor
-        # 編集はパネルで選択中のストリップに入るので、テキストと表情はそこから取る
-        text = sed.active_strip["tachie_text"]
-        preset = sed.active_strip.get("tachie_expression", "")
-        try:
-            strips = regenerate(context, active_line_id(context), text, preset)
-            refresh_faces(context)
-        except ERRORS as e:
-            self.report({"ERROR"}, str(e))
-            return {"CANCELLED"}
-        sed.active_strip = line_focus(strips)
-        connect(context, strips)
-        return {"FINISHED"}
+        # 編集はパネルで選択中のストリップに入るので、テキストはそこから取る（表情（パーツ）は引き継ぐ）
+        return _regenerate_active(self, context)
 
 
 def _regenerate_active(op, context, text: str | None = None, **kwargs):
-    """選択中のセリフを作り直す（テキストは `text` か選択中のストリップ、表情は選択中のストリップから）。"""
+    """選択中のセリフを作り直す（テキストは `text` か選択中のストリップ。表情（パーツ）は引き継ぐ）。"""
     sed = seq_scene(context).sequence_editor
     active = sed.active_strip
     try:
         strips = regenerate(context, active_line_id(context), active["tachie_text"] if text is None else text,
-                            active.get("tachie_expression", ""), **kwargs)
+                            **kwargs)
         refresh_faces(context)
     except ERRORS as e:
         op.report({"ERROR"}, str(e))

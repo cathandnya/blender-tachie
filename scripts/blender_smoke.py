@@ -1490,16 +1490,19 @@ assert still("ずんだもん").right_handle == script_end
 assert len({mouth(still("ずんだもん"), f) for f in range(placed[0][0], placed[0][1])}) > 1
 
 
-# 選択中のセリフの表情を変えて再生成
+# 再生成はセリフの表情（パーツを変えたものも）を引き継ぐ
 third = next(x for x in placed[2][2] if x.type == "TEXT")
-third["tachie_expression"] = "ドヤ"
+ops.set_line_parts(bpy.context, third["tachie_id"], {**ops.preset_parts(zunda, "ドヤ"), "目": "なごみ目"}, "ドヤ")
 activate(third)
 run(bpy.ops.tachie.regenerate)
-assert list(lines().values())[2][2][0]["tachie_expression"] == "ドヤ"
-third = next(x for x in list(lines().values())[2][2] if x.type == "TEXT")
-third["tachie_expression"] = "困り"
+regen = list(lines().values())[2][2]
+assert all(x["tachie_expression"] == "ドヤ" and ops.item_parts(x)["目"] == "なごみ目" for x in regen)
+assert ops.expression_label(zunda, regen[0], "（立ち絵のまま）") == "ドヤ*"
+third = next(x for x in regen if x.type == "TEXT")
+ops.set_line_expression(bpy.context, third["tachie_id"], "困り")
 activate(third)
 run(bpy.ops.tachie.regenerate)
+assert ops.item_parts(list(lines().values())[2][2][0]) == ops.preset_parts(zunda, "困り")
 
 # 存在しない表情の台本はエラーで何も置かない
 bad = bpy.data.texts.new("悪い台本")
