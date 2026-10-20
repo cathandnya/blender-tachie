@@ -262,7 +262,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `tachie.preview_line` の `kana`）。
   台本・「セリフを追加」「セリフを編集」のダイアログ・置いたセリフのテキスト（再生成時）では最後に `{発音}` と書ける
   （`script.split_kana`。「字幕だけ変える」では使わず警告する）。
-  試聴は `aud` で出力フォルダの `preview.wav` を鳴らす（画面の無い Blender では鳴らさない。`aud.Device()` は `-noaudio` でも
+  試聴は `aud` でシステムの一時フォルダ（`_temp_output()`）の `preview.wav` を鳴らす（毎回上書きするだけなので、プロジェクトのフォルダには置かない）（画面の無い Blender では鳴らさない。`aud.Device()` は `-noaudio` でも
   音声デバイスを開くので、smoke.sh の試聴のテストで実際に声が鳴っていた）。
   抑揚の編集（モーラごとの pitch / consonant_length / vowel_length）は音声ストリップの `tachie_accent`（accent_phrases の JSON）と
   `tachie_accent_key`（編集したときの [テキスト, 発音, スタイル]）。どれかが変われば捨てて取り直す（`line_accent`）。

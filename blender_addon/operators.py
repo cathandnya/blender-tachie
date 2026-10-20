@@ -1865,7 +1865,7 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        problem = play_preview(context, wav)
+        problem = play_preview(wav)
         if problem:
             self.report({"WARNING"}, problem)
         return {"FINISHED"}
@@ -2005,16 +2005,21 @@ class TACHIE_OT_edit_kana(bpy.types.Operator):
         return _regenerate_active(self, context, kana=kana)
 
 
-def play_preview(context, wav: bytes) -> str | None:
+def play_preview(wav: bytes) -> str | None:
     """合成した wav を鳴らす（前の試聴は止める）。鳴らせなかったら理由を返す（音声デバイスの無いサーバなど）。"""
     global _preview
     import aud
 
-    path = output_dir(context) / "preview.wav"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # 試聴のたびに上書きするだけなので、プロジェクトのフォルダではなくシステムの一時フォルダに置く
+    path = _temp_output() / "preview.wav"
     if _preview is not None:
         _preview.stop()
-    path.write_bytes(wav)
+        _preview = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(wav)
+    except OSError as e:  # 一時フォルダを他のユーザーが作った（Linux の /tmp）など
+        return f"試聴の音声を {path} に書けません（{e}）"
     if bpy.app.background:
         # 画面の無い Blender（テストなど）では鳴らさない。aud.Device() は -noaudio でも音声デバイスを開いてしまう
         _preview = None
@@ -2291,7 +2296,7 @@ class TACHIE_OT_preview_accent(bpy.types.Operator):
         except (*ERRORS, IndexError) as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        problem = play_preview(context, wav)
+        problem = play_preview(wav)
         if problem:
             self.report({"WARNING"}, problem)
         return {"FINISHED"}
