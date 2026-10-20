@@ -2,6 +2,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import sys
 import shutil
 import tempfile
 import time
@@ -101,6 +102,29 @@ def _temp_output() -> Path:
     return Path(tempfile.gettempdir()) / "blender_tachie"
 
 
+CACHE_ENV = "TACHIE_CACHE_DIR"  # 合成キャッシュの場所を変える（スモークテストが普段のキャッシュを消さないように）
+
+
+def shared_cache_dir() -> Path:
+    """立ち絵の合成画像（「目 × 口」）の共有キャッシュ。全プロジェクトで使い回し、OS のキャッシュの場所に置く
+    （macOS の ~/Library/Caches は Time Machine の対象外）。消しても立ち絵は自動の反映で作り直す（`missing_images`）。"""
+    if os.environ.get(CACHE_ENV):
+        return Path(os.environ[CACHE_ENV])
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Caches"
+    elif sys.platform == "win32":
+        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    else:
+        root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    return root / "blender_tachie" / "cache"
+
+
+def material_cache_dir(path) -> Path:
+    """素材（フォルダか PSD）ごとの合成キャッシュのフォルダ（素材の名前 + 場所のハッシュ。素材を読み直すときにこれだけ消す）。"""
+    path = os.path.normpath(str(path))
+    return shared_cache_dir() / f"{os.path.basename(path)}-{hashlib.sha1(path.encode('utf-8')).hexdigest()[:8]}"
+
+
 def _under(path: Path, root: Path) -> Path | None:
     """`path` が `root` の下なら `root` からの相対パス。"""
     try:
@@ -135,12 +159,29 @@ def _migrate_on_load(*_args):
     # persistent のタイマーは続けて開いたときに残っているので、重ねて登録しない
     if _face_timer_running and not bpy.app.timers.is_registered(_apply_faces_later):
         bpy.app.timers.register(_apply_faces_later, first_interval=0.5, persistent=True)
+    if bpy.app.background:
+        # 画面の無い Blender（`blender -b x.blend -a` での書き出し）はタイマーを待たないので、その場で作り直す
+        # （合成キャッシュはプロジェクトの外にあるので、別の Mac・キャッシュを消した環境では画像が無い）
+        for scene in bpy.data.scenes:
+            sed = scene.sequence_editor
+            missing = [s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_still") and missing_images(s)] \
+                if scene.library is None and sed is not None else []
+            if not missing:
+                continue
+            problems = []
+            try:
+                with bpy.context.temp_override(scene=scene):
+                    apply_faces(bpy.context, missing, problems)
+            except (*ERRORS, RuntimeError) as e:
+                problems.append(str(e))
+            for p in problems:
+                print("立ち絵を作り直せません:", p)
 
 
 @persistent
 def _move_temp_output(filepath, *_args):
-    """未保存のときに一時フォルダへ書き出したもの（音声・口の動き・立ち絵の連番）を、保存する .blend のフォルダの
-    tachie/ へコピーしてストリップの参照を付け替える（保存の前に呼ぶので、保存した .blend には新しい場所が入る）。
+    """未保存のときに一時フォルダへ書き出したもの（音声・口の動き。前の版の立ち絵の連番も）を、保存する .blend のフォルダの
+    tachie/ へコピーしてストリップの参照を付け替える（立ち絵の合成画像は共有キャッシュにあるので移さない）（保存の前に呼ぶので、保存した .blend には新しい場所が入る）。
     一時フォルダは OS が消すことがあり、出力フォルダも保存すると //tachie に変わるので、そのままだと口の動きが
     見つからず閉じた口になり、いずれ音声も消える。出力フォルダを指定しているときは何もしない。"""
     if not filepath or prefs(bpy.context).output_dir:
@@ -481,7 +522,7 @@ def character_cache(context, ch, *layers: dict | None) -> FrameCache:
     for parts in layers:
         if parts:
             expression = overlay_parts(expression, parts, f"{ch.name} の表情")
-    return _cache(character, expression, output_dir(context) / "cache", scale)
+    return _cache(character, expression, material_cache_dir(character.path), scale)
 
 
 # 表情は YMM4 と同じく、アイテム（セリフの全ストリップ・立ち絵・表情ストリップ）ごとにパーツ（キャラの基本との差分、
@@ -1108,7 +1149,7 @@ def _image_strip(sed, ch, name: str, start: int, paths: list, channel: int | Non
     if (reuse is not None and int(reuse.frame_start) == start == reuse.left_handle
             and len(reuse.elements) == len(files) == reuse.right_handle - start):
         if not _same_dir(reuse.directory, directory):
-            reuse.directory = os.path.join(_path_for_blend(directory), "")
+            reuse.directory = os.path.join(str(directory), "")  # 共有キャッシュは絶対パス
             for e, f in zip(reuse.elements, files):
                 e.filename = f
         else:
@@ -1121,10 +1162,10 @@ def _image_strip(sed, ch, name: str, start: int, paths: list, channel: int | Non
         return reuse
     if reuse is not None:
         sed.strips.remove(reuse)
-    strip = sed.strips.new_image(name=name, filepath=_path_for_blend(directory / files[0]),
+    strip = sed.strips.new_image(name=name, filepath=str(directory / files[0]),
                                  channel=channel or ch.channel, frame_start=start, fit_method="ORIGINAL")
     if not _same_dir(strip.directory, directory):  # ファイル名にサブフォルダを含む
-        strip.directory = os.path.join(_path_for_blend(directory), "")
+        strip.directory = os.path.join(str(directory), "")
         strip.elements[0].filename = files[0]
     for f in files[1:]:
         strip.elements.append(f)
@@ -1151,6 +1192,7 @@ def apply_faces(context, strips=None, problems: list | None = None) -> int:
         strips = [s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_still")]
     count = 0
     cleared = False
+    shared = shared_cache_dir().resolve()
     for strip in list(strips):
         ch = next((c for c in settings.characters if c.name == strip.get("tachie_still")), None)
         if ch is None or not ch.folder:
@@ -1158,7 +1200,10 @@ def apply_faces(context, strips=None, problems: list | None = None) -> int:
         start, end = strip.left_handle, strip.right_handle
         stretched = int(strip.content_start) != start or len(strip.elements) != end - start
         missing = missing_images(strip)
-        if not stretched and not missing and strip.get("tachie_faced", "") == still_key(context, sed, ch, strip):
+        # 前の版のプロジェクトごとのキャッシュ（//tachie/cache・faces）を指している立ち絵は共有キャッシュへ移す
+        moved = _under(Path(bpy.path.abspath(strip.directory)), shared) is None
+        if (not stretched and not missing and not moved
+                and strip.get("tachie_faced", "") == still_key(context, sed, ch, strip)):
             continue
         if missing and not cleared:
             _caches.clear()  # 覚えている合成画像のパスも消えている（作り直させる。1 回の反映で 1 度だけ）
@@ -3744,7 +3789,10 @@ class TACHIE_OT_reload_character(bpy.types.Operator):
         _caches.clear()
         _expression_icons.clear()  # 表情の見本も作り直す（鍵に画像の更新時刻を含む）
         load_image.cache_clear()
-        shutil.rmtree(output_dir(context) / "cache", ignore_errors=True)
+        # 共有キャッシュのうち、このシーンのキャラの素材の分だけ消す（他のプロジェクトの素材の分は残す）
+        for ch in seq_scene(context).tachie.characters:
+            if ch.folder:
+                shutil.rmtree(material_cache_dir(bpy.path.abspath(ch.folder)), ignore_errors=True)
         # 立ち絵はキャッシュの画像を直接指しているので作り直す
         sed = seq_scene(context).sequence_editor
         try:

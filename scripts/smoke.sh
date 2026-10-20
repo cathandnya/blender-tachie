@@ -13,6 +13,7 @@ OUT="$(cd "$(dirname "$OUT_ARG")" && pwd)/$(basename "$OUT_ARG")"
 BLENDER=$(uv run python -c 'import sys; sys.path.insert(0, "scripts"); from build_addon import find_blender; print(find_blender())')
 ZIP=$(uv run python scripts/build_addon.py | tail -1)
 export BLENDER_USER_RESOURCES="$OUT/blender_user"
+export TACHIE_CACHE_DIR="$OUT/cache"  # 立ち絵の合成キャッシュも一時的な場所に（普段の共有キャッシュには触れない）
 rm -rf "$OUT"; mkdir -p "$OUT"
 "$BLENDER" --command extension install-file -r user_default -e "$ZIP" </dev/null
 "$BLENDER" -b -noaudio --factory-startup --python-exit-code 1 --python scripts/blender_smoke.py -- "$PWD/examples/characters.toml" "$OUT" </dev/null

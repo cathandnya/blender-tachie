@@ -83,6 +83,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `tachie_id` `tachie_text` `tachie_character` `tachie_speaker` `tachie_folder` `tachie_mouth` `tachie_expression` を付ける。
   セリフは wav と動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・まばたきの seed）だけ書く（`render_line(cache=None)`）。
   出力フォルダはアドオン設定の `output_dir`、無ければ .blend のフォルダの `tachie/`、未保存なら一時フォルダの `blender_tachie/`。
+  出力フォルダに書くのはセリフ（`lines/`）だけで、立ち絵の合成画像は全プロジェクトで使い回す共有キャッシュ
+  （`shared_cache_dir`: macOS は `~/Library/Caches/blender_tachie/cache`（Time Machine の対象外）、Windows は `%LOCALAPPDATA%`、
+  Linux は `~/.cache`。環境変数 `TACHIE_CACHE_DIR` で変えられ、smoke.sh は出力フォルダの下にする）の
+  `<素材の名前>-<場所のハッシュ>/<表情のハッシュ>/`（`material_cache_dir`。「素材を読み直す」はこのシーンのキャラの素材の分だけ消す）。
   未保存で置いたものは、保存するとき（`save_pre` の `operators._move_temp_output`）に `.blend のフォルダ/tachie/` へコピーして
   音声・立ち絵の参照を付け替える（一時フォルダは OS が消すことがあり、保存すると出力フォルダも変わって口の動きが見つから
   なくなった）。口の動きは音声ストリップの wav の隣を先に探す（`motion.motion_paths`）。
@@ -117,8 +121,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   読み替え、`migrate_parts`（`load_post` と `refresh_faces` の頭）が書く。PSD のレイヤーを重ねるときは重ねたものを後ろへ
   並べ直す（`config.merge_layers`。`*` は並びの後のものが選ばれる）。目はセリフの間も立ち絵のまばたき
   （seed は (キャラ名, 立ち絵の始まり)）。セリフの動きの頭は音声ストリップの `content_start`、長さは `tachie_frames`。
-  json が無い・長さが違うセリフ（前の版）は閉じた口で、`problems` に出す。コマは `cache/` の合成画像を `elements` で直接並べる
-  （`_image_strip`。同じファイル名を何度並べてもよい。いくつもの表情にまたがれば directory を `cache/`、ファイル名を
+  json が無い・長さが違うセリフ（前の版）は閉じた口で、`problems` に出す。コマは合成キャッシュの画像を `elements` で直接並べる
+  （`_image_strip`、directory は絶対パス。同じファイル名を何度並べてもよい。いくつもの表情にまたがれば directory を素材のフォルダ、ファイル名を
   `<表情>/e1_l0.png` にする。Blender はファイル名のサブフォルダを読める（`_still_elements`）。前は `faces/<hash>/` にコマごとの
   ハードリンクを作っていて、9000 フレームの立ち絵で 2.5 秒かかった）。作り直す（`remake_still`）とき位置・長さが同じなら
   ストリップを消さずに変わったコマのファイル名だけ書き換える（`place_still` の `reuse`。消して作ると `elements.append` が
@@ -126,10 +130,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   何もしない（`_needs_apply` を見て、プリフェッチも止めない）。
   作り直しの鍵 `tachie_faced`（`still_key`: キャラの見た目 `appearance_key`（素材・高さ・基本の表情。プリセットは入れない）・
   立ち絵のパーツ・表情ストリップの区間とパーツ・重なるセリフの (id, ずれ, パーツ, 長さ)）が変わったものと、
-  長さを変えた（ハンドルを動かした）もの、コマの画像（合成キャッシュ）が無いもの（`missing_images`。`tachie/cache` を消した・
-  別の Mac に持っていった・前の版の `faces/` を消した）を `apply_faces` が作り直す（`remake_still`、今のチャンネルと位置・
+  長さを変えた（ハンドルを動かした）もの、コマの画像（合成キャッシュ）が無いもの（`missing_images`。キャッシュを消した・
+  別の Mac に持っていった・前の版の `faces/` を消した）と、共有キャッシュの外（前の版のプロジェクトごとの `tachie/cache`・
+  `faces/`）を指すものを `apply_faces` が作り直す（`remake_still`、今のチャンネルと位置・
   大きさを引き継ぐ。画像が無かったものは `_caches` を捨て、`invalidate_cache("RAW")` で読み直させる）。.blend を開いたら
-  `load_post`（`_migrate_on_load`）が自動の反映を 1 回走らせる。ファイルを開くと Blender は persistent でないタイマーを消すので、
+  `load_post`（`_migrate_on_load`）が自動の反映を 1 回走らせる（画面の無い Blender（`blender -b x.blend -a` の書き出し）は
+  タイマーを待たないので、画像の無い立ち絵だけその場で作り直す）。ファイルを開くと Blender は persistent でないタイマーを消すので、
   そこで `_face_timer_running` も戻す（戻さないと待っている印が残って自動の反映が止まる）。
   自動の待機・立ち絵ごと置くセリフ（前の版の FULL）はやめた。前の .blend に残った待機・セリフの立ち絵はそのまま（作り直さない）。
   表情ストリップ（`tachie_face` = キャラ名、`tachie_expression`）はミュートしたカラーストリップで、そのキャラの表情のレーン

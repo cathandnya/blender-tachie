@@ -84,7 +84,7 @@ def frame_inode(strip, frame):
 def cache_file(strip, frame):
     """立ち絵の `frame` の画像の、合成キャッシュの中の元（表情のフォルダ, e<目>_<口>.png）。"""
     ino = frame_inode(strip, frame)
-    for p in (Path(prefs.output_dir) / "cache").glob("*/*.png"):
+    for p in ops.shared_cache_dir().glob("*/*/*.png"):  # 共有キャッシュ/<素材>/<表情>/e<目>_<口>.png
         if p.stat().st_ino == ino:
             return p.parent.name, p.name
     raise AssertionError(f"{strip.name} の {frame} フレームの画像がキャッシュにありません")
@@ -619,6 +619,20 @@ for folder in gone:
 assert ops.missing_images(zs)
 run(bpy.ops.tachie.apply_faces)
 assert not ops.missing_images(still("ずんだもん")) and all(f.is_dir() for f in gone)
+check_stills()
+# 前の版のプロジェクトごとのキャッシュ（//tachie/cache）を指す立ち絵は、共有キャッシュへ移す
+zs = still("ずんだもん")
+old_cache = Path(prefs.output_dir) / "cache"
+src = Path(bpy.path.abspath(zs.directory))
+names = {e.filename for e in zs.elements}
+for name in names:
+    (old_cache / name).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src / name, old_cache / name)
+zs.directory = str(old_cache) + os.sep
+assert not ops.missing_images(zs)
+run(bpy.ops.tachie.apply_faces)
+assert ops._under(Path(bpy.path.abspath(still("ずんだもん").directory)), ops.shared_cache_dir()) is not None
+shutil.rmtree(old_cache)
 check_stills()
 
 # まとめて変える（ダイアログは画面が要るので execute だけ）

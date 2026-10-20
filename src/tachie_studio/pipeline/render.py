@@ -63,7 +63,8 @@ class FrameCache:
                 image = image.resize((max(1, round(w * self.scale)), max(1, round(h * self.scale))),
                                      Image.Resampling.LANCZOS)
             self.directory.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp.png")
+            # キャッシュは全プロジェクトで共有するので、同時に動く別の Blender と一時ファイルの名前がぶつからないように
+            tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp.png")
             image.save(tmp, compress_level=3)
             tmp.replace(path)
         self._paths[key] = path
