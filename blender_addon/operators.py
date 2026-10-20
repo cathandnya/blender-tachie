@@ -1391,12 +1391,19 @@ def connect(context, strips) -> None:
     """3 本をまとめて動かせるようにつなぐ（シーケンサーの画面から呼んだときだけ）。"""
     if context.area is None or context.area.type != "SEQUENCE_EDITOR":
         return
-    for s in seq_scene(context).sequence_editor.strips_all:
+    select_only(seq_scene(context).sequence_editor, strips, active=False)
+    if bpy.ops.sequencer.connect.poll():
+        bpy.ops.sequencer.connect()
+
+
+def select_only(sed, strips, active: bool = True) -> None:
+    """strips だけを選ぶ（ほかの選択は外す）。active なら最後のものをアクティブにする。"""
+    for s in sed.strips_all:
         s.select = False
     for s in strips:
         s.select = True
-    if bpy.ops.sequencer.connect.poll():
-        bpy.ops.sequencer.connect()
+    if active and strips:
+        sed.active_strip = strips[-1]
 
 
 def active_selected(context):
@@ -2334,10 +2341,7 @@ class TACHIE_OT_add_face(bpy.types.Operator):
         finally:
             _applying_faces = False
             _applied_signatures[scene.name] = auto_signature(scene)
-        for s in sed.strips_all:
-            s.select = False
-        face.select = True
-        sed.active_strip = face
+        select_only(sed, [face])
         if problems:
             self.report({"WARNING"}, problems[0])
         return {"FINISHED"}
@@ -2362,6 +2366,7 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
         sed = scene.sequence_editor
         settings = scene.tachie
         placed, overlapped = 0, 0
+        made = []
         for cid in selected_targets(sed)[0]:
             strips = line_strips(sed, cid)
             preset = strips[0].get("tachie_expression", "")
@@ -2381,7 +2386,7 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
                 # なる。表情ストリップはどちらよりも優先なので、置くと見た目が変わるので置かない
                 overlapped += 1
                 continue
-            new_face(sed, settings, ch.name, preset, start, end)
+            made.append(new_face(sed, settings, ch.name, preset, start, end))
             placed += 1
         note = f"（表情ストリップか同じキャラのセリフが重なる {overlapped} 行はそのまま）" if overlapped else ""
         if not placed:
@@ -2395,6 +2400,7 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
         finally:
             _applying_faces = False
             _applied_signatures[scene.name] = auto_signature(scene)
+        select_only(sed, made)  # できた表情ストリップだけを選ぶ（セリフの選択は外す）
         self.report({"WARNING"} if problems else {"INFO"},
                     f"{placed} 行の表情を表情ストリップにしました{note}" + (f": {problems[0]}" if problems else ""))
         return {"FINISHED"}
@@ -3761,10 +3767,7 @@ class TACHIE_OT_add_headline(bpy.types.Operator):
         apply_headline(strip, settings)
         if strip.right_handle - 1 > scene.frame_end:
             scene.frame_end = strip.right_handle - 1
-        for s in sed.strips_all:
-            s.select = False
-        strip.select = True
-        sed.active_strip = strip
+        select_only(sed, [strip])
         return {"FINISHED"}
 
 
@@ -3924,11 +3927,7 @@ class TACHIE_OT_add_sound_effect(bpy.types.Operator):
             strip.volume = se.volume
             strip["tachie_se"] = se.name
             placed.append(strip)
-        for s in sed.strips_all:
-            s.select = False
-        for s in placed:
-            s.select = True
-        sed.active_strip = placed[-1]
+        select_only(sed, placed)
         scene.frame_end = max(scene.frame_end, max(s.right_handle for s in placed) - 1)
         self.report({"INFO"}, f"効果音「{se.name}」を {len(placed)} か所に置きました")
         return {"FINISHED"}

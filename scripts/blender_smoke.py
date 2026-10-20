@@ -512,6 +512,7 @@ run(bpy.ops.tachie.line_faces)
 moved = [f for f in sed.strips if f.get("tachie_face") == "ずんだもん"]
 assert len(moved) == 1 and (moved[0].left_handle, moved[0].right_handle) == (l, r)
 assert moved[0]["tachie_expression"] == "困り" and moved[0].mute
+assert sed.active_strip == moved[0] and [x for x in sed.strips if x.select] == [moved[0]]  # できたものだけを選ぶ
 assert all(x["tachie_expression"] == "困り" for x in ops.line_strips(sed, zunda_id))
 assert expression_dir(still("ずんだもん"), l) == komari and expression_dir(still("ずんだもん"), r) == base
 assert not ops._needs_apply(scene)
