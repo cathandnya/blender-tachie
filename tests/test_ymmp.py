@@ -5,7 +5,7 @@ import os
 import pytest
 
 from tachie_studio.ymmp import (
-    color, difference, find_by_tail, front_layer, load_project, other_items_summary, overlay, part_name, parts_of, preset_name,
+    color, difference, find_by_tail, front_layer, load_project, other_items_summary, overlay, part_name, parts_of,
     seconds,
 )
 
@@ -165,11 +165,6 @@ def test_overlay_and_difference():
     assert full == {"眉": "普通", "目": "ジト目", "他": ["左腕", "右腕_指差し"], "後": []}
     assert difference(base, full) == {"目": "ジト目", "他": ["", "右腕_指差し"]}
     assert difference(base, base) == {}
-
-
-def test_preset_name():
-    assert preset_name({"目": "ジト目", "他": ["", "右腕"]}, set()) == "ジト目・右腕"
-    assert preset_name({"目": "ジト目"}, {"ジト目"}) == "ジト目 2"
 
 
 # 手元の YMM4 のプロジェクトのフォルダ（YMMP_DIR、下の階層も）を全部読めること

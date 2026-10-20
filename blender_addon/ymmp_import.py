@@ -20,7 +20,7 @@ from . import prefetch
 from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
-    ERRORS, _parts_dict, add_character, add_voice_character, new_face,
+    ERRORS, add_character, add_voice_character, new_face,
     character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_layout,
     line_texts, load_material, place_still, place_strips, refresh_faces, render_clip, scene_fps, seq_scene,
     set_text_offset, subtitle_clashes, item_still_pose,
@@ -30,8 +30,8 @@ from .tachie_studio.voicevox.client import VoicevoxError
 from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, place_text, system_fonts
 from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
 from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
-from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary, overlay,
-                                 jump_on_screen, preset_name, voice_wav)
+from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary,
+                                 jump_on_screen, voice_wav)
 
 REPORT_TEXT = "YMM4 の読み込み結果"
 # YMM4 の音量（セリフ・キャラの既定は 50）→ Blender の音量。50 を等倍とみなす（YMM4 での意味は未確認）
@@ -236,56 +236,36 @@ def _base_parts(ch) -> dict:
     return parts
 
 
-class _Presets:
-    """表情（基本の表情との差分）→ 表情プリセット名。同じ中身のプリセットがあれば使い、無ければ作る。"""
+def diff_parts(ch, parts: dict, problems: list[str]) -> dict:
+    """YMM4 の全部のパーツ（立ち絵アイテム。素材に合わせたもの）→ キャラの基本の表情との差分（アイテムの `tachie_look`）。
 
-    def __init__(self, ch, problems: list[str]):
-        self.ch = ch
-        self.problems = problems
-        self.known = {self._key(_parts_dict(e)): e.name for e in ch.expressions}
-        self.created = 0
-
-    @staticmethod
-    def _key(diff: dict) -> str:
-        return repr(sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in diff.items() if k in PART_PROPS))
-
-    def name_for(self, parts: dict) -> str:
-        base = _base_parts(self.ch)
-        diff = difference(base, parts)
-        # 表情プリセットの "" は「基本のまま」なので、基本にあるパーツを消すには素材の空のパーツが要る
-        material = load_material(self.ch.folder)
-        for category, v in list(diff.items()):
-            if not isinstance(v, list) and not v:
-                del diff[category]
-                self.problems.append(f"{self.ch.name}: {category} を消す表情は、素材に空のパーツが無いので基本のままにしました")
-        for category in SLOT_CATEGORIES:
-            b, v = base.get(category) or [], parts.get(category)
-            if v is None:
-                continue
-            removed = [i for i, name in enumerate(b) if name and not (v[i] if i < len(v) else "")]
-            empty = _placeholder(material, category)
-            removed = [i for i in removed if b[i] != empty]
-            if not removed:
-                continue
-            if not empty:
-                self.problems.append(f"{self.ch.name}: {category} のスロットを消す表情は、素材に空のパーツが無いので"
-                                     "基本のままにしました")
-                continue
-            slots = list(diff.get(category) or [])
-            for i in removed:
-                slots += [""] * (i + 1 - len(slots))
-                slots[i] = empty
-            diff[category] = slots
-        if not diff:
-            return ""
-        key = self._key(diff)
-        if key not in self.known:
-            item = self.ch.expressions.add()
-            item.name = preset_name(diff, {e.name for e in self.ch.expressions})
-            _set_parts(item, diff)
-            self.known[key] = item.name
-            self.created += 1
-        return self.known[key]
+    差分の "" は「基本のまま」なので、基本にあるパーツを消すには素材の空のパーツ（「(非表示)」「_」）を使う。無ければ
+    基本のままにして警告に書く。"""
+    base = _base_parts(ch)
+    diff = difference(base, parts)
+    material = load_material(ch.folder)
+    for category, v in list(diff.items()):
+        if not isinstance(v, list) and not v:
+            del diff[category]
+            problems.append(f"{ch.name}: {category} を消す表情は、素材に空のパーツが無いので基本のままにしました")
+    for category in SLOT_CATEGORIES:
+        b, v = base.get(category) or [], parts.get(category)
+        if v is None:
+            continue
+        removed = [i for i, name in enumerate(b) if name and not (v[i] if i < len(v) else "")]
+        empty = _placeholder(material, category)
+        removed = [i for i in removed if b[i] != empty]
+        if not removed:
+            continue
+        if not empty:
+            problems.append(f"{ch.name}: {category} のスロットを消す表情は、素材に空のパーツが無いので基本のままにしました")
+            continue
+        slots = list(diff.get(category) or [])
+        for i in removed:
+            slots += [""] * (i + 1 - len(slots))
+            slots[i] = empty
+        diff[category] = slots
+    return diff
 
 
 def _setup_character(context, ch, c, project: Project, tachie, problems: list[str]) -> None:
@@ -351,6 +331,7 @@ class _LineJob:
     hide_subtitle: bool
     layout: str
     run: object
+    look: dict  # セリフの表情のパーツ（重なる立ち絵の上に重ねる）
 
 
 def _run_job(job: _LineJob):
@@ -576,8 +557,6 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             characters[name] = ch
             added_folders[name] = folder
 
-        presets = {name: _Presets(ch, problems) for name, ch in characters.items()}
-
         # 画像・動画・音声・テキスト（キャラのチャンネルが決まってから、セリフを置く前に。チャンネルをずらすことがある）
         media = None
         if self.import_media and project.media:
@@ -589,25 +568,13 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 problems.append(f"画像・動画などを置けません: {e}")
             problems += media.problems
 
-        base_spans = {name: _base_span(project, name) for name in characters}
-
-        def tachie_base(name: str, f: int) -> dict:
-            """その時刻の立ち絵アイテムの基本の表情（無ければ基本の表情にしたアイテム、それも無ければキャラクターの基本）。"""
-            span = next((s for s in project.tachies
-                         if s.character == name and not s.hidden and s.frame <= f < s.frame + s.length), None)
-            if span is not None and span.parts:
-                return span.parts
-            fallback = base_spans.get(name)  # 立ち絵アイテムの外は、基本の表情にしたアイテム
-            if fallback is not None:
-                return fallback.parts
-            return project.characters[name].parts if name in project.characters else {}
-
-        def expression(name: str, f: int, face: dict) -> str:
+        def expression(name: str, face: dict) -> dict:
+            """ボイス・表情アイテムの表情（変えるパーツだけ）→ アイテムのパーツ。重なる立ち絵（その時刻の立ち絵アイテム）の
+            上に重ねるので、YMM4 と同じく立ち絵アイテムの基本 + 差分になる。素材に無いパーツは落とす（立ち絵のまま）。"""
             ch = characters[name]
-            if not ch.folder:
-                return ""
-            parts = overlay(tachie_base(name, f), face)
-            return presets[name].name_for(_valid_parts(ch, parts, problems, _base_parts(ch)))
+            if not ch.folder or not face:
+                return {}
+            return _valid_parts(ch, face, problems)
 
         # セリフ: 準備（Blender に触る部分）を全部してから、音声合成（時間がかかる）を順に進め、できたものから置く
         sed = scene.sequence_editor or scene.sequence_editor_create()
@@ -647,15 +614,15 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 layout = "AUDIO" if hide_subtitle else "SUBTITLE"
             wav = voice_wav(v)
             try:
-                preset = expression(v.character, v.frame, v.face)
-                run = clip_job(context, ch, v.text, preset or None, speaker=v.style_id, voice=voice,
+                look = expression(v.character, v.face)
+                run = clip_job(context, ch, v.text, None, speaker=v.style_id, voice=voice,
                                kana=v.kana or None, accent=v.accent, accent_kana=v.kana or None,
                                audio=audio, wav=wav)
             except ERRORS as e:
                 problems.append(f"{start} フレームの {v.character}「{v.text[:20]}」: {e}")
                 skipped["置けなかったセリフ"] += 1
                 continue
-            jobs.append(_LineJob(v, ch, start, audio, voice, hide_subtitle, layout, run))
+            jobs.append(_LineJob(v, ch, start, audio, voice, hide_subtitle, layout, run, look))
             reused += wav is not None
 
         def place(job: _LineJob, result) -> None:
@@ -673,7 +640,8 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 skipped["置けなかったセリフ"] += 1
                 return
             strips = place_strips(context, job.ch, clip, lines_dir, v.text, job.start, voice=job.voice,
-                                  accent=v.accent, audio=job.audio, channels=channels, layout=job.layout)
+                                  accent=v.accent, audio=job.audio, channels=channels, layout=job.layout,
+                                  parts=job.look)
             sound = strips[0]
             sound.volume, sound.pan = job.audio["volume"], max(-1.0, min(1.0, job.audio["pan"]))
             if job.hide_subtitle:
@@ -700,21 +668,21 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             # 表情アイテムは表情ストリップにする（立ち絵より先に置く。後から置くと立ち絵を全部作り直すことになる）
             faces = 0
 
-            def add_face(name: str, start: int, end: int, preset: str) -> None:
+            def add_face(name: str, start: int, end: int, look: dict) -> None:
                 nonlocal faces
                 if end <= start:
                     return
-                new_face(sed, settings, name, preset, start, end)
+                new_face(sed, settings, name, "", start, end, look)
                 faces += 1
 
             for span in project.faces:
                 if span.character not in characters or span.hidden or not characters[span.character].folder:
                     continue
                 add_face(span.character, frame(span.frame), frame(span.frame + span.length),
-                         expression(span.character, span.frame, span.parts))
+                         expression(span.character, span.parts))
 
             # 立ち絵アイテムはその区間の立ち絵にする（重なるセリフの間だけ口パクする）。立ち絵アイテムの基本の表情が
-            # キャラの基本と違えば、その表情（プリセット）の立ち絵にする。同じキャラの立ち絵アイテムが重なれば先のものを優先
+            # キャラの基本と違えば、その差分のパーツを持つ立ち絵にする。同じキャラの立ち絵アイテムが重なれば先のものを優先
             stills = 0
             for name in characters:
                 ch = characters[name]
@@ -728,14 +696,14 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                     if b <= a:
                         continue
                     try:
-                        preset = presets[name].name_for(
-                            _valid_parts(ch, span.parts, problems, _base_parts(ch))) if span.parts else ""
+                        look = diff_parts(ch, _valid_parts(ch, span.parts, problems, _base_parts(ch)),
+                                          problems) if span.parts else {}
                         # 位置・大きさ・左右反転は立ち絵アイテムごと（キャラの設定と同じなら立ち絵ごとの値は持たない）
-                        place_still(context, ch, preset, a, b - a,
+                        place_still(context, ch, "", a, b - a,
                                     item_still_pose(ch, span.x, span.y, span.zoom, project.width, project.height),
                                     problems=problems, flip=span.inverted if span.inverted != ch.flip_x else None,
                                     jump=jump_on_screen(span.jump, project.width, project.height),
-                                    settings=span.settings)
+                                    settings=span.settings, parts=look)
                     except ERRORS as e:
                         problems.append(f"{a} フレームの {name} の立ち絵: {e}")
                         continue
@@ -748,10 +716,8 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             refresh_faces(context, problems_faces)  # 表情ストリップに合わせて立ち絵を作り直す（署名も記録する）
 
             # 結果
-            created = sum(p.created for p in presets.values())
             lines = [f"{Path(self.filepath).name}: セリフ {placed} / {len(project.voices)} 個、"
-                     + f"立ち絵 {stills} 個、"
-                     + f"表情ストリップ {faces} 個、表情プリセットを {created} 個作りました"]
+                     + f"立ち絵 {stills} 個、表情ストリップ {faces} 個"]
             if jobs:
                 lines += ["", f"音声: YMM4 が保存した音声を使ったセリフ {reused} 本、VOICEVOX で合成したセリフ "
                               f"{len(jobs) - reused} 本"]

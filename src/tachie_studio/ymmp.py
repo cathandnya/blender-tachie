@@ -778,13 +778,3 @@ ITEM_LABELS = {"TachieItem": "立ち絵アイテム", "VideoItem": "動画", "Im
 def other_items_summary(project: Project) -> Counter:
     """キャラ・セリフ以外のアイテムの数（種類の表示名 → 数）。"""
     return Counter(ITEM_LABELS.get(_type(i), _type(i)) for i in project.others)
-
-
-def preset_name(diff: dict[str, Any], taken: set[str]) -> str:
-    """表情の差分から表情プリセットの名前を作る（変えたパーツ名を「・」でつなぐ）。"""
-    names = [n for v in diff.values() for n in (v if isinstance(v, list) else [v]) if n]
-    base = "・".join(names)[:40] or "基本"
-    name, i = base, 2
-    while name in taken:
-        name, i = f"{base} {i}", i + 1
-    return name

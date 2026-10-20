@@ -6,17 +6,20 @@
 - `{"kind": "media", "media": {...}}` — 画像・動画・音声・テキスト・カラー（`ymmp.Media` の値。座標は YMM4 と同じく
   画面中央からのピクセルで下が正、Zoom は %）
 - `{"kind": "line", "character", "text", "kana", "accent", "accent_kana", "style", "voice", "audio", "expression",
-  "layout", "subtitle_offset", "subtitle_hidden", "face_parts"}` — セリフ（置くときに合成し直す）
-- `{"kind": "face", "character", "expression", "parts"}` — 表情ストリップ
-- `{"kind": "still", "character", "expression", "parts", "pose", "flip", "jump"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
+  "look", "layout", "subtitle_offset", "subtitle_hidden", "face_parts"}` — セリフ（置くときに合成し直す）
+- `{"kind": "face", "character", "expression", "look", "parts"}` — 表情ストリップ
+- `{"kind": "still", "character", "expression", "look", "parts", "pose", "flip", "jump"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
   `{"tachie_pos_x", "tachie_pos_y", "tachie_scale"}`。YMM4 の立ち絵アイテムは代わりに `x` / `y` / `zoom` を持ち、置くときに
   キャラの立ち位置・高さとの差にする。`flip` は左右反転（None ならキャラの設定）、`jump` は跳ねながら登場退場
   （`ymmp.jump_on_screen` の形）、`settings` は不透明度・回転角・フェード・喋る時のみ表示（`ymmp.tachie_settings`）、
-  `custom_parts` は立ち絵ごとのパーツ（アドオンの `tachie_parts`、表情プリセットと同じ形））
+  前の版の `custom_parts` は立ち絵ごとのパーツ（表情プリセット `expression` の上に重ねる））
+
+表情は `look`（アドオンのアイテムのパーツ `tachie_look`。キャラの基本との差分、表情プリセットと同じ形）をそのまま写す。
+`expression` は表示用のプリセットの名前（`look` の無い前の版はそのプリセットのパーツを写す）。
 
 YMM4 のテンプレートは `user/setting/<版>/YukkuriMovieMaker.Settings.ItemSettings.json` の `Templates`
 （`{Name, Path: [フォルダ…], FPS, Width, Height, Items: [...]}`、Items は .ymmp のアイテムと同じ形）。
-表情は YMM4 のパーツ（`face_parts` / `parts`）のまま持ち、アドオンのキャラの表情プリセットにするのは Blender 側。
+表情は YMM4 のパーツ（`face_parts` / `parts`）のまま持ち、置くときに Blender 側でアイテムのパーツにする（表情プリセットは作らない）。
 """
 
 from __future__ import annotations

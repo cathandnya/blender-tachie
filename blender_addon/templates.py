@@ -28,7 +28,7 @@ from .tachie_studio.templates import (
     dumps, end_frame, load_ymm4_templates, loads, media_from_dict, media_to_dict, normalize,
 )
 from .tachie_studio.pipeline.config import merge_parts
-from .tachie_studio.ymmp import Media, Project, overlay
+from .tachie_studio.ymmp import Media, Project
 from . import channels as lanes
 from .ymmp_media import MediaFinder, MediaPlacer, box_height
 
@@ -211,35 +211,44 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
 
 # ---- 置く ----
 
-def _item_look(ch, item: dict, preset: str) -> dict | None:
-    """アイテムの表情のパーツ。登録したもの（`look`）はそのまま、前の版のテンプレートの立ち絵ごとのパーツ
-    （`custom_parts`）はプリセットのパーツに重ねる。None ならプリセット `preset` のパーツ（置く側で写す）。"""
+def _item_look(ch, item: dict, preset: str, problems: list[str]) -> dict | None:
+    """アイテムの表情のパーツ。登録したもの（`look`）はそのまま、YMM4 のパーツは `_ymm4_look`、前の版のテンプレートの
+    立ち絵ごとのパーツ（`custom_parts`）はプリセットのパーツに重ねる。None ならプリセット `preset` のパーツ（置く側で写す）。"""
     if isinstance(item.get("look"), dict):
         return item["look"]
+    ymm4 = _ymm4_look(ch, item, problems)
+    if ymm4 is not None:
+        return ymm4
     if item["kind"] == "still" and item.get("custom_parts"):
         return merge_parts(preset_parts(ch, preset), item["custom_parts"])
     return None
 
 
-def _resolve_expression(ch, item: dict, problems: list[str], tachie: dict | None = None) -> str:
-    """セリフ・表情ストリップ・立ち絵の表情プリセット。YMM4 のパーツなら、キャラの基本の表情との差分のプリセットにする。
-
-    立ち絵（YMM4 の立ち絵アイテム）のパーツは基本の表情そのもの（空のパーツは非表示、.ymmp の読み込みと同じ）。
-    セリフ・表情は変えるパーツだけで、`tachie`（重なる立ち絵アイテムのパーツ）があればその上に重ねる。"""
+def _resolve_expression(ch, item: dict, problems: list[str]) -> str:
+    """セリフ・表情ストリップ・立ち絵の表示用のプリセットの名前（キャラに無ければ ""）。"""
     preset = item.get("expression") or ""
-    parts = item.get("face_parts") if item["kind"] == "line" else item.get("parts")
-    if item["kind"] == "still" and parts and not any(parts.values()):
-        parts = None  # パーツの指定が無い立ち絵アイテムはキャラの基本の表情
-    if not preset and parts and ch.folder:
-        from .ymmp_import import _base_parts, _Presets, _valid_parts
-
-        base = _base_parts(ch)
-        full = parts if item["kind"] == "still" else overlay(tachie or base, parts)
-        preset = _Presets(ch, problems).name_for(_valid_parts(ch, full, problems, base))
     if preset and preset not in {e.name for e in ch.expressions}:
-        problems.append(f"{ch.name} に表情「{preset}」が無いので基本の表情にしました")
-        preset = ""
+        if not isinstance(item.get("look"), dict):
+            problems.append(f"{ch.name} に表情「{preset}」が無いので基本の表情にしました")
+        return ""
     return preset
+
+
+def _ymm4_look(ch, item: dict, problems: list[str]) -> dict | None:
+    """YMM4 のテンプレートのパーツ（ボイス `face_parts`・表情アイテム・立ち絵アイテムの `parts`）→ アイテムのパーツ。
+    立ち絵アイテムは全部のパーツなのでキャラの基本との差分に、ボイス・表情アイテムは変えるパーツだけ（重なる立ち絵の
+    上に重なる。素材に無いパーツは落として立ち絵のまま）。パーツの指定が無いものは {}（立ち絵アイテムはキャラの基本の表情、
+    表情アイテムは立ち絵のまま。.ymmp の読み込みと同じ）。YMM4 のアイテムでなければ None。"""
+    parts = item.get("face_parts") if item["kind"] == "line" else item.get("parts")
+    if not isinstance(parts, dict) or not ch.folder:
+        return None
+    if not any(parts.values()):
+        return {}
+    from .ymmp_import import _base_parts, _valid_parts, diff_parts
+
+    if item["kind"] == "still":
+        return diff_parts(ch, _valid_parts(ch, parts, problems, _base_parts(ch)), problems)
+    return _valid_parts(ch, parts, problems)
 
 
 def _still_pose(ch, item: dict, data: dict) -> dict | None:
@@ -250,15 +259,6 @@ def _still_pose(ch, item: dict, data: dict) -> dict | None:
         return None
     return item_still_pose(ch, item["x"], item["y"], item.get("zoom", 100.0),
                           float(data.get("width") or 1920), float(data.get("height") or 1080))
-
-
-def _tachie_parts(items: list[dict], item: dict) -> dict | None:
-    """セリフ・表情の頭に重なる、同じキャラの立ち絵（YMM4 の立ち絵アイテム）のパーツ（.ymmp の読み込みの
-    `tachie_base` と同じく、YMM4 の表情はその上に重ねる）。"""
-    f = item["frame"]
-    return next((i["parts"] for i in items if i["kind"] == "still" and i["character"] == item["character"]
-                 and i["frame"] <= f < i["frame"] + i["length"] and i.get("parts") and any(i["parts"].values())),
-                None)
 
 
 def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[str]]:
@@ -310,7 +310,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
         voice = {**character_voice(ch), **{k: v for k, v in (item.get("voice") or {}).items()
                                            if k in character_voice(ch)}}
         try:
-            preset = _resolve_expression(ch, item, problems, _tachie_parts(items, item))
+            preset = _resolve_expression(ch, item, problems)
             clip, lines_dir = render_clip(context, ch, item["text"], preset or None, speaker=item.get("style"),
                                           voice=voice, kana=item.get("kana") or None, accent=item.get("accent"),
                                           accent_kana=item.get("accent_kana"), audio=audio)
@@ -329,7 +329,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             continue
         strips = place_strips(context, ch, clip, lines_dir, item["text"], at, voice=voice, accent=item.get("accent"),
                               audio=audio, channels=channels, layout=layout,
-                              parts=_item_look(ch, item, preset) if ch.folder else None)
+                              parts=_item_look(ch, item, preset, problems) if ch.folder else None)
         sound = strips[0]
         sound.volume = audio.get("volume", sound.volume)
         sound.pan = max(-1.0, min(1.0, audio.get("pan", sound.pan)))
@@ -346,12 +346,12 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             problems.append(f"キャラクター「{item['character']}」（立ち絵あり）が無いので表情ストリップを置きませんでした")
             continue
         try:
-            preset = _resolve_expression(ch, item, problems, _tachie_parts(items, item))
+            preset = _resolve_expression(ch, item, problems)
         except ERRORS as e:
             problems.append(f"{ch.name} の表情ストリップ: {e}")
             continue
         a, b = frame(item["frame"]), max(frame(item["frame"]) + 1, frame(item["frame"] + item["length"]))
-        new_face(sed, settings, ch.name, preset, a, b, _item_look(ch, item, preset))
+        new_face(sed, settings, ch.name, preset, a, b, _item_look(ch, item, preset, problems))
         placed["face"] += 1
     # 立ち絵（同じキャラの立ち絵に重なるものは置かない）
     for item in (i for i in items if i["kind"] == "still"):
@@ -368,7 +368,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             flip = item.get("flip")  # YMM4 と同じく立ち絵ごと。キャラの設定と同じならキャラに従う
             place_still(context, ch, preset, a, b - a, _still_pose(ch, item, data), problems=problems,
                         flip=None if flip is None or bool(flip) == ch.flip_x else bool(flip), jump=item.get("jump"),
-                        settings=item.get("settings"), parts=_item_look(ch, item, preset))
+                        settings=item.get("settings"), parts=_item_look(ch, item, preset, problems))
         except ERRORS as e:
             problems.append(f"{ch.name} の立ち絵: {e}")
             continue

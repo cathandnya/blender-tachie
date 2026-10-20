@@ -1186,8 +1186,9 @@ ylines = {sts[0]["tachie_text"]: (l, sts) for _, (l, _, sts) in lines().items()
 zl, zsts = ylines["読み込んだセリフなのだ"]
 ml, _ = ylines["読み込んだセリフですわ"]
 assert zl == scene.frame_start + ymm_base // 2 and ml == zl + 150  # 60fps → 30fps
-zpreset = zsts[0]["tachie_expression"]
-assert zpreset not in zunda_presets and next(e for e in zunda.expressions if e.name == zpreset).part_eye == "なごみ目"
+# ボイスの表情は表情プリセットを作らずにセリフのパーツにする（重なる立ち絵の上に重ねる）
+assert ops.item_parts(ops.line_sound(zsts)).get("目") == "なごみ目" and zsts[0]["tachie_expression"] == ""
+assert {e.name for e in zunda.expressions} == zunda_presets
 # 立ち絵アイテムはその区間の立ち絵になり、重なるそのキャラのセリフの間だけ口パクする
 ystill, = [x for x in sed.strips if x.get("tachie_still") == "めたん（YMM4）"]
 assert (ystill.left_handle, ystill.right_handle) == (zl, zl + 350) and ystill.channel == ymetan.channel
@@ -1224,8 +1225,7 @@ assert zstill.use_flip_x and "tachie_flip" not in zstill  # キャラの設定�
 zunda.flip_x = False
 assert not zstill.use_flip_x
 yfaces = [x for x in sed.strips if x.get("tachie_face") == "ずんだもん" and x.left_handle == zl + 300]
-assert yfaces and next(e for e in zunda.expressions
-                       if e.name == yfaces[0]["tachie_expression"]).part_eyebrow == "怒り眉"
+assert yfaces and ops.item_parts(yfaces[0]).get("眉") == "怒り眉"
 ynar = s.characters[n_chars + 1]  # 立ち絵の無いキャラは素材を探さずに追加し、声と字幕だけで置く
 assert ynar.name == "ナレーター（YMM4）" and ynar.folder == "" and ynar.line_layout == "SUBTITLE"
 assert ynar.speaker == 2 and ynar.font_size == 50 and ynar.subtitle_box  # YMM4 に無い設定は初期値のまま
@@ -1243,9 +1243,6 @@ s.characters.remove(n_chars + 1)
 s.characters.remove(n_chars)
 lay_problems = chmod.ensure_layout(scene)
 assert not lay_problems and (zunda.channel, metan.channel) == (12, 14), (lay_problems, zunda.channel, metan.channel)  # レーンは元に戻る
-for i in reversed(range(len(zunda.expressions))):
-    if zunda.expressions[i].name not in zunda_presets:
-        zunda.expressions.remove(i)
 ops.refresh_faces(bpy.context)
 scene.frame_end = frame_end_before
 
@@ -1337,8 +1334,8 @@ run(bpy.ops.tachie.insert_template, index=list(templates).index(next(t for t in 
 greet = [sts for _, (l, _, sts) in lines().items() if l >= t_at3]
 assert [g[0]["tachie_text"] for g in greet] == ["テンプレなのだ", "続きなのだ"]
 assert max(x.right_handle for x in greet[0]) <= min(x.left_handle for x in greet[1])
-gpreset = greet[0][0]["tachie_expression"]
-assert gpreset and next(e for e in zunda.expressions if e.name == gpreset).part_eye == "なごみ目"
+assert ops.item_parts(ops.line_sound(greet[0])).get("目") == "なごみ目"
+assert {e.name for e in zunda.expressions} == zunda_presets_t  # 表情プリセットは作らない
 # 立ち絵アイテムのテンプレートは立ち絵を置く（60fps の 60 フレーム → 30 フレーム）。重なる立ち絵があれば置かない
 t_at4 = max(x.right_handle for x in sed.strips) + 20
 scene.frame_current = t_at4
@@ -1357,9 +1354,6 @@ for x in [x for x in sed.strips if x.left_handle >= t_at and (x.get("tachie_id")
 for i in reversed(range(len(templates))):
     if templates[i].name in ("テスト", "あいさつ", "立ち絵だけ"):
         templates.remove(i)
-for i in reversed(range(len(zunda.expressions))):  # 読み込みで作った表情プリセット
-    if zunda.expressions[i].name not in zunda_presets_t:
-        zunda.expressions.remove(i)
 ops.refresh_faces(bpy.context)
 scene.frame_end = frame_end_before
 
