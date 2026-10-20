@@ -151,15 +151,7 @@ def apply_outcomes(context, plan: Plan, results: list, target: str) -> tuple[int
                             same = preset == strips[0].get("tachie_expression", "") and not ops.face_segments(
                                 sed, ops.find_character(settings, job.character), start, end)
                             if not same:
-                                face = sed.strips.new_effect(
-                                    name=ops._face_name(job.character, preset), type="COLOR",
-                                    channel=ops._free_face_channel(sed, settings, start, end, job.character),
-                                    frame_start=start, length=end - start)
-                                face.color = (0.95, 0.6, 0.25)
-                                face.color_tag = "COLOR_02"
-                                face.mute = True
-                                face["tachie_face"] = job.character
-                                face["tachie_expression"] = preset
+                                ops.new_face(sed, settings, job.character, preset, start, end)
                     else:
                         same = strips[0].get("tachie_expression", "") == preset
                         if not same:

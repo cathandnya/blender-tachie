@@ -2286,6 +2286,20 @@ def _face_name(character: str, preset: str) -> str:
     return f"表情 {character}: {preset or '基本'}"
 
 
+def new_face(sed, settings, character: str, preset: str, start: int, end: int):
+    """表情ストリップ（ミュートしたカラーストリップ）を [start, end) に置く。チャンネルはそのキャラの表情のレーン
+    （重なる表情があればその上）。"""
+    face = sed.strips.new_effect(name=_face_name(character, preset), type="COLOR",
+                                 channel=_free_face_channel(sed, settings, start, end, character),
+                                 frame_start=start, length=end - start)
+    face.color = (0.95, 0.6, 0.25)
+    face.color_tag = "COLOR_02"
+    face.mute = True  # 画面には出さない（立ち絵の表情を変える印）
+    face["tachie_face"] = character
+    face["tachie_expression"] = preset
+    return face
+
+
 class TACHIE_OT_add_face(bpy.types.Operator):
     """選択中のキャラクターの表情ストリップを再生位置に置く（重なる範囲だけ立ち絵がその表情になる）"""
 
@@ -2312,15 +2326,7 @@ class TACHIE_OT_add_face(bpy.types.Operator):
         line = next((strips for s in line_sounds(sed, ch.name) if s.left_handle <= start
                      for strips in [line_strips(sed, s["tachie_id"])] if start < line_end(strips)), None)
         end = line_end(line) if line else start + max(1, round(settings.face_seconds * scene_fps(scene)))
-        preset = settings.expression
-        face = sed.strips.new_effect(name=_face_name(ch.name, preset), type="COLOR",
-                                     channel=_free_face_channel(sed, settings, start, end, ch.name),
-                                     frame_start=start, length=end - start)
-        face.color = (0.95, 0.6, 0.25)
-        face.color_tag = "COLOR_02"
-        face.mute = True  # 画面には出さない（立ち絵の表情を変える印）
-        face["tachie_face"] = ch.name
-        face["tachie_expression"] = preset
+        face = new_face(sed, settings, ch.name, settings.expression, start, end)
         problems = []
         _applying_faces = True
         try:
@@ -2334,6 +2340,62 @@ class TACHIE_OT_add_face(bpy.types.Operator):
         sed.active_strip = face
         if problems:
             self.report({"WARNING"}, problems[0])
+        return {"FINISHED"}
+
+
+class TACHIE_OT_line_faces(bpy.types.Operator):
+    """選択中のセリフの表情を、セリフの区間の表情ストリップに移す（セリフの表情は「立ち絵のまま」に戻す。
+    見た目は変わらず、表情だけを伸ばしたり動かしたりできる）"""
+
+    bl_idname = "tachie.line_faces"
+    bl_label = "表情を表情ストリップにする"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(selected_targets(seq_scene(context).sequence_editor)[0])
+
+    def execute(self, context):
+        global _applying_faces
+        scene = seq_scene(context)
+        sed = scene.sequence_editor
+        settings = scene.tachie
+        moved, overlapped = 0, 0
+        for cid in selected_targets(sed)[0]:
+            strips = line_strips(sed, cid)
+            preset = strips[0].get("tachie_expression", "")
+            ch = settings.characters.get(strips[0].get("tachie_character", ""))
+            sound = next((s for s in strips if s.type == "SOUND"), None)
+            # 表情を指定していない・キャラに無い表情（立ち絵のまま）・立ち絵の無いキャラ・ミュートしたセリフ
+            # （立ち絵に効いていない）は移さない
+            if (not preset or ch is None or not ch.folder or sound is None or sound.mute
+                    or preset not in {e.name for e in ch.expressions}):
+                continue
+            # 立ち絵がセリフの表情になる区間（`_talking_lines` と同じ: 音声の中身の頭から余韻を含む長さ）
+            start = int(sound.content_start)
+            end = start + (int(sound.get("tachie_frames", 0)) or (sound.right_handle - start))
+            others = [t for t in _talking_lines(sed, ch, start, end) if t[0] != cid]
+            if face_segments(sed, ch, start, end) or others:
+                # 重なる表情ストリップの区間はそちらが見えている。重なる同じキャラのセリフは後から始まるものの表情に
+                # なる。表情ストリップはどちらよりも優先なので、置くと見た目が変わるので移さない
+                overlapped += 1
+                continue
+            new_face(sed, settings, ch.name, preset, start, end)
+            set_line_expression(context, cid, "")
+            moved += 1
+        note = f"（表情ストリップか同じキャラのセリフが重なる {overlapped} 行はそのまま）" if overlapped else ""
+        if not moved:
+            self.report({"INFO"}, "表情を指定したセリフがありません" + note)
+            return {"CANCELLED"}
+        problems = []
+        _applying_faces = True
+        try:
+            refresh_faces(context, problems)
+        finally:
+            _applying_faces = False
+            _applied_signatures[scene.name] = auto_signature(scene)
+        self.report({"WARNING"} if problems else {"INFO"},
+                    f"{moved} 行の表情を表情ストリップにしました{note}" + (f": {problems[0]}" if problems else ""))
         return {"FINISHED"}
 
 
@@ -4215,6 +4277,7 @@ _classes = (
     TACHIE_OT_reset_kana,
     TACHIE_OT_add_face,
     TACHIE_OT_batch_edit,
+    TACHIE_OT_line_faces,
     TACHIE_OT_apply_faces,
     TACHIE_OT_preview_line,
     TACHIE_OT_edit_accent,

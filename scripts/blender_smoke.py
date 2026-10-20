@@ -505,6 +505,19 @@ face = sed.active_strip
 assert (face.left_handle, face.right_handle) == (l, r)  # 再生位置のセリフの終わりまで
 assert expression_dir(still("ずんだもん"), l) == doya
 sed.strips.remove(face)
+run(bpy.ops.tachie.apply_faces)
+# セリフの表情を表情ストリップに移す（見た目は同じで、セリフの表情は立ち絵のままに戻る）
+activate(sound(zunda_id))
+run(bpy.ops.tachie.line_faces)
+moved = [f for f in sed.strips if f.get("tachie_face") == "ずんだもん"]
+assert len(moved) == 1 and (moved[0].left_handle, moved[0].right_handle) == (l, r)
+assert moved[0]["tachie_expression"] == "困り" and moved[0].mute
+assert all(x["tachie_expression"] == "" for x in ops.line_strips(sed, zunda_id))
+assert expression_dir(still("ずんだもん"), l) == komari and expression_dir(still("ずんだもん"), r) == base
+assert not ops._needs_apply(scene)
+activate(sound(zunda_id))
+assert bpy.ops.tachie.line_faces() == {"CANCELLED"}  # もう表情を指定していない
+sed.strips.remove(moved[0])
 ops._expression_items = [(ops.NONE, "（立ち絵のまま）", "")]
 activate(sound(zunda_id))
 run(bpy.ops.tachie.pick_expression, target="LINE", expression=ops.NONE)

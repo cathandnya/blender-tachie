@@ -102,6 +102,7 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row = layout.row(align=True)
             row.operator("tachie.assign_faces", text=f"AI で表情を割り当てる（{len(ids)} 行）", icon="SHADERFX")
             row.prop(preferences, "faceassign_target", text="")
+            layout.operator("tachie.line_faces", text=f"表情を表情ストリップにする（{len(ids)} 行）", icon="SEQ_STRIP_DUPLICATE")
         if n > 1 or ids:
             layout.separator()
         if strip is not None and strip.get("tachie_face"):
