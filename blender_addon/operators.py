@@ -18,7 +18,7 @@ from . import channels as lanes
 from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, clear_text_input, place_text, still_flip, system_fonts, text_offset
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
-from .tachie_studio.pipeline.render import LineMotion, link_frames, still_frames
+from .tachie_studio.pipeline.render import LineMotion, still_frames
 from .tachie_studio.pipeline.script import script_format, split_kana
 from .tachie_studio.subtitle import breaks, mark_breaks
 from .tachie_studio.pipeline.config import (LAYERS_KEY, MATERIAL_CONFIG, VOICE_DEFAULTS, VOICE_KEYS, dump_characters, dump_raw_table, dump_table,
@@ -135,7 +135,8 @@ def _move_temp_output(filepath, *_args):
     def copy(rel: Path) -> bool:
         """コピーできた（か、元が無い）なら True。失敗したものは付け替えない（一時フォルダの方を指したままにする）。"""
         src, dst = temp / rel, dest / rel
-        if rel in copied or not src.exists():
+        # 立ち絵は cache/ ごと指すものと cache/<表情>/ を指すものがあるので、上のフォルダをコピー済みなら飛ばす
+        if rel in copied or any(p in copied for p in rel.parents) or not src.exists():
             return True
         if rel in failed:
             return False
@@ -955,14 +956,49 @@ def face_segments(sed, ch, start: int, end: int) -> list[tuple[int, int, str]]:
     return out
 
 
-def _strip_from_paths(context, sed, ch, name: str, start: int, paths: list, folder: str, key: str,
-                      channel: int | None = None):
-    """画像のパスの列をハードリンクで 1 つのフォルダに並べ、立ち絵ストリップにする（既定は立ち絵のレーン）。"""
-    directory = output_dir(context) / folder / hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
-    link_frames(paths, directory)
-    files = sorted(os.listdir(directory))
+def _still_elements(paths: list) -> tuple[Path, list[str]]:
+    """立ち絵のコマの画像（合成キャッシュの中）→ (ストリップのフォルダ, コマごとのファイル名)。1 つの表情だけならその表情の
+    フォルダ、いくつもの表情にまたがればキャッシュのフォルダからの相対パス（Blender のストリップはファイル名に
+    サブフォルダを書ける。前はコマごとのハードリンクを 1 つのフォルダに並べていて、長い立ち絵ほど時間がかかった）。"""
+    names = [str(p) for p in paths]  # 長い立ち絵は数万コマあるので pathlib を通さずに文字列で切る
+    parents = {os.path.dirname(n) for n in names}
+    if len(parents) == 1:
+        root = next(iter(parents))
+    else:
+        root = os.path.commonpath(list(parents))
+    cut = len(os.path.join(root, ""))
+    return Path(root), [n[cut:].replace(os.sep, "/") for n in names]
+
+
+def _same_dir(a: str, b: Path) -> bool:
+    return os.path.normpath(bpy.path.abspath(a)) == os.path.normpath(str(b))
+
+
+def _image_strip(sed, ch, name: str, start: int, paths: list, channel: int | None = None, reuse=None):
+    """立ち絵のコマの画像を並べたストリップ（既定は立ち絵のレーン）。`reuse`（作り直す前の立ち絵）が同じ位置・長さなら
+    消さずに、変わったコマのファイル名だけ書き換えて返す（チャンネル・選択・キーフレームもそのまま）。"""
+    directory, files = _still_elements(paths)
+    if (reuse is not None and int(reuse.frame_start) == start == reuse.left_handle
+            and len(reuse.elements) == len(files) == reuse.right_handle - start):
+        if not _same_dir(reuse.directory, directory):
+            reuse.directory = os.path.join(_path_for_blend(directory), "")
+            for e, f in zip(reuse.elements, files):
+                e.filename = f
+        else:
+            for e, f in zip(reuse.elements, files):
+                if e.filename != f:
+                    e.filename = f
+        if reuse.name != name:
+            reuse.name = name
+        apply_placement(reuse, ch)
+        return reuse
+    if reuse is not None:
+        sed.strips.remove(reuse)
     strip = sed.strips.new_image(name=name, filepath=_path_for_blend(directory / files[0]),
                                  channel=channel or ch.channel, frame_start=start, fit_method="ORIGINAL")
+    if not _same_dir(strip.directory, directory):  # ファイル名にサブフォルダを含む
+        strip.directory = os.path.join(_path_for_blend(directory), "")
+        strip.elements[0].filename = files[0]
     for f in files[1:]:
         strip.elements.append(f)
     strip.blend_type = "ALPHA_OVER"
@@ -1074,10 +1110,13 @@ def set_line_expression(context, clip_id: str, preset: str) -> list:
 
 def refresh_faces(context, problems: list | None = None) -> int:
     """全体を合わせる（立ち絵の作り直しと、動き・ダッキングの作り直し）。作り直した立ち絵の本数を返す。"""
+    scene = seq_scene(context)
     count = apply_faces(context, problems=problems)
-    # 呼び出し側は反映済みとして署名を記録するので、動きとダッキングも作り直す
+    # 反映済みとして署名を記録するので、動きとダッキングも作り直す
     # （まとめて変えるで読み上げ速度を変えるなど、セリフの長さが変わったとき）
-    refresh_motion_now(seq_scene(context))
+    refresh_motion_now(scene)
+    # 操作の中で反映し終えた: 直後の自動の反映（_apply_faces_later）で同じ描き直しをもう一度しない
+    _applied_signatures[scene.name] = auto_signature(scene)
     return count
 
 
@@ -1147,6 +1186,18 @@ def _on_depsgraph_update(scene, depsgraph):
         bpy.app.timers.register(_apply_faces_later, first_interval=0.3)
 
 
+def _needs_apply(scene) -> bool:
+    """自動の反映ですることがあるか（署名・プレビューで動かした字幕・レーン）。"""
+    from .motion import moved_texts
+
+    if auto_signature(scene) != _applied_signatures.get(scene.name, ("", "", "")) or moved_texts(scene):
+        return True
+    try:
+        return scene.tachie.applied_layout != lanes.scene_layout(scene).to_json()
+    except ValueError:  # チャンネルが足りないなど（ensure_layout が問題として出す）
+        return True
+
+
 def _apply_faces_later():
     """ドラッグなどが終わってから描き直す（自動の反映）。"""
     global _face_timer_running, _applying_faces
@@ -1156,6 +1207,9 @@ def _apply_faces_later():
         return 0.3  # まだ動かしている
     _face_timer_running = False
     window = wm.windows[0] if wm and wm.windows else None
+    with bpy.context.temp_override(window=window) if window else _nullcontext():
+        if not _needs_apply(seq_scene(bpy.context)):
+            return None  # 操作の中で反映済み（プリフェッチを止めてシーケンサーのキャッシュを捨てない）
     with bpy.context.temp_override(window=window) if window else _nullcontext(), prefetch.paused():
         # refresh_faces は seq_scene(context) を描き直すので、そのシーンだけを見る（他のシーンは
         # シーケンサーに映ったときに反映する）
@@ -1176,9 +1230,9 @@ def _apply_faces_later():
             problems = []
             # 動きだけが変わったとき（セリフごとの位置を変えた・動きのあるセリフを動かしたなど）は、
             # 立ち絵を描き直さずにキーフレームだけ作り直す
-            if signature[:2] != applied[:2]:
-                if signature[0] != applied[0]:
-                    refresh_faces(bpy.context, problems)  # 立ち絵を描き直すときに動きも作り直す
+            if signature[0] != applied[0]:
+                refresh_faces(bpy.context, problems)  # 立ち絵を描き直し、動き・ダッキングも作り直す
+            elif signature[1] != applied[1]:
                 refresh_motion_now(scene)  # ダッキングも作り直す
             else:  # BGM のダッキングだけ（BGM を動かした・音量を変えたなど）
                 from .ducking import refresh_ducking
@@ -1211,22 +1265,9 @@ def _still_overlaps(sed, ch, start: int, end: int, ignore=()) -> bool:
                and s.left_handle < end and start < s.right_handle for s in sed.strips)
 
 
-def _blink_strip(sed, ch, cache: FrameCache, name: str, start: int, frames: int, fps: float,
-                 channel: int | None = None):
-    """まばたきだけの立ち絵（口は閉じ）のストリップを置く（既定は立ち絵のレーン）。"""
-    paths = idle_frames(cache, frames, fps, seed=(ch.name, start))
-    strip = sed.strips.new_image(name=name, filepath=_path_for_blend(paths[0]),
-                                 channel=channel or ch.channel, frame_start=start, fit_method="ORIGINAL")
-    for p in paths[1:]:
-        strip.elements.append(p.name)
-    strip.blend_type = "ALPHA_OVER"
-    apply_placement(strip, ch)
-    return strip
-
-
 def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | None = None,
                 channel: int | None = None, problems: list | None = None, flip: bool | None = None,
-                jump: dict | None = None, settings: dict | None = None, parts: dict | None = None):
+                jump: dict | None = None, settings: dict | None = None, parts: dict | None = None, reuse=None):
     """立ち絵（`tachie_still`）を置く。まばたきし、重なるそのキャラのセリフの間だけ口パクしてセリフの表情に
     なる（表情ストリップが重なればその表情）。口パクに使えなかったセリフ（動きの json が無い前の版のセリフなど）は
     `problems` に理由を足し、その間は口を閉じる。
@@ -1235,7 +1276,8 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     `jump` は跳ねながら登場退場（`tachie_jump`、`ymmp.jump_on_screen` の形。動きは motion が打つ）。
     `settings` は不透明度・回転角・フェード・喋る時のみ表示（`STILL_SETTINGS`、None なら既定値）。
     `parts` は立ち絵ごとのパーツ（`tachie_parts`、表情プリセットの上に重ねる）。セリフの表情が「立ち絵のまま」の間も
-    このパーツの見た目。表情プリセットを指定したセリフ・表情ストリップの区間はそのプリセットの表情。"""
+    このパーツの見た目。表情プリセットを指定したセリフ・表情ストリップの区間はそのプリセットの表情。
+    `reuse` は作り直す前の立ち絵（`remake_still`）。同じ位置・長さならそのストリップのコマを書き換える。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor or scene.sequence_editor_create()
     lanes.ensure_layout(scene)  # 立ち絵のレーン（ch.channel）に置く
@@ -1245,7 +1287,8 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     parts = clean_still_parts(parts, ch, problems)
     cache = character_cache(context, ch, preset, parts)
     name = f"立ち絵 {ch.name}" + (f"({preset})" if preset else "") + ("*" if parts else "")
-    if not channel or _overlaps(sed, channel, start, start + frames):  # 作り直す前のチャンネルが埋まっていればレーン
+    if not channel or _overlaps(sed, channel, start, start + frames, ignore=(reuse,) if reuse else ()):
+        # 作り直す前のチャンネルが埋まっていればレーン
         channel = ch.channel
     end = start + frames
     segments = face_segments(sed, ch, start, end)
@@ -1275,11 +1318,9 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     if segments or lines:
         paths = still_frames(cache, [(a, b, cache_of(p)) for a, b, p in segments], lines, frames,
                              scene_fps(scene), seed=(ch.name, start))
-        # フォルダはキャラ・位置・長さごと（同じ区間の別の立ち絵と連番を取り合わないように）
-        strip = _strip_from_paths(context, sed, ch, name, start, paths, "faces",
-                                  json.dumps([ch.name, start, frames, key], ensure_ascii=False), channel)
     else:
-        strip = _blink_strip(sed, ch, cache, name, start, frames, scene_fps(scene), channel)
+        paths = idle_frames(cache, frames, scene_fps(scene), seed=(ch.name, start))
+    strip = _image_strip(sed, ch, name, start, paths, channel, reuse)
     strip["tachie_faced"] = key
     strip["tachie_still"] = ch.name
     strip["tachie_character"] = ch.name
@@ -1287,8 +1328,12 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     set_still_parts(strip, parts)
     if flip is not None:
         strip["tachie_flip"] = bool(flip)
+    elif "tachie_flip" in strip:  # 書き換えた立ち絵（reuse）の前の値
+        del strip["tachie_flip"]
     if jump:
         strip["tachie_jump"] = json.dumps(jump, ensure_ascii=False)
+    elif "tachie_jump" in strip:
+        del strip["tachie_jump"]
     set_still_settings(strip, settings)
     set_pose(strip, pose, ch)
     if strip.right_handle - 1 > scene.frame_end:
@@ -1310,7 +1355,8 @@ def item_still_pose(ch, x: float, y: float, zoom: float, width: float, height: f
 
 
 def remake_still(context, strip, preset: str | None = None, problems: list | None = None):
-    """立ち絵を今の位置・長さ・キャラクター設定・重なるセリフで作り直す。新しいストリップを返す。"""
+    """立ち絵を今の位置・長さ・キャラクター設定・重なるセリフで作り直す。作り直したストリップを返す（位置・長さが
+    変わっていなければ同じストリップのコマを書き換える）。"""
     settings = seq_scene(context).tachie
     sed = seq_scene(context).sequence_editor
     ch = find_character(settings, strip["tachie_still"])
@@ -1333,9 +1379,8 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
     # 選択とアクティブも引き継ぐ（新しいストリップは選ばれた状態でできるので、選んでいなかった立ち絵が自動の反映で
     # 選ばれたり、選んでいた立ち絵がパネルから消えたりしないように）
     selected, active = strip.select, sed.active_strip == strip
-    sed.strips.remove(strip)
     new = place_still(context, ch, preset, start, frames, pose, channel, problems,
-                      None if flip is None else bool(flip), jump, look, parts)
+                      None if flip is None else bool(flip), jump, look, parts, reuse=strip)
     new.select = selected
     if active:
         sed.active_strip = new
@@ -1496,7 +1541,7 @@ class TACHIE_OT_remake_still(bpy.types.Operator):
         sed = seq_scene(context).sequence_editor
         try:
             strip = remake_still(context, sed.active_strip)
-            refresh_motion_now(seq_scene(context))
+            refresh_faces(context)  # 動きも作り直し、反映済みにする
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -2578,8 +2623,7 @@ class TACHIE_OT_batch_edit(bpy.types.Operator):
                         problems.append(str(e))
         finally:
             wm.progress_end()
-            refresh_faces(context)
-            _applied_signatures[scene.name] = auto_signature(scene)
+            refresh_faces(context)  # 終わりに署名を記録する
         if problems:
             self.report({"WARNING"}, f"{count} 個を変えました。{len(problems)} 個は変えられませんでした: {problems[0]}")
         else:
@@ -2721,7 +2765,7 @@ class TACHIE_OT_change_material(bpy.types.Operator):
         try:  # 素材はもう変えたので、立ち絵を作り直せなくても FINISHED にする（CANCELLED だと元に戻すの段が積まれない）
             for s in [s for s in sed.strips if s.get("tachie_still") == ch.name] if sed else []:
                 remake_still(context, s)
-            refresh_motion_now(seq_scene(context))
+            refresh_faces(context)  # 動きも作り直し、反映済みにする
         except ERRORS as e:
             self.report({"WARNING"}, f"{ch.name}の素材を変えましたが、立ち絵を作り直せません: {e}")
             return {"FINISHED"}
@@ -3154,7 +3198,7 @@ def _set_still_part(self, context, value: str):
     set_still_parts(strip, parts)
     try:
         sed.active_strip = remake_still(context, strip)
-        refresh_motion_now(seq_scene(context))
+        refresh_faces(context)  # 動きも作り直し、反映済みにする
     except ERRORS as e:
         self.report({"ERROR"}, str(e))
         return {"CANCELLED"}
@@ -3296,7 +3340,7 @@ class TACHIE_OT_clear_still_parts(bpy.types.Operator):
         set_still_parts(strip, None)
         try:
             sed.active_strip = remake_still(context, strip)
-            refresh_motion_now(seq_scene(context))
+            refresh_faces(context)  # 動きも作り直し、反映済みにする
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -3447,8 +3491,10 @@ class TACHIE_OT_reload_character(bpy.types.Operator):
         try:
             if sed is not None:
                 for s in [s for s in sed.strips if s.get("tachie_still")]:
-                    remake_still(context, s)
-            refresh_motion_now(seq_scene(context))
+                    # 位置・長さが同じならストリップを書き換えるだけで、合成し直した画像は前と同じファイル名なので、
+                    # シーケンサーが覚えている前の画像を捨てる
+                    remake_still(context, s).invalidate_cache("RAW")
+            refresh_faces(context)  # 動きも作り直し、反映済みにする
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
         return {"FINISHED"}
@@ -4067,6 +4113,7 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
         if self.target == "STILL":
             try:
                 strip = remake_still(context, sed.active_strip, value)
+                refresh_faces(context)  # 動きも作り直し、反映済みにする
             except ERRORS as e:
                 self.report({"ERROR"}, str(e))
                 return {"CANCELLED"}

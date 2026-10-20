@@ -485,9 +485,15 @@ assert expression_dir(still("ずんだもん"), l) == base and expression_dir(st
 activate(sound(zunda_id))
 wav_before = sound(zunda_id).sound.filepath
 ops._expression_items = [("困り", "困り", "")]
+zs_before = still("ずんだもん")
+zs_ptr, zs_channel = zs_before.as_pointer(), zs_before.channel
 run(bpy.ops.tachie.pick_expression, target="LINE", expression="困り")
 assert sed.active_strip["tachie_id"] == zunda_id and sound(zunda_id).sound.filepath == wav_before
 zs = still("ずんだもん")
+# 位置・長さが同じ立ち絵は消さずにコマのファイル名だけ書き換える（合成キャッシュの画像を直接指す）
+assert zs.as_pointer() == zs_ptr and zs.channel == zs_channel
+assert any("/" in e.filename for e in zs.elements) and "faces" not in zs.directory
+assert not ops._needs_apply(scene)  # 操作の中で反映済み（自動の反映でもう一度描き直さない）
 assert expression_dir(zs, l) == komari and expression_dir(zs, r - 1) == komari
 assert expression_dir(zs, l - 1) == base and expression_dir(zs, r) == base
 assert len({mouth(zs, f) for f in range(l, r)}) > 1

@@ -20,8 +20,8 @@ from . import prefetch
 from bpy_extras.io_utils import ImportHelper
 
 from .operators import (
-    ERRORS, _applied_signatures, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
-    auto_signature, character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_layout,
+    ERRORS, _face_name, _free_face_channel, _parts_dict, add_character, add_voice_character,
+    character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_layout,
     line_texts, load_material, place_still, place_strips, refresh_faces, render_clip, scene_fps, seq_scene,
     set_text_offset, subtitle_clashes, item_still_pose,
 )
@@ -750,8 +750,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             if frame(project.length) - 1 > scene.frame_end:
                 scene.frame_end = frame(project.length) - 1
             problems_faces: list[str] = []
-            refresh_faces(context, problems_faces)  # 表情ストリップに合わせて立ち絵を作り直す
-            _applied_signatures[scene.name] = auto_signature(scene)
+            refresh_faces(context, problems_faces)  # 表情ストリップに合わせて立ち絵を作り直す（署名も記録する）
 
             # 結果
             created = sum(p.created for p in presets.values())
