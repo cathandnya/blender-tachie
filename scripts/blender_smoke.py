@@ -946,6 +946,16 @@ activate(ops.line_subtitle(nl))
 run(bpy.ops.tachie.edit_line_text, text="編集した\\nセリフなのだ")
 nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"].startswith("編集した"))
 assert ops.line_subtitle(nl).text.split("\n")[:2] == ["編集した", "セリフなのだ"], ops.line_subtitle(nl).text
+# 字幕だけ変える: 音声は作り直さない（同じセリフの id・同じ音声）で、字幕のテキストだけ変わる
+cid, wav = nl[0]["tachie_id"], ops.line_sound(nl).sound.filepath
+activate(ops.line_subtitle(nl))
+run(bpy.ops.tachie.edit_line_text, text="字幕だけ\\n変えたのだ", subtitle_only=True)
+nl = ops.line_strips(sed, cid)
+assert nl and ops.line_sound(nl).sound.filepath == wav
+# 今の音声の読みは編集した発音として持つ（再生成で新しいテキストの自動の読みにならない）
+assert ops.line_kana(nl, nl[0]["tachie_text"]) == ops.line_sound(nl)["tachie_kana"], dict(ops.line_sound(nl))
+assert all(x["tachie_text"] == "字幕だけ\\n変えたのだ" for x in nl)
+assert ops.line_subtitle(nl).text.split("\n")[:2] == ["字幕だけ", "変えたのだ"], ops.line_subtitle(nl).text
 for x in nl:
     sed.strips.remove(x)
 scene.frame_end = frame_end_before

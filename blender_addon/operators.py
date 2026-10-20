@@ -1712,6 +1712,9 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
     bl_options = {"UNDO"}
 
     text: bpy.props.StringProperty(name="セリフ", options={"SKIP_SAVE"})
+    subtitle_only: bpy.props.BoolProperty(
+        name="字幕だけ変える（音声は作り直さない）", options={"SKIP_SAVE"},
+        description="音声はそのままで、字幕のテキストだけを書き換える（誤字の修正や、読みは同じで表記だけ変えるとき）")
 
     @classmethod
     def poll(cls, context):
@@ -1719,12 +1722,14 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.text = input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", ""))
-        return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映して作り直す")
+        return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映")
 
     def draw(self, context):
         self.layout.activate_init = True
         self.layout.prop(self, "text", text="")
-        self.layout.label(text="字幕の改行は \\n、最後に {発音} と書ける", icon="INFO")
+        self.layout.prop(self, "subtitle_only")
+        self.layout.label(text="字幕の改行は \\n、最後に {発音} と書ける" if not self.subtitle_only else
+                          "音声・口パクはそのまま。字幕（とキャラ名）のテキストだけ変える", icon="INFO")
 
     def execute(self, context):
         if not self.text.strip():
@@ -1732,8 +1737,54 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
             return {"CANCELLED"}
         active = seq_scene(context).sequence_editor.active_strip
         if input_text(self.text).strip() == input_text(active.get("tachie_text", "")).strip():
-            return {"CANCELLED"}  # 変えていなければ合成し直さない
+            return {"CANCELLED"}  # 変えていなければ何もしない
+        if self.subtitle_only:
+            return self._set_subtitle(context)
         return _regenerate_active(self, context, text=self.text)
+
+    def _set_subtitle(self, context):
+        """音声を作り直さずに、セリフのテキスト（字幕・キャラ名・字幕ファイル）だけ変える。"""
+        sed = seq_scene(context).sequence_editor
+        cid = active_line_id(context)
+        strips = line_strips(sed, cid)
+        text, kana = split_kana(input_text(self.text).strip())  # {発音} は音声を作り直さないので使わない
+        if not text:
+            self.report({"ERROR"}, "セリフを入力してください")
+            return {"CANCELLED"}
+        if text == input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", "")).strip():
+            return {"CANCELLED"}  # {発音} だけ変えた: 字幕は同じで、発音は音声を作り直さないと変わらない
+        try:
+            ch = find_character(seq_scene(context).tachie, strips[0]["tachie_character"])
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        from .motion import sync_text_offsets
+
+        sync_text_offsets(seq_scene(context))  # プレビューで動かした字幕の位置を、置き直す前にずらす量へ書き戻す
+        sound = line_sound(strips)
+        old = input_text((sound or strips[0]).get("tachie_placed_text", strips[0].get("tachie_text", "")))
+        for s in strips:
+            s["tachie_text"] = text
+            # 置いたときのテキストも変える: 編集した発音・抑揚は今の音声の読みのまま、再生成でも使い続ける
+            s["tachie_placed_text"] = text
+            if s.type == "TEXT":
+                (apply_name if s.get("tachie_role") == "name" else apply_subtitle)(s, ch, text)
+        if sound is not None and (sound.get("tachie_kana") or "").strip():
+            # 今の音声の読みは新しいテキストの自動の読みではないので、編集した発音として持つ
+            # （再生成で新しいテキストの自動の読みにならないように。発音を「取り直す」と新しいテキストの自動の読み）
+            sound["tachie_kana_auto"] = ""
+        if sound is not None and sound.get("tachie_accent_key"):
+            try:
+                key = json.loads(sound["tachie_accent_key"])
+                if key and isinstance(key[0], str) and input_text(key[0]) == old:
+                    key[0] = text
+                    sound["tachie_accent_key"] = json.dumps(key, ensure_ascii=False)
+            except ValueError:
+                pass
+        refresh_motion_now(seq_scene(context))  # 字幕の位置（ずらす量）を当て直す
+        if kana:
+            self.report({"WARNING"}, "字幕だけ変えるときは {発音} を使いません（音声はそのまま）")
+        return {"FINISHED"}
 
 
 class TACHIE_OT_edit_kana(bpy.types.Operator):
