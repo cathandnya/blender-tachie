@@ -145,39 +145,46 @@ def test_assign_without_schema_support(llm):
     def reply(body):
         if "response_format" in body:
             return 400, json.dumps({"error": "response_format json_schema is not supported"})
-        return 200, "<think>…</think>```json\n" + json.dumps({"a": [{"i": 0, "p": 0}]}) + "\n```"
+        assert '"p":"表情の名前"' in body["messages"][0]["content"]  # スキーマ無しは名前を書かせる
+        return 200, "<think>…</think>```json\n" + json.dumps({"a": [{"i": 0, "p": "基本"}]}) + "\n```"
 
     server = llm(reply)
     out = fa.assign(Client(Endpoint(server.url)), [Line(0, "z", "はい")], ["基本"])
     assert out == [fa.Outcome(0, "基本")]
-    assert len(server.chats()) == 3  # enum のスキーマ → 範囲のスキーマ → スキーマ無し
+    assert len(server.chats()) == 3  # 番号の enum → 名前の enum → スキーマ無し
 
 
-def test_assign_with_range_schema(llm):
-    """整数の enum を断るサーバ（apfel: Apple の端末内モデル）には、番号を範囲で縛ったスキーマで送り直す。"""
+def test_assign_with_name_schema(llm):
+    """整数の enum を断るサーバ（apfel: Apple の端末内モデル）には、候補の名前を文字列の enum で選ばせる。"""
     def reply(body):
         schema = body.get("response_format", {}).get("json_schema", {}).get("schema")
         p = schema["properties"]["a"]["items"]["properties"]["p"] if schema else None
-        if p is None or "enum" in p:
+        if p is None or p["type"] == "integer":
             return 400, json.dumps({"error": {"message": 'Invalid response_format.json_schema: "enum" at '
                                               '#/properties/a/items/properties/p cannot be enforced'}})
-        assert (p["minimum"], p["maximum"]) == (-1, 1)
-        return 200, json.dumps({"a": [{"i": 0, "p": 1}]})
+        assert p["enum"] == ["基本", "笑顔", fa.KEEP_NAME]
+        return 200, json.dumps({"a": [{"i": 0, "p": "笑顔"}, {"i": 1, "p": fa.KEEP_NAME}]})
 
     server = llm(reply)
     client = Client(Endpoint(server.url))
-    out = fa.assign(client, [Line(0, "z", "はい")], ["基本", "笑顔"])
-    assert out == [fa.Outcome(0, "笑顔")]
+    out = fa.assign(client, [Line(0, "z", "はい"), Line(1, "z", "うん")], ["基本", "笑顔"])
+    assert out == [fa.Outcome(0, "笑顔"), fa.Outcome(1, None)]
     assert len(server.chats()) == 2
-    fa.assign(client, [Line(0, "z", "はい")], ["基本", "笑顔"])
-    assert len(server.chats()) == 3  # 断られた enum のスキーマは次から送らない
+    fa.assign(client, [Line(0, "z", "はい"), Line(1, "z", "うん")], ["基本", "笑顔"])
+    assert len(server.chats()) == 3  # 断られた番号の enum は次から送らない
 
 
-def test_range_schema():
-    schema = fa.build_schema(["基本", "笑顔", "怒り"], include_reason=False)
-    p = fa.range_schema(schema)["properties"]["a"]["items"]["properties"]["p"]
-    assert p == {"type": "integer", "minimum": -1, "maximum": 2}
-    assert "enum" in schema["properties"]["a"]["items"]["properties"]["p"]  # 元のスキーマは変えない
+def test_name_prompt():
+    system = fa.build_system_prompt(["基本", "笑顔"], names=True)
+    assert "- 笑顔" in system and f"「{fa.KEEP_NAME}」" in system and '"p":"表情の名前"' in system
+    assert "0: 基本" in fa.build_system_prompt(["基本", "笑顔"])
+
+
+def test_interpret_names():
+    out = fa.interpret({"a": [{"i": 0, "p": "笑い"}, {"i": 1, "p": fa.KEEP_NAME}]}, [0, 1], ["基本", fa.KEEP_NAME])
+    assert out[0].preset is None and "笑い" in out[0].warning
+    assert out[1] == fa.Outcome(1, fa.KEEP_NAME)  # 同じ名前の候補があれば候補を選んだとみなす
+    assert fa.name_choices(["基本", fa.KEEP_NAME]) == ["基本", fa.KEEP_NAME]
 
 
 def test_assign_failure_keeps_lines(llm):
@@ -202,6 +209,6 @@ def test_bad_url_is_llm_error():
     # 送る側（_post）でも URL の誤りは LlmError にする（行ごとの失敗として結果に出し、例外で止めない）
     for url in ("", "http://127.0.0.1:abc"):
         with pytest.raises(fa.LlmError):
-            Client(Endpoint(url, timeout=2)).complete_json("s", "u", None)
+            Client(Endpoint(url, timeout=2)).complete_json([("s", None)], "u")
         out = fa.assign(Client(Endpoint(url, timeout=2)), [Line(0, "z", "はい")], ["基本"])
         assert out[0].preset is None and out[0].warning

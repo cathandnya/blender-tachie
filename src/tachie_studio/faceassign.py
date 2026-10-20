@@ -7,9 +7,9 @@ ymm4faceassign の実測（docs/measurements.md）で決めたこと:
 - 出力は候補の番号（名前を書かせると遅い）。JSON スキーマの enum で実在する番号だけに縛る。-1 は「どれも合わない」
 - 台本はキャラごとに束ね、他のキャラのセリフは ID 無しの文脈として混ぜる。文脈は束の手前 `context_lines` 行と、
   対象の間の直前 1 行だけ（全部送ると 1 行の推定に数十秒かかる）
-- 返ってこなかった行は一度だけ聞き直し、駄目なら変えない。json_schema を断るサーバには、整数の enum を範囲
-  （minimum / maximum）にしたスキーマ（apfel など。Apple の端末内モデルは文字列の enum しか縛れない）、それも
-  断られたらスキーマ無しで送り直す
+- 返ってこなかった行は一度だけ聞き直し、駄目なら変えない。json_schema を断るサーバには、候補の名前を文字列の
+  enum で選ばせるスキーマ（apfel: Apple の端末内モデルは文字列の enum しか縛れない。番号の範囲で縛ると、小さな
+  モデルは番号と名前を結び付けられずに 0 番ばかり返した）、それも断られたらスキーマ無しで名前を書かせる
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 KEEP = -1  # どの候補も合わない（変えない）
+KEEP_NAME = "どれも合わない"  # 名前で選ばせるときの KEEP
 BRIDGE_LINES = 1  # 対象と対象の間に残す他のセリフの数
 NO_ANSWER = "LLM が判定を返しませんでした"
 
@@ -89,7 +90,7 @@ class Outcome:
 class Client:
     def __init__(self, endpoint: Endpoint):
         self.endpoint = endpoint
-        self._schema_level = 0  # 断られたスキーマの段は次から飛ばす（0: そのまま、1: 範囲、2: スキーマ無し）
+        self._schema_level = 0  # 断られた形の段は次から飛ばす（0: 番号の enum、1: 名前の enum、2: スキーマ無し）
 
     def _post(self, url: str, body: dict, timeout: float) -> str:
         headers = {"Content-Type": "application/json; charset=utf-8"}
@@ -138,21 +139,18 @@ class Client:
         except LlmError:
             return False
 
-    def complete_json(self, system: str, user: str, schema: dict | None, name: str = "face_assignments") -> dict:
-        """JSON スキーマで縛ってチャット補完を 1 回呼ぶ。スキーマを断られたら、整数の enum を範囲にしたスキーマ、
-        それも断られたらスキーマ無しで送り直す。断られた段は同じ Client では次から送らない。"""
-        attempts = [(0, schema)]
-        if schema is not None:
-            relaxed = range_schema(schema)
-            attempts += [(1, relaxed), (2, None)] if relaxed != schema else [(2, None)]
-            attempts = [a for a in attempts if a[0] >= self._schema_level] or attempts[-1:]
-        for n, (_, attempt) in enumerate(attempts, 1):
+    def complete_json(self, forms: list[tuple[str, dict | None]], user: str, name: str = "face_assignments") -> dict:
+        """チャット補完を 1 回呼ぶ。`forms` は (システムプロンプト, JSON スキーマ) の段で、スキーマを断られたら次の段で
+        送り直す。断られた段は同じ Client では次から送らない。"""
+        level = min(self._schema_level, len(forms) - 1)
+        while True:
+            system, schema = forms[level]
             try:
-                return parse_content(self._chat(system, user, attempt, name))
+                return parse_content(self._chat(system, user, schema, name))
             except LlmError as e:
-                if n == len(attempts) or not e.schema_rejected:
+                if level == len(forms) - 1 or not e.schema_rejected:
                     raise
-                self._schema_level = attempts[n][0]
+                level = self._schema_level = level + 1
 
     def _chat(self, system: str, user: str, schema: dict | None, name: str) -> str:
         body: dict = {"model": self.endpoint.model, "temperature": self.endpoint.temperature, "stream": False,
@@ -194,27 +192,20 @@ def sanitize(content: str) -> str:
     return s[start:end + 1] if 0 <= start < end else s
 
 
-def range_schema(schema):
-    """整数の enum を範囲（minimum / maximum）にしたスキーマ。整数の enum を縛れないサーバ向け（範囲の中の
-    実在しない番号は `interpret` が候補に無い番号として扱う）。"""
-    if isinstance(schema, list):
-        return [range_schema(v) for v in schema]
-    if not isinstance(schema, dict):
-        return schema
-    out = {k: range_schema(v) for k, v in schema.items()}
-    values = out.get("enum")
-    if out.get("type") == "integer" and isinstance(values, list) and values and all(isinstance(v, int) for v in values):
-        del out["enum"]
-        out["minimum"], out["maximum"] = min(values), max(values)
-    return out
+def name_choices(candidates: list[str]) -> list[str]:
+    """名前で選ばせるときの選択肢（候補 + KEEP_NAME）。KEEP_NAME と同じ名前の候補があれば重ねない（候補を優先）。"""
+    return list(dict.fromkeys([*candidates, KEEP_NAME]))
 
 
-def build_schema(candidates: list[str], include_reason: bool) -> dict:
-    """{"a": [{"i": ID, "p": 候補の番号}]}。番号は enum で実在する候補（と -1）に縛る。
+def build_schema(candidates: list[str], include_reason: bool, names: bool = False) -> dict:
+    """{"a": [{"i": ID, "p": 候補の番号}]}。番号は enum で実在する候補（と -1）に縛る。`names` なら p は候補の名前
+    （と KEEP_NAME）の文字列の enum。
 
     ymm4faceassign では配列の長さを minItems/maxItems で決めると、返る件数がかえって減った。
     """
-    props: dict = {"i": {"type": "integer"}, "p": {"type": "integer", "enum": [KEEP, *range(len(candidates))]}}
+    choice = ({"type": "string", "enum": name_choices(candidates)} if names
+              else {"type": "integer", "enum": [KEEP, *range(len(candidates))]})
+    props: dict = {"i": {"type": "integer"}, "p": choice}
     if include_reason:
         props["r"] = {"type": "string"}
     return {"type": "object", "additionalProperties": False, "required": ["a"],
@@ -224,31 +215,38 @@ def build_schema(candidates: list[str], include_reason: bool) -> dict:
 
 
 def build_system_prompt(candidates: list[str], policy: str = "", no_think: bool = True,
-                        include_reason: bool = False) -> str:
+                        include_reason: bool = False, names: bool = False) -> str:
+    """`names` なら番号ではなく候補の名前を返させる。"""
+    keep = f"「{KEEP_NAME}」" if names else str(KEEP)
     lines = [
         "あなたは動画の台本に立ち絵の表情を割り当てる担当です。",
-        "各セリフについて、下の候補から最もふさわしい表情の番号をひとつ選びます。",
+        f"各セリフについて、下の候補から最もふさわしい表情の{'名前' if names else '番号'}をひとつ選びます。",
         "",
         "判断の指針:",
         "- セリフの感情を優先する。直前の流れも考慮してよい。",
         "- 淡々とした説明や相槌には、平常に近い表情を選ぶ。連続して同じ表情になるのは構わない。",
-        f"- 判断に迷う場合や、どの候補もしっくりこない場合は {KEEP} を返してよい。無理に選ばない。",
+        f"- 判断に迷う場合や、どの候補もしっくりこない場合は {keep} を返してよい。無理に選ばない。",
     ]
     if include_reason:
         lines.append("- r は40字以内の日本語で、なぜその表情かを簡潔に書く。")
     lines.append("")
     if policy.strip():
         lines += ["作品の方針:", policy.strip(), ""]
-    lines.append("表情の候補 (番号: 名前):")
-    lines += [f"{i}: {c}" for i, c in enumerate(candidates)]
+    if names:
+        lines.append("表情の候補:")
+        lines += [f"- {c}" for c in name_choices(candidates)]
+    else:
+        lines.append("表情の候補 (番号: 名前):")
+        lines += [f"{i}: {c}" for i, c in enumerate(candidates)]
+        lines.append(f"{KEEP}: どの候補も合わない")
+    choice = '"表情の名前"' if names else "番号"
     lines += [
-        f"{KEEP}: どの候補も合わない",
         "",
         "入力の各行は [キャラクター名 #ID] セリフ の形式です。",
         "#ID が付いている行だけが対象で、付いていない行は文脈として読むだけにします。",
         "対象の行すべてに、過不足なくひとつずつ割り当てを返してください。",
-        '出力は {"a":[{"i":ID,"p":番号,"r":"理由"}]} の形式の JSON のみ。' if include_reason
-        else '出力は {"a":[{"i":ID,"p":番号}]} の形式の JSON のみ。',
+        f'出力は {{"a":[{{"i":ID,"p":{choice},"r":"理由"}}]}} の形式の JSON のみ。' if include_reason
+        else f'出力は {{"a":[{{"i":ID,"p":{choice}}}]}} の形式の JSON のみ。',
     ]
     if no_think:
         lines += ["", "/no_think"]
@@ -297,9 +295,15 @@ def interpret(data: dict | None, target_ids: list[int], candidates: list[str], f
         if i is None or i not in target_ids or i in found:
             continue
         reason = entry.get("r") if isinstance(entry.get("r"), str) else ""
-        p = _int(entry.get("p"))
+        value = entry.get("p")
+        if isinstance(value, str) and value.strip() in (*candidates, KEEP_NAME):  # 名前で選ばせたとき
+            name = value.strip()
+            found[i] = Outcome(i, name if name in candidates else None, reason)
+            continue
+        p = _int(value)
         if p is None:
-            found[i] = Outcome(i, None, reason, "表情の番号を読めませんでした")
+            found[i] = Outcome(i, None, reason, f"候補に無い表情を返しました: {value.strip()}"
+                               if isinstance(value, str) and value.strip() else "表情の番号を読めませんでした")
         elif p == KEEP:
             found[i] = Outcome(i, None, reason)
         elif 0 <= p < len(candidates):
@@ -336,8 +340,11 @@ def assign(client: Client, transcript: list[Line], candidates: list[str], policy
     if not candidates:
         raise ValueError("表情の候補がありません")
     endpoint = client.endpoint
-    system = build_system_prompt(candidates, policy, endpoint.no_think, endpoint.include_reason)
-    schema = build_schema(candidates, endpoint.include_reason)
+    by_name = build_system_prompt(candidates, policy, endpoint.no_think, endpoint.include_reason, names=True)
+    forms = [(build_system_prompt(candidates, policy, endpoint.no_think, endpoint.include_reason),
+              build_schema(candidates, endpoint.include_reason)),
+             (by_name, build_schema(candidates, endpoint.include_reason, names=True)),
+             (by_name, None)]
     chunks = chunk(transcript, max_targets, context_lines)
     results: list[Outcome] = []
     for n, lines in enumerate(chunks, 1):
@@ -345,15 +352,15 @@ def assign(client: Client, transcript: list[Line], candidates: list[str], policy
             raise Cancelled()
         if progress:
             progress(f"{n}/{len(chunks)}")
-        results += _ask(client, system, schema, lines, candidates, cancelled)
+        results += _ask(client, forms, lines, candidates, cancelled)
     return results
 
 
-def _ask(client: Client, system: str, schema: dict, lines: list[Line], candidates: list[str],
+def _ask(client: Client, forms: list, lines: list[Line], candidates: list[str],
          cancelled: Callable[[], bool] | None) -> list[Outcome]:
     targets = [line.id for line in lines if line.id is not None]
     try:
-        outcomes = interpret(client.complete_json(system, build_user_prompt(lines), schema), targets, candidates)
+        outcomes = interpret(client.complete_json(forms, build_user_prompt(lines)), targets, candidates)
     except LlmError as e:
         return interpret(None, targets, candidates, failure=e.detail())
     # まとめて送るとモデルによっては後半を落とす。落とした行だけを同じ文脈で一度だけ聞き直す
@@ -362,7 +369,7 @@ def _ask(client: Client, system: str, schema: dict, lines: list[Line], candidate
         return outcomes
     retry = [line if line.id in missing else replace(line, id=None) for line in lines]
     try:
-        again = interpret(client.complete_json(system, build_user_prompt(retry), schema), sorted(missing), candidates)
+        again = interpret(client.complete_json(forms, build_user_prompt(retry)), sorted(missing), candidates)
     except LlmError:
         return outcomes
     better = {o.id: o for o in again if o.warning != NO_ANSWER}
