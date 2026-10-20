@@ -42,6 +42,8 @@ _part_items = []
 _font_items = []
 _font_paths = {}
 _expression_items = []
+_expression_rows: list = []  # 表情を選ぶ一覧の (値, 表示名, 見本のアイコン)
+_expression_current = ""
 _character_items = []
 _dict_words = None  # ユーザー辞書の一覧 [(uuid, 表記, 読み, アクセント)]。None は未取得
 _preview = None  # 試聴中の aud のハンドル
@@ -3313,7 +3315,7 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         return settings.character()
 
     def invoke(self, context, event):
-        global _part_items
+        global _part_items, _part_rows
         if self.item and active_selected(context) is None:
             self.report({"WARNING"}, "ストリップを選んでください")
             return {"CANCELLED"}
@@ -3338,15 +3340,20 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         wm = context.window_manager
         wm.progress_begin(0, len(names))
         try:
-            rows = [("", empty, 0)]
+            _part_rows = [("", empty, 0)]
             for i, n in enumerate(names):
-                rows.append((n, n, part_icon(parts[n].path)))
+                _part_rows.append((n, n, part_icon(parts[n].path)))
                 wm.progress_update(i + 1)
         finally:
             wm.progress_end()
-        popup_rows(wm, category, rows, self._current(context), "tachie.set_part", value_prop="part",
-                   prop=self.prop, preset=self.preset, item=self.item)
-        return {"CANCELLED"}  # 当てるのは押したボタン（tachie.set_part）。開くだけでは undo の段を積まない
+        return wm.invoke_popup(self, width=360)
+
+    def draw(self, context):
+        current = self._current(context)
+        col = self.layout.column(align=True)
+        for value, label, icon in _part_rows:
+            op = draw_swatch(col.row(align=True), icon).operator("tachie.set_part", text=label, depress=value == current)
+            op.prop, op.preset, op.item, op.part = self.prop, self.preset, self.item, value
 
     def _current(self, context) -> str:
         """今のパーツ（一覧で押されて見える）。"""
@@ -3448,6 +3455,7 @@ PART_ICON_SCALE = 1.8  # パーツの見本の大きさ（UI の単位。パー�
 PART_ICON_SIZE = 96  # 見本の画像のピクセル
 # 見本の背景（YMM4 と同じく白。透明だと Blender の暗い画面で黒い目などが背景に沈む）
 PART_ICON_BACKGROUND = (255, 255, 255, 255)
+_part_rows: list = []
 _part_previews = None
 
 
@@ -3462,22 +3470,6 @@ def draw_swatch(row, icon: int):
     button = row.column(align=True)
     button.scale_y = PART_ICON_SCALE  # 見本と同じ高さ
     return button
-
-
-def popup_rows(wm, title: str, rows: list, current: str, idname: str, *, value_prop: str, **props):
-    """見本 + ボタンの一覧（`rows` は (値, 表示名, 見本のアイコン)）をメニューの形で開く（押したら閉じる。
-    invoke_popup の一覧は押しても開いたままだった）。ボタンは `idname` を EXEC_DEFAULT で、`props` と
-    値（`value_prop`）を渡して実行する。"""
-
-    def draw(menu, _context):
-        col = menu.layout.column(align=True)
-        col.operator_context = "EXEC_DEFAULT"
-        for value, label, icon in rows:
-            op = draw_swatch(col.row(align=True), icon).operator(idname, text=label, depress=value == current)
-            for key, v in props.items():
-                setattr(op, key, v)
-            setattr(op, value_prop, value)
-    wm.popup_menu(draw, title=title)
 
 
 def _thumb_path(key: str, make) -> Path | None:
@@ -4282,10 +4274,8 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
     bl_label = "表情を選ぶ"
     bl_options = {"REGISTER", "UNDO"}
 
-    # 「最後の操作を調整」で対象を変えると別のストリップに当たるので隠す
     target: bpy.props.EnumProperty(items=[("ADD", "追加するセリフ", ""), ("LINE", "選択中のセリフ", ""),
-                                          ("STILL", "選択中の立ち絵", ""), ("FACE", "選択中の表情ストリップ", "")],
-                                   options={"HIDDEN"})
+                                          ("STILL", "選択中の立ち絵", ""), ("FACE", "選択中の表情ストリップ", "")])
     expression: bpy.props.EnumProperty(items=_expressions)
 
     def _character(self, context):
@@ -4297,7 +4287,7 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
         return settings.character()
 
     def invoke(self, context, event):
-        global _expression_items
+        global _expression_items, _expression_rows, _expression_current
         if self.target != "ADD" and active_selected(context) is None:
             self.report({"WARNING"}, "ストリップを選んでください")
             return {"CANCELLED"}
@@ -4316,18 +4306,24 @@ class TACHIE_OT_pick_expression(bpy.types.Operator):
         wm = context.window_manager
         wm.progress_begin(0, len(ch.expressions))
         try:
-            rows = [(NONE, empty, 0 if self.target == "LINE" else expression_icon(ch))]
+            _expression_rows = [(NONE, empty, 0 if self.target == "LINE" else expression_icon(ch))]
             if self.target == "LINE":
-                rows.append((BASE, "基本の表情", expression_icon(ch)))
+                _expression_rows.append((BASE, "基本の表情", expression_icon(ch)))
             for i, e in enumerate(ch.expressions):
-                rows.append((e.name, e.name, expression_icon(ch, preset_parts(ch, e.name))))
+                _expression_rows.append((e.name, e.name, expression_icon(ch, preset_parts(ch, e.name))))
                 wm.progress_update(i + 1)
         finally:
             wm.progress_end()
-        # 押したらこの表情を当てる（EXEC_DEFAULT なので一覧を開き直さない）
-        popup_rows(wm, "表情", rows, self._current(context, ch) or NONE, "tachie.pick_expression",
-                   value_prop="expression", target=self.target)
-        return {"CANCELLED"}  # 当てるのは押したボタン。開くだけでは undo の段を積まない
+        _expression_current = self._current(context, ch) or NONE
+        return wm.invoke_popup(self, width=300)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.operator_context = "EXEC_DEFAULT"  # 押したらこの表情を当てる（一覧を開き直さない）
+        for value, label, icon in _expression_rows:
+            op = draw_swatch(col.row(align=True), icon).operator("tachie.pick_expression", text=label,
+                                                                 depress=value == _expression_current)
+            op.target, op.expression = self.target, value
 
     def _current(self, context, ch) -> str:
         """今の表情（一覧で押されて見える）: パーツが同じ選択肢。変えていれば（カスタム）どれも押されない。"""
