@@ -2344,8 +2344,9 @@ class TACHIE_OT_add_face(bpy.types.Operator):
 
 
 class TACHIE_OT_line_faces(bpy.types.Operator):
-    """選択中のセリフの表情を、セリフの区間の表情ストリップに移す（セリフの表情は「立ち絵のまま」に戻す。
-    見た目は変わらず、表情だけを伸ばしたり動かしたりできる）"""
+    """選択中のセリフの表情で、セリフの区間に表情ストリップを置く（セリフの表情はそのまま。見た目は変わらず、
+    表情ストリップを伸ばしてセリフの前後も同じ表情にできる。セリフの区間はセリフの表情が残るので、縮めたり
+    動かしたりしてもその区間はセリフの表情のまま）"""
 
     bl_idname = "tachie.line_faces"
     bl_label = "表情を表情ストリップにする"
@@ -2360,14 +2361,14 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
         scene = seq_scene(context)
         sed = scene.sequence_editor
         settings = scene.tachie
-        moved, overlapped = 0, 0
+        placed, overlapped = 0, 0
         for cid in selected_targets(sed)[0]:
             strips = line_strips(sed, cid)
             preset = strips[0].get("tachie_expression", "")
             ch = settings.characters.get(strips[0].get("tachie_character", ""))
             sound = next((s for s in strips if s.type == "SOUND"), None)
             # 表情を指定していない・キャラに無い表情（立ち絵のまま）・立ち絵の無いキャラ・ミュートしたセリフ
-            # （立ち絵に効いていない）は移さない
+            # （立ち絵に効いていない）は置かない
             if (not preset or ch is None or not ch.folder or sound is None or sound.mute
                     or preset not in {e.name for e in ch.expressions}):
                 continue
@@ -2377,15 +2378,15 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
             others = [t for t in _talking_lines(sed, ch, start, end) if t[0] != cid]
             if face_segments(sed, ch, start, end) or others:
                 # 重なる表情ストリップの区間はそちらが見えている。重なる同じキャラのセリフは後から始まるものの表情に
-                # なる。表情ストリップはどちらよりも優先なので、置くと見た目が変わるので移さない
+                # なる。表情ストリップはどちらよりも優先なので、置くと見た目が変わるので置かない
                 overlapped += 1
                 continue
             new_face(sed, settings, ch.name, preset, start, end)
-            set_line_expression(context, cid, "")
-            moved += 1
+            placed += 1
         note = f"（表情ストリップか同じキャラのセリフが重なる {overlapped} 行はそのまま）" if overlapped else ""
-        if not moved:
-            self.report({"INFO"}, "表情を指定したセリフがありません" + note)
+        if not placed:
+            self.report({"INFO"}, ("表情ストリップを置けるセリフがありません" if overlapped else "表情を指定したセリフがありません")
+                        + note)
             return {"CANCELLED"}
         problems = []
         _applying_faces = True
@@ -2395,7 +2396,7 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
             _applying_faces = False
             _applied_signatures[scene.name] = auto_signature(scene)
         self.report({"WARNING"} if problems else {"INFO"},
-                    f"{moved} 行の表情を表情ストリップにしました{note}" + (f": {problems[0]}" if problems else ""))
+                    f"{placed} 行の表情を表情ストリップにしました{note}" + (f": {problems[0]}" if problems else ""))
         return {"FINISHED"}
 
 
