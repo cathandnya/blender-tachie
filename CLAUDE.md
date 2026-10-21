@@ -80,13 +80,13 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
   シーケンサーのサイドバー「立ち絵」タブ。キャラクター設定は `Scene.tachie.characters`（.blend に保存、TOML で読み書き）。
-  キャラクター全体の設定のパネル（`TACHIE_PT_character` と子の 声・動き・表情・表情プリセット・配置・字幕）は、選択中の
-  ストリップの設定と取り違えないようにサイドバーから分け、プロパティエディターのシーンタブに置く（`panels._CharPanel`）。
-  サイドバーの「キャラクター設定を開く」（`tachie.open_character_settings`）が `wm.window_new` で別ウィンドウを開いて
-  プロパティのシーンタブにする。`TACHIE_PT_character` は `HIDE_HEADER`（見出しの無いパネルは Blender のシーンのパネルより上に
-  並ぶ。`bl_order` では上に出なかった）で、キャラクターのいるシーケンサーのシーンのタブだけに出す（poll。アドオンを使っていない
-  .blend のシーンタブを占めないように）。キャラクターの一覧はサイドバーと両方に出す（`draw_character_list`）。
-  そこから再生成したセリフも、`operators.connect` がそのシーンを映すシーケンサーの画面（`_sequencer_area`）でつなぐ。
+  選んでいる 1 本のストリップ（セリフ・立ち絵・表情ストリップ）の設定は、Blender のストリップの設定と同じくプロパティ
+  エディターの「ストリップ」タブに置く（`panels.TACHIE_PT_strip`、`_StripPanel`）。`HIDE_HEADER`（見出しの無いパネルは
+  Blender のパネル（変形・音量など）より上、ストリップ名のすぐ下に並ぶ。`bl_order` では上に出なかった）で、選ばれている
+  アドオンのアイテムのときだけ出す（`active_selected`）。サイドバーの「選んだストリップ」（`TACHIE_PT_line`）は複数を扱う道具
+  （まとめて変える・AI で表情を割り当てる・表情を表情ストリップにする・全セリフを再生成）だけ。キャラクター設定はサイドバーの
+  まま（別ウィンドウにする案は戻した）。ストリップタブから再生成したセリフも、`operators.connect` がそのシーンを映す
+  シーケンサーの画面（`_sequencer_area`）でつなぐ。
   セリフ（YMM4 と同じく音声と字幕だけ）を追加すると再生位置に音声・字幕（とキャラ名）を置き、カスタムプロパティ
   `tachie_id` `tachie_text` `tachie_character` `tachie_speaker` `tachie_folder` `tachie_mouth` `tachie_expression` を付ける。
   セリフは wav と動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・まばたきの seed）だけ書く（`render_line(cache=None)`）。
@@ -113,7 +113,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   再生成のテキストは、パネルで編集する選択中のストリップから取る（他のストリップは古いまま）。表情（パーツ）は引き継ぐ
   （`regenerate` に `preset` を渡したときだけ、そのプリセットのパーツを写す）。
   「選択中」は選ばれているアクティブなストリップだけ（`operators.active_selected`。Blender は選択を外してもアクティブな
-  ストリップを覚えている）。パネルの「選択中のセリフ」と、セリフ・立ち絵を対象にするオペレーターの poll はこれを見る。
+  ストリップを覚えている）。ストリップタブのパネル（`TACHIE_PT_strip`）と、セリフ・立ち絵を対象にするオペレーターの poll はこれを見る。
   再生成は同じ `tachie_id` のストリップを消して同じ位置に置き直す。長さが変わったら後ろのストリップをずらす（重ならない順に動かす）。
   立ち絵（`tachie_still` = キャラ名、`tachie_expression`、「立ち絵だけを置く」・YMM4 の立ち絵アイテム）はセリフとは別に置き、
   まばたきし、重なるそのキャラのセリフ（ミュートは除く）の間だけ口パクする（`render.still_frames`、口はセリフ全体で計算した

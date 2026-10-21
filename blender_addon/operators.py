@@ -1625,7 +1625,7 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
 
 
 def connect(context, strips) -> None:
-    """3 本をまとめて動かせるようにつなぐ（画面から呼んだときだけ。キャラクター設定のウィンドウ（プロパティ）から
+    """3 本をまとめて動かせるようにつなぐ（画面から呼んだときだけ。プロパティの「ストリップ」タブから
     呼んだときは、そのシーンを映しているシーケンサーの画面で呼ぶ）。"""
     if context.area is None:
         return
@@ -3024,36 +3024,6 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class TACHIE_OT_open_character_settings(bpy.types.Operator):
-    """キャラクター全体の設定（素材・声・表情・字幕など）を別のウィンドウで開く（プロパティのシーンタブ。
-    選択中のセリフ・立ち絵の設定と取り違えないように、サイドバーとは分けている）"""
-
-    bl_idname = "tachie.open_character_settings"
-    bl_label = "キャラクター設定を開く"
-
-    @classmethod
-    def poll(cls, context):
-        # キャラクターがいなければ開いても何も出ない（最初のキャラクターはサイドバーの一覧から追加する）
-        return context.window is not None and not bpy.app.background and len(seq_scene(context).tachie.characters) > 0
-
-    def execute(self, context):
-        scene = seq_scene(context)
-        wm = context.window_manager
-        before = {w.as_pointer() for w in wm.windows}
-        bpy.ops.wm.window_new()
-        new = [w for w in wm.windows if w.as_pointer() not in before]
-        if not new:
-            self.report({"ERROR"}, "ウィンドウを開けませんでした")
-            return {"CANCELLED"}
-        window = new[-1]
-        if window.scene != scene:  # シーケンサーが映しているシーンのキャラクター
-            window.scene = scene
-        area = max(window.screen.areas, key=lambda a: a.width * a.height)
-        area.type = "PROPERTIES"
-        area.spaces.active.context = "SCENE"
-        return {"FINISHED"}
-
-
 class TACHIE_OT_character_add(bpy.types.Operator):
     """立ち絵の素材フォルダ（動く立ち絵・シンプル立ち絵）か PSD ファイルを選んでキャラクターを追加する"""
 
@@ -3531,6 +3501,11 @@ class TACHIE_OT_pick_part(bpy.types.Operator):
         return apply_part(self, context, "" if self.part == NONE else self.part)
 
 
+def item_strip(strip) -> bool:
+    """アドオンのアイテム（セリフ・立ち絵・表情ストリップ）か。"""
+    return bool(strip.get("tachie_id") or strip.get("tachie_still") or strip.get("tachie_face"))
+
+
 def item_character(strip) -> str:
     """アイテム（立ち絵・セリフ・表情ストリップ）のキャラ名。"""
     return strip.get("tachie_still") or strip.get("tachie_face") or strip["tachie_character"]
@@ -3560,7 +3535,7 @@ def _set_item_part(self, context, value: str):
     残すので、パネルには「名前*」と出る。"""
     sed = seq_scene(context).sequence_editor
     strip = active_selected(context)
-    if strip is None or not (strip.get("tachie_still") or strip.get("tachie_face") or strip.get("tachie_id")):
+    if strip is None or not item_strip(strip):
         return {"CANCELLED"}
     try:
         ch = find_character(seq_scene(context).tachie, item_character(strip))
@@ -3722,7 +3697,7 @@ class TACHIE_OT_clear_item_parts(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         strip = active_selected(context)
-        return bool(strip and (strip.get("tachie_still") or strip.get("tachie_face") or strip.get("tachie_id")))
+        return strip is not None and item_strip(strip)
 
     def execute(self, context):
         sed = seq_scene(context).sequence_editor
@@ -4609,7 +4584,6 @@ _classes = (
     TACHIE_OT_expression_remove,
     TACHIE_OT_regenerate,
     TACHIE_OT_regenerate_all,
-    TACHIE_OT_open_character_settings,
     TACHIE_OT_character_add,
     TACHIE_OT_character_add_voice,
     TACHIE_OT_change_material,

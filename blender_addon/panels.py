@@ -2,8 +2,8 @@ import bpy
 
 from .tachie_studio.subtitle import breaks
 
-from .operators import (STILL_SETTINGS, active_selected, line_layout_of, line_sound, line_strips, line_subtitle,
-                        load_material, output_dir, prefs, selected_targets, seq_scene)
+from .operators import (STILL_SETTINGS, active_selected, item_strip, line_layout_of, line_sound, line_strips,
+                        line_subtitle, load_material, output_dir, prefs, selected_targets, seq_scene)
 from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
 
 
@@ -13,26 +13,12 @@ class _Panel:
     bl_category = "立ち絵"
 
 
-class _CharPanel:
-    """キャラクター全体の設定のパネル。選択中のストリップの設定（サイドバー）と取り違えないように、プロパティエディターの
-    シーンタブに置く（「キャラクター設定を開く」`tachie.open_character_settings` で別ウィンドウに開く）。"""
+class _StripPanel:
+    """選んでいるストリップの設定のパネル。Blender のストリップの設定（音量・変形・テキストなど）と同じく、プロパティ
+    エディターの「ストリップ」タブに置く（サイドバーは作る道具とキャラクター設定）。"""
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
-    bl_context = "scene"
-
-
-def draw_character_list(layout, s) -> None:
-    """キャラクターの一覧（追加・削除・メニュー・並べ替え）。サイドバーとキャラクター設定の両方に出す。"""
-    row = layout.row()
-    row.template_list("TACHIE_UL_characters", "", s, "characters", s, "active_character", rows=3)
-    col = row.column(align=True)
-    col.operator("tachie.character_add", text="", icon="ADD")
-    col.operator("tachie.character_remove", text="", icon="REMOVE")
-    col.separator()
-    col.menu("TACHIE_MT_characters", text="", icon="DOWNARROW_HLT")
-    col.separator()
-    col.operator("tachie.character_move", text="", icon="TRIA_UP").direction = "UP"
-    col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
+    bl_context = "strip"
 
 
 class TACHIE_UL_characters(bpy.types.UIList):
@@ -70,8 +56,16 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         layout = self.layout
         s = seq_scene(context).tachie
 
-        draw_character_list(layout, s)
-        layout.operator("tachie.open_character_settings", icon="PREFERENCES")
+        row = layout.row()
+        row.template_list("TACHIE_UL_characters", "", s, "characters", s, "active_character", rows=3)
+        col = row.column(align=True)
+        col.operator("tachie.character_add", text="", icon="ADD")
+        col.operator("tachie.character_remove", text="", icon="REMOVE")
+        col.separator()
+        col.menu("TACHIE_MT_characters", text="", icon="DOWNARROW_HLT")
+        col.separator()
+        col.operator("tachie.character_move", text="", icon="TRIA_UP").direction = "UP"
+        col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
 
         ch = s.character()
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
@@ -96,15 +90,13 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
 
 
 class TACHIE_PT_line(_Panel, bpy.types.Panel):
-    bl_label = "選択中のセリフ"
+    """選んでいるストリップをまとめて扱う道具（1 本の設定はプロパティの「ストリップ」タブ、`TACHIE_PT_strip`）。"""
+    bl_label = "選んだストリップ"
     bl_parent_id = "TACHIE_PT_main"
 
     def draw(self, context):
         layout = self.layout
         sed = seq_scene(context).sequence_editor
-        # Blender は選択を外してもアクティブなストリップ（最後にクリックしたもの）を覚えているので、選ばれているときだけ
-        # 編集の欄を出す（選択を外したのに前のセリフの値が出たままにならないように）
-        strip = active_selected(context)
         ids, stills, faces = selected_targets(sed)
         n = len(ids) + len(stills) + len(faces)
         if n > 1:
@@ -117,8 +109,37 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             row.operator("tachie.assign_faces", text=f"AI で表情を割り当てる（{len(ids)} 行）", icon="SHADERFX")
             row.prop(preferences, "faceassign_target", text="")
             layout.operator("tachie.line_faces", text=f"表情を表情ストリップにする（{len(ids)} 行）", icon="SEQ_STRIP_DUPLICATE")
-        if n > 1 or ids:
-            layout.separator()
+        active = active_selected(context)
+        if active is not None and item_strip(active):
+            layout.label(text="このストリップの設定はプロパティの「ストリップ」タブ", icon="PROPERTIES")
+        elif n:  # 選んでいるがアクティブなストリップがアイテムでない（ストリップタブには出ない）
+            layout.label(text="1 本をクリックすると、プロパティの「ストリップ」タブで編集できます", icon="INFO")
+        else:
+            layout.label(text="セリフ・立ち絵・表情ストリップを選ぶと、プロパティの「ストリップ」タブで編集できます",
+                         icon="INFO")
+        layout.separator()
+        layout.prop(seq_scene(context).tachie, "ripple")
+        row = layout.row(align=True)
+        row.operator("tachie.regenerate_all", text="全セリフを再生成").character_only = False
+        row.operator("tachie.regenerate_all", text="このキャラだけ").character_only = True
+
+
+class TACHIE_PT_strip(_StripPanel, bpy.types.Panel):
+    """選んでいるセリフ・立ち絵・表情ストリップの設定（テキスト・表情・パーツ・声・発音・抑揚・字幕・立ち絵の位置など）。"""
+    bl_label = "立ち絵アドオン"
+    # 見出しの無いパネルは、ストリップタブの Blender のパネル（変形・音量など）より上、ストリップ名のすぐ下に並ぶ
+    bl_options = {"HIDE_HEADER"}
+
+    @classmethod
+    def poll(cls, context):
+        # Blender は選択を外してもアクティブなストリップを覚えているので、選ばれているときだけ（前の値を出したままにしない）
+        strip = active_selected(context)
+        return strip is not None and item_strip(strip)
+
+    def draw(self, context):
+        layout = self.layout
+        sed = seq_scene(context).sequence_editor
+        strip = active_selected(context)
         if strip is not None and strip.get("tachie_face"):
             layout.label(text=f"{strip['tachie_face']}の表情ストリップ", icon="SHADERFX")
             draw_item_expression(layout, context, strip, "FACE")
@@ -143,9 +164,8 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
                 layout.label(text="跳ねながら登場退場（YMM4 の映像エフェクト）", icon="ANIM")
             draw_pose(layout, strip)
             layout.operator("tachie.remake_still", icon="FILE_REFRESH")
-        elif strip is None or not strip.get("tachie_id"):
-            layout.label(text="セリフのストリップを選ぶと編集できます")
         else:
+            layout.label(text=f"{strip.get('tachie_character', '?')}のセリフ", icon="SPEAKER")
             sound = line_sound(line_strips(sed, strip["tachie_id"]))
             row = layout.row(align=True)
             row.label(text="キャラクター")
@@ -201,13 +221,10 @@ class TACHIE_PT_line(_Panel, bpy.types.Panel):
             else:
                 col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
             draw_text_pose(layout, line_subtitle(strips))
-            row = layout.row()
+            row = layout.row(align=True)
             row.scale_y = 1.2
             row.operator("tachie.regenerate", icon="FILE_REFRESH")
-        layout.prop(seq_scene(context).tachie, "ripple")
-        row = layout.row(align=True)
-        row.operator("tachie.regenerate_all", text="全セリフを再生成").character_only = False
-        row.operator("tachie.regenerate_all", text="このキャラだけ").character_only = True
+            row.prop(seq_scene(context).tachie, "ripple", text="後ろをずらす")
 
 
 class TACHIE_PT_dictionary(_Panel, bpy.types.Panel):
@@ -239,28 +256,17 @@ class TACHIE_PT_dictionary(_Panel, bpy.types.Panel):
         layout.label(text="置いてあるセリフには再生成で反映", icon="INFO")
 
 
-class TACHIE_PT_character(_CharPanel, bpy.types.Panel):
-    bl_label = "立ち絵のキャラクター設定"
-    # 見出しの無いパネルはシーンタブの Blender のパネル（シーン・単位など）より上に並ぶ（bl_order では上に出なかった）
-    bl_options = {"HIDE_HEADER"}
+class TACHIE_PT_character(_Panel, bpy.types.Panel):
+    bl_label = "キャラクター設定"
+    bl_parent_id = "TACHIE_PT_main"
 
     @classmethod
     def poll(cls, context):
-        # キャラクターのいるシーケンサーのシーンのタブだけ（アドオンを使っていない .blend・別のシーンのタブには出さない。
-        # 最初のキャラクターはサイドバーの一覧から追加する）
-        scene = seq_scene(context)
-        return context.scene == scene and len(scene.tachie.characters) > 0
+        return seq_scene(context).tachie.character() is not None
 
     def draw(self, context):
         layout = self.layout
-        s = seq_scene(context).tachie
-        layout.label(text="立ち絵のキャラクター設定", icon="USER")
-        draw_character_list(layout, s)
-        ch = s.character()
-        if ch is None:
-            layout.label(text="キャラクターを追加してください", icon="INFO")
-            return
-        layout.label(text=f"{ch.name}の設定", icon="USER")
+        ch = seq_scene(context).tachie.character()
         row = layout.row(align=True)
         row.prop(ch, "folder")
         row.operator("tachie.change_material", text="", icon="FILE_REFRESH")
@@ -277,14 +283,6 @@ class TACHIE_PT_character(_CharPanel, bpy.types.Panel):
             layout.prop(ch, "mouth")
 
 
-class _WithCharacter:
-    """キャラクターを選んでいるときだけ出すパネル。"""
-
-    @classmethod
-    def poll(cls, context):
-        return seq_scene(context).tachie.character() is not None
-
-
 class _WithTachie:
     """立ち絵のあるキャラクター（素材フォルダがある）のときだけ出すパネル。"""
 
@@ -294,7 +292,7 @@ class _WithTachie:
         return ch is not None and bool(ch.folder)
 
 
-class TACHIE_PT_motion(_WithTachie, _CharPanel, bpy.types.Panel):
+class TACHIE_PT_motion(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "動き"
     bl_parent_id = "TACHIE_PT_character"
     bl_options = {"DEFAULT_CLOSED"}
@@ -339,7 +337,7 @@ def draw_text_pose(layout, strip) -> None:
             col.prop(strip, f'["{key}"]', text=label)
 
 
-class TACHIE_PT_voice(_WithCharacter, _CharPanel, bpy.types.Panel):
+class TACHIE_PT_voice(_Panel, bpy.types.Panel):
     bl_label = "声"
     bl_parent_id = "TACHIE_PT_character"
     bl_options = {"DEFAULT_CLOSED"}
@@ -535,7 +533,7 @@ def draw_part_row(col, material, category: str, label: str, value: str, text: st
     return draw_swatch(row.row(align=True), icon).operator("tachie.pick_part", text=text, depress=depress)
 
 
-class TACHIE_PT_expression(_WithTachie, _CharPanel, bpy.types.Panel):
+class TACHIE_PT_expression(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "表情"
     bl_parent_id = "TACHIE_PT_character"
 
@@ -558,7 +556,7 @@ class TACHIE_PT_expression(_WithTachie, _CharPanel, bpy.types.Panel):
         layout.label(text="変えたら「全セリフを再生成」で反映", icon="INFO")
 
 
-class TACHIE_PT_presets(_WithTachie, _CharPanel, bpy.types.Panel):
+class TACHIE_PT_presets(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "表情プリセット"
     bl_parent_id = "TACHIE_PT_character"
     bl_options = {"DEFAULT_CLOSED"}
@@ -661,7 +659,7 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
             draw_ymmp_pending(layout, s)
 
 
-class TACHIE_PT_placement(_WithTachie, _CharPanel, bpy.types.Panel):
+class TACHIE_PT_placement(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "配置"
     bl_parent_id = "TACHIE_PT_character"
     bl_options = {"DEFAULT_CLOSED"}
@@ -678,7 +676,7 @@ class TACHIE_PT_placement(_WithTachie, _CharPanel, bpy.types.Panel):
         draw_char_lanes(self.layout, seq_scene(context), ch.name)
 
 
-class TACHIE_PT_subtitle(_WithCharacter, _CharPanel, bpy.types.Panel):
+class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
     bl_label = "字幕"
     bl_parent_id = "TACHIE_PT_character"
 
@@ -885,6 +883,7 @@ _classes = (
     TACHIE_MT_characters,
     TACHIE_PT_main,
     TACHIE_PT_line,
+    TACHIE_PT_strip,
     TACHIE_PT_script,
     TACHIE_PT_dictionary,
     TACHIE_PT_character,

@@ -536,7 +536,7 @@ _add_part_props(TachieCharacter, "空なら素材の既定のパーツ", "空な
 for _prop, (_key, _label, _min, _max, _desc) in VOICE_PROPS.items():
     TachieCharacter.__annotations__[_prop] = FloatProperty(
         name=_label, default=VOICE_DEFAULTS[_key], min=_min, max=_max, step=1, precision=2,
-        description=_desc + "。新しく置くセリフの既定値（置いたセリフは選択中のセリフで変える）")
+        description=_desc + "。新しく置くセリフの既定値（置いたセリフはプロパティの「ストリップ」タブで変える）")
 for _prop, (_label, _min, _max, _default, _desc) in AUDIO_PROPS.items():
     TachieCharacter.__annotations__[f"audio_{_prop}"] = FloatProperty(
         name=_label, default=_default, min=_min, max=_max, step=1, precision=2,
