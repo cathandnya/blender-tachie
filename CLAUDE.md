@@ -80,6 +80,13 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
   シーケンサーのサイドバー「立ち絵」タブ。キャラクター設定は `Scene.tachie.characters`（.blend に保存、TOML で読み書き）。
+  キャラクター全体の設定のパネル（`TACHIE_PT_character` と子の 声・動き・表情・表情プリセット・配置・字幕）は、選択中の
+  ストリップの設定と取り違えないようにサイドバーから分け、プロパティエディターのシーンタブに置く（`panels._CharPanel`）。
+  サイドバーの「キャラクター設定を開く」（`tachie.open_character_settings`）が `wm.window_new` で別ウィンドウを開いて
+  プロパティのシーンタブにする。`TACHIE_PT_character` は `HIDE_HEADER`（見出しの無いパネルは Blender のシーンのパネルより上に
+  並ぶ。`bl_order` では上に出なかった）で、キャラクターのいるシーケンサーのシーンのタブだけに出す（poll。アドオンを使っていない
+  .blend のシーンタブを占めないように）。キャラクターの一覧はサイドバーと両方に出す（`draw_character_list`）。
+  そこから再生成したセリフも、`operators.connect` がそのシーンを映すシーケンサーの画面（`_sequencer_area`）でつなぐ。
   セリフ（YMM4 と同じく音声と字幕だけ）を追加すると再生位置に音声・字幕（とキャラ名）を置き、カスタムプロパティ
   `tachie_id` `tachie_text` `tachie_character` `tachie_speaker` `tachie_folder` `tachie_mouth` `tachie_expression` を付ける。
   セリフは wav と動き（`lines/<id>.json`、`render.LineMotion`: 母音・音量・まばたきの seed）だけ書く（`render_line(cache=None)`）。

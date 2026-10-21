@@ -1625,12 +1625,32 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
 
 
 def connect(context, strips) -> None:
-    """3 本をまとめて動かせるようにつなぐ（シーケンサーの画面から呼んだときだけ）。"""
-    if context.area is None or context.area.type != "SEQUENCE_EDITOR":
+    """3 本をまとめて動かせるようにつなぐ（画面から呼んだときだけ。キャラクター設定のウィンドウ（プロパティ）から
+    呼んだときは、そのシーンを映しているシーケンサーの画面で呼ぶ）。"""
+    if context.area is None:
         return
+    window, area = context.window, context.area
+    if area.type != "SEQUENCE_EDITOR":
+        window, area = _sequencer_area(context, seq_scene(context))
+        if area is None:
+            return
+    region = next((r for r in area.regions if r.type == "WINDOW"), None)
     select_only(seq_scene(context).sequence_editor, strips, active=False)
-    if bpy.ops.sequencer.connect.poll():
-        bpy.ops.sequencer.connect()
+    with context.temp_override(window=window, area=area, region=region):
+        if bpy.ops.sequencer.connect.poll():
+            bpy.ops.sequencer.connect()
+
+
+def _sequencer_area(context, scene):
+    """scene を映しているシーケンサーの画面（ウィンドウ, エリア）。無ければ (None, None)。"""
+    for window in context.window_manager.windows:
+        shown = getattr(window.workspace, "sequencer_scene", None) or window.scene
+        if window.screen is None or shown != scene:
+            continue
+        for area in window.screen.areas:
+            if area.type == "SEQUENCE_EDITOR":
+                return window, area
+    return None, None
 
 
 def select_only(sed, strips, active: bool = True) -> None:
@@ -3001,6 +3021,36 @@ class TACHIE_OT_regenerate_all(bpy.types.Operator):
             if count or stills:
                 refresh_faces(context)
         self.report({"INFO"}, f"{count} 件のセリフ" + (f"と {len(stills)} 本の立ち絵" if stills else "") + "を作り直しました")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_open_character_settings(bpy.types.Operator):
+    """キャラクター全体の設定（素材・声・表情・字幕など）を別のウィンドウで開く（プロパティのシーンタブ。
+    選択中のセリフ・立ち絵の設定と取り違えないように、サイドバーとは分けている）"""
+
+    bl_idname = "tachie.open_character_settings"
+    bl_label = "キャラクター設定を開く"
+
+    @classmethod
+    def poll(cls, context):
+        # キャラクターがいなければ開いても何も出ない（最初のキャラクターはサイドバーの一覧から追加する）
+        return context.window is not None and not bpy.app.background and len(seq_scene(context).tachie.characters) > 0
+
+    def execute(self, context):
+        scene = seq_scene(context)
+        wm = context.window_manager
+        before = {w.as_pointer() for w in wm.windows}
+        bpy.ops.wm.window_new()
+        new = [w for w in wm.windows if w.as_pointer() not in before]
+        if not new:
+            self.report({"ERROR"}, "ウィンドウを開けませんでした")
+            return {"CANCELLED"}
+        window = new[-1]
+        if window.scene != scene:  # シーケンサーが映しているシーンのキャラクター
+            window.scene = scene
+        area = max(window.screen.areas, key=lambda a: a.width * a.height)
+        area.type = "PROPERTIES"
+        area.spaces.active.context = "SCENE"
         return {"FINISHED"}
 
 
@@ -4559,6 +4609,7 @@ _classes = (
     TACHIE_OT_expression_remove,
     TACHIE_OT_regenerate,
     TACHIE_OT_regenerate_all,
+    TACHIE_OT_open_character_settings,
     TACHIE_OT_character_add,
     TACHIE_OT_character_add_voice,
     TACHIE_OT_change_material,
