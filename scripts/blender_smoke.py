@@ -969,6 +969,28 @@ msub.location = (0.5, metan.subtitle_y + 0.12)
 msub["tachie_placed_loc"] = placed
 assert motion_mod.sync_text_offsets(scene) == 1 and abs(msub["tachie_sub_y"] - 0.12) < 1e-5
 ops.refresh_motion_now(scene)
+# セリフごとの字幕の文字の大きさ・折り返し幅（px。0 はキャラの設定）。キャラ名の高さも行数に合わせる
+assert msub.text.count("\n") == 0 and abs(msub.font_size - metan.font_size) < 1e-6
+name_y = mname.location[1]
+msub["tachie_sub_width"] = 300.0
+ops._apply_faces_later()
+assert msub.text.count("\n") >= 2 and mname["tachie_sub_width"] == 300.0 and mname.location[1] > name_y
+msub["tachie_sub_size"] = 30.0
+ops._apply_faces_later()
+assert abs(msub.font_size - 30.0) < 1e-6 and mname["tachie_sub_size"] == 30.0
+activate(role(msts, SOUND))
+run(bpy.ops.tachie.regenerate)  # 再生成でも残る
+msts = ops.line_strips(sed, sed.active_strip["tachie_id"])
+msub, mname = role(msts, SUB), role(msts, NAME)
+assert ops.text_style(msub) == (30.0, 300.0) and abs(msub.font_size - 30.0) < 1e-6
+msub["tachie_sub_size"], msub["tachie_sub_width"] = 0.0, 0.0
+ops._apply_faces_later()
+assert msub.text.count("\n") == 0 and abs(msub.font_size - metan.font_size) < 1e-6
+# キャラの折り返し幅（0 は画面の幅の 80%）
+metan.subtitle_width = 300.0
+assert msub.text.count("\n") >= 2
+metan.subtitle_width = 0.0
+assert msub.text.count("\n") == 0
 cue_texts = [c.text for c in ops.subtitle_cues(scene)]
 assert any("同時に。" in t for t in cue_texts) and any("同時に喋りますわね" in t for t in cue_texts)
 assert any(a <= t0 and b >= role(msts, SOUND).right_handle for a, b in ducking.voice_spans(sed, 0))

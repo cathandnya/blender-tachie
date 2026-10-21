@@ -293,6 +293,19 @@ def load_font(path: str):
     return bpy.data.fonts.load(path, check_existing=True)
 
 
+def text_style(strip) -> tuple[float, float]:
+    """セリフごとの字幕の文字の大きさと折り返し幅（tachie_sub_size / tachie_sub_width、px。0 はキャラの設定）。"""
+    return float(strip.get("tachie_sub_size", 0.0) or 0.0), float(strip.get("tachie_sub_width", 0.0) or 0.0)
+
+
+def subtitle_metrics(strip, ch) -> tuple[float, float]:
+    """字幕の (文字の大きさ, 1 行の全角文字数の目安)。セリフごとの値 > キャラの設定。折り返し幅が 0 なら画面の幅の 80%。"""
+    size, width = text_style(strip) if strip is not None else (0.0, 0.0)
+    size = size or ch.font_size
+    width = width or ch.subtitle_width
+    return size, width / size if width else chars_per_line(ch.id_data.render.resolution_x, size)
+
+
 def text_offset(strip) -> tuple[float, float]:
     """セリフごとに字幕（とキャラ名）をずらす量（tachie_sub_x / tachie_sub_y、画面に対する割合）。"""
     return float(strip.get("tachie_sub_x", 0.0)), float(strip.get("tachie_sub_y", 0.0))
@@ -302,13 +315,15 @@ def text_offset(strip) -> tuple[float, float]:
 LINE_PITCH = 1.16
 
 
-def name_height(ch, text: str) -> float:
-    """キャラ名を置く高さ（字幕の上。字幕の行数から見積もる）。"""
+def name_height(ch, text: str, strip=None) -> float:
+    """キャラ名を置く高さ（字幕の上。字幕の行数から見積もる）。`strip` はキャラ名のストリップ（字幕のセリフごとの
+    文字の大きさ・折り返し幅を写してある）。"""
     render = ch.id_data.render
-    lines = wrap(breaks(text), chars_per_line(render.resolution_x, ch.font_size)).count("\n") + 1
+    size, chars = subtitle_metrics(strip, ch)
+    lines = wrap(breaks(text), chars).count("\n") + 1
     margin = ch.box_margin if ch.subtitle_box else 0.0
     # 1 行目の高さ + 2 行目からの行の間隔
-    text_height = ch.font_size * (1.25 + (lines - 1) * LINE_PITCH * ch.line_spacing)
+    text_height = size * (1.25 + (lines - 1) * LINE_PITCH * ch.line_spacing)
     return ch.subtitle_y + (text_height + ch.font_size * 0.6 * 0.3) / render.resolution_y + margin * 2
 
 
@@ -319,7 +334,7 @@ def place_text(strip, ch, text: str) -> None:
     """
     dx, dy = text_offset(strip)
     if strip.get("tachie_role") == "name":
-        strip.location = (0.5 + dx, min(0.98, name_height(ch, text) + dy))
+        strip.location = (0.5 + dx, min(0.98, name_height(ch, text, strip) + dy))
     else:
         strip.location = (0.5 + dx, ch.subtitle_y + dy)
     strip["tachie_placed_loc"] = list(strip.location)
@@ -327,8 +342,7 @@ def place_text(strip, ch, text: str) -> None:
 
 def apply_subtitle(strip, ch, text: str) -> None:
     """字幕ストリップにキャラクターの字幕スタイルを設定する（改行も入れ直す）。"""
-    strip.text = wrap(breaks(text), chars_per_line(ch.id_data.render.resolution_x, ch.font_size))
-    strip.font_size = ch.font_size
+    apply_text_size(strip, ch, text)
     font = load_font(ch.font_path)
     if font is not None:
         strip.font = font
@@ -343,6 +357,16 @@ def apply_subtitle(strip, ch, text: str) -> None:
     strip.box_color = ch.box_color
     strip.box_margin = ch.box_margin
     strip.box_roundness = ch.box_roundness
+
+
+def apply_text_size(strip, ch, text: str) -> None:
+    """字幕の文字の大きさと改行（セリフごとの値 > キャラの設定。変わったときだけ書く）。"""
+    size, chars = subtitle_metrics(strip, ch)
+    wrapped = wrap(breaks(text), chars)
+    if strip.text != wrapped:
+        strip.text = wrapped
+    if abs(strip.font_size - size) > 1e-6:
+        strip.font_size = size
 
 
 def apply_name(strip, ch, text: str) -> None:
@@ -498,6 +522,9 @@ class TachieCharacter(bpy.types.PropertyGroup):
                                  description="字幕（とキャラ名）が出るときにフェードする長さ（秒）。0 ならすぐ出る")
     subtitle_y: FloatProperty(name="字幕の高さ", default=0.12, min=0.0, max=1.0, subtype="FACTOR",
                               update=_update_subtitle)
+    subtitle_width: FloatProperty(name="折り返し幅", default=0.0, min=0.0, max=8000.0, subtype="PIXEL",
+                                  update=_update_subtitle,
+                                  description="字幕を折り返す幅（px、YMM4 の折り返し幅）。0 なら画面の幅の 80%")
 
     def expression(self):
         if 0 <= self.active_expression < len(self.expressions):

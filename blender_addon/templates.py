@@ -21,9 +21,9 @@ from .operators import (
     character_audio, character_voice, get_pose, place_still, item_still_pose, still_settings,
     ensure_sequencer_scene, line_accent, line_audio, line_channels, line_end, line_kana, line_layout,
     line_layout_of, line_sound, line_strips, line_subtitle, line_text, line_texts, line_voice, place_strips, prefs,
-    refresh_faces, render_clip, scene_fps, seq_scene, set_text_offset,
+    refresh_faces, render_clip, scene_fps, seq_scene, set_line_text_pose,
 )
-from .properties import place_text, text_offset
+from .properties import text_offset, text_style
 from .tachie_studio.templates import (
     dumps, end_frame, load_ymm4_templates, loads, media_from_dict, media_to_dict, normalize,
 )
@@ -172,6 +172,7 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
                 "expression": group[0].get("tachie_expression", ""), "look": strip_parts(sound, ch),
                 "layout": line_layout_of(group),
                 "subtitle_offset": list(text_offset(subtitle)) if subtitle is not None else None,
+                "subtitle_style": list(text_style(subtitle)) if subtitle is not None else None,
                 "subtitle_hidden": any(t.mute for t in line_texts(group)), "face_parts": None})
         elif s.get("tachie_face"):
             face_ch = next((c for c in settings.characters if c.name == s["tachie_face"]), None)
@@ -333,10 +334,9 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
         sound = strips[0]
         sound.volume = audio.get("volume", sound.volume)
         sound.pan = max(-1.0, min(1.0, audio.get("pan", sound.pan)))
+        if item.get("subtitle_offset") or item.get("subtitle_style"):  # 位置・文字の大きさ・折り返し幅
+            set_line_text_pose(strips, ch, item["text"], item.get("subtitle_offset"), item.get("subtitle_style"))
         for t in line_texts(strips):
-            if item.get("subtitle_offset"):
-                set_text_offset(t, tuple(item["subtitle_offset"]))
-                place_text(t, ch, item["text"])
             t.mute = bool(item.get("subtitle_hidden"))
         placed["line"] += 1
     # 表情ストリップ

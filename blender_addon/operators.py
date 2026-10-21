@@ -16,7 +16,7 @@ from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import channels as lanes
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, clear_text_input, place_text, still_flip, system_fonts, text_offset
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, apply_text_size, clear_text_input, place_text, still_flip, system_fonts, text_offset, text_style
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, still_frames
@@ -309,7 +309,7 @@ def config_of(ch) -> CharacterConfig:
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
                   "line_spacing": ch.line_spacing, "y": ch.subtitle_y, "box": ch.subtitle_box, "box_color": list(ch.box_color),
                   "box_margin": ch.box_margin, "box_roundness": ch.box_roundness, "name": ch.show_name,
-                  "fade": ch.subtitle_fade},
+                  "fade": ch.subtitle_fade, **({"wrap_width": ch.subtitle_width} if ch.subtitle_width else {})},
         audio=character_audio(ch),
         engine="" if ch.engine == "DEFAULT" else engine_url(bpy.context, ch),
     )
@@ -408,6 +408,7 @@ def apply_config(ch, config: CharacterConfig) -> None:
                       ("subtitle_fade", "fade")):
         if key in sub:
             setattr(ch, prop, sub[key])
+    ch.subtitle_width = sub.get("wrap_width", 0.0)  # 書き出しで 0（既定値）は省くので、書いていなければ 0
 
 
 # ---- キャラクター追加の初期値 ----
@@ -651,6 +652,9 @@ def migrate_parts(scene) -> int:
     chars = {ch.name: ch for ch in scene.tachie.characters}
     count = 0
     for s in sed.strips:
+        if (s.type == "TEXT" and s.get("tachie_id") and s.get("tachie_role") != "name" and "tachie_sub_x" in s
+                and "tachie_sub_size" not in s):
+            set_text_style(s, None)  # 前の版の字幕にも、セリフごとの文字の大きさ・折り返し幅の欄を出す
         if LOOK in s:
             continue
         name = s.get("tachie_face") or s.get("tachie_still") or (s.get("tachie_character") if s.get("tachie_id") else None)
@@ -768,6 +772,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
         subtitle = sed.strips.new_effect(name=f"字幕 {title}", type="TEXT", channel=channels["subtitle"],
                                          frame_start=start, length=clip.frames)
         set_text_offset(subtitle, None)
+        set_text_style(subtitle, None)
         apply_subtitle(subtitle, ch, text)
         strips.append(subtitle)
         if ch.show_name:  # 字幕の上のキャラ名（字幕と同じ長さ）
@@ -1012,15 +1017,14 @@ def regenerate(context, clip_id: str, text: str | None = None, preset: str | Non
 
     old_subtitle = line_subtitle(old)
     offset = text_offset(old_subtitle) if old_subtitle is not None else None
+    style = text_style(old_subtitle) if old_subtitle is not None else None
     for s in old:
         sed.strips.remove(s)
     if settings.ripple and shift:
         shift_after(sed, old_end, shift)
     strips = place_strips(context, ch, clip, lines_dir, text, start, voice, accent, audio, channels, layout, parts)
     if offset is not None:
-        for t in line_texts(strips):
-            set_text_offset(t, offset)
-            place_text(t, ch, text)
+        set_line_text_pose(strips, ch, text, offset, style)  # 位置・文字の大きさ・折り返し幅も引き継ぐ
     return strips
 
 
@@ -1067,6 +1071,34 @@ TEXT_POSE_PROPS = {
     "tachie_sub_x": ("字幕の横の位置", "字幕を左右にずらす量（画面の幅に対する割合）"),
     "tachie_sub_y": ("字幕の縦の位置", "字幕を上下にずらす量（画面の高さに対する割合）"),
 }
+
+
+# セリフごとの字幕の文字の大きさと折り返し幅（px。0 はキャラの設定。YMM4 のボイスごとの字幕の サイズ・折り返し幅）。
+# 字幕ストリップで編集し、自動の反映でキャラ名にも写す
+TEXT_STYLE_PROPS = {
+    "tachie_sub_size": ("字幕の文字の大きさ", 0.0, 400.0, "このセリフの字幕の文字の大きさ（px）。0 ならキャラの設定"),
+    "tachie_sub_width": ("字幕の折り返し幅", 0.0, 8000.0, "このセリフの字幕を折り返す幅（px）。0 ならキャラの設定"),
+}
+
+
+def set_text_style(strip, style: tuple[float, float] | None) -> None:
+    for key, value in zip(TEXT_STYLE_PROPS, style or (0.0, 0.0)):
+        label, lo, hi, desc = TEXT_STYLE_PROPS[key]
+        strip[key] = float(value)
+        strip.id_properties_ui(key).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=100, precision=0,
+                                           subtype="PIXEL", description=desc)
+
+
+def set_line_text_pose(strips, ch, text: str, offset, style) -> None:
+    """セリフの字幕とキャラ名に、ずらす量と文字の大きさ・折り返し幅を持たせて置き直す（None は 0 = キャラの設定）。"""
+    for t in line_texts(strips):
+        set_text_offset(t, offset)
+        set_text_style(t, style)
+        if t.get("tachie_role") == "name":
+            place_text(t, ch, text)
+        else:
+            apply_text_size(t, ch, text)
+            place_text(t, ch, text)
 
 
 def line_subtitle(strips):

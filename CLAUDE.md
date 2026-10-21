@@ -74,7 +74,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   blend_alpha、プッシュは残像と新しい場面の offset にキーを打つ（角度 0 で左へ）。残像は画像だけで、YMM4 のように画面全体
   （黒い余白・下のテキストなど）ではない。
   ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
-  （キャラの字幕の位置との差、画面に対する割合）。文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
+  （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
+  `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
@@ -166,7 +167,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   同時に喋るセリフ（#17）: `line_channels` がそのキャラのレーンを返す（同じキャラのセリフも重ねてよい。埋まっていればあふれ、
   キャラ名は字幕より上）。セリフのストリップはチャンネルではなく `tachie_id` と種類・`tachie_role` で探す。
   字幕をセリフごとにずらす量は字幕ストリップの `tachie_sub_x` / `tachie_sub_y`（`properties.place_text`、再生成で引き継ぐ）。
-  自動反映（`motion_signature` に含める）で `refresh_motion` がキャラ名にも写して location を当て直す。
+  字幕の文字の大きさと折り返し幅もセリフごとに `tachie_sub_size` / `tachie_sub_width`（px、0 はキャラの設定。
+  `TEXT_STYLE_PROPS`、`properties.subtitle_metrics` / `apply_text_size`）。キャラの折り返し幅は `subtitle_width`（px、
+  0 は画面の幅の 80%、TOML の subtitle の `wrap_width`。YMM4 の折り返し幅）。1 行の文字数は 折り返し幅 ÷ 文字の大きさ。
+  自動反映（`motion_signature` に含める）で `refresh_motion` が字幕の改行を入れ直し、ずらす量と文字の大きさ・折り返し幅を
+  キャラ名にも写して location を当て直す。再生成・YMM4 の読み込み・テンプレートは `operators.set_line_text_pose` で両方に持たせる。
   `subtitle_clashes` で時間も位置も重なる字幕を知らせる。
   プレビューで動かした字幕・キャラ名（#32）: `place_text` が置いた位置をストリップの `tachie_placed_loc` に覚え、
   そこから動いたもの（`motion.moved_texts`）を自動反映が署名を比べる前に `motion.sync_text_offsets` でずらす量へ

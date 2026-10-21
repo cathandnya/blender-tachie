@@ -23,11 +23,11 @@ from .operators import (
     ERRORS, add_character, add_voice_character, new_face,
     character_voice, client, clip_job, connect, ensure_sequencer_scene, line_channels, line_layout,
     line_texts, load_material, place_still, place_strips, refresh_faces, render_clip, scene_fps, seq_scene,
-    set_text_offset, subtitle_clashes, item_still_pose,
+    set_line_text_pose, subtitle_clashes, item_still_pose,
 )
 from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
-from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, place_text, system_fonts
+from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, system_fonts
 from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
 from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
 from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary,
@@ -652,9 +652,9 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                     # ボイスごとの字幕の位置（YMM4 の X / Y は画面中央からの下向きのピクセル、字幕の下端）を、
                     # キャラの字幕の位置からずらす量（画面に対する割合）にする
                     offset = (v.sub_x / project.width, 0.5 - v.sub_y / project.height - job.ch.subtitle_y)
-                    for s in line_texts(strips):
-                        set_text_offset(s, offset)
-                        place_text(s, job.ch, v.text)
+                    # 文字の大きさはキャラと違うときだけセリフごとの値にする
+                    size = v.sub_size if v.sub_size and abs(v.sub_size - job.ch.font_size) > 1e-3 else 0.0
+                    set_line_text_pose(strips, job.ch, v.text, offset, (size, 0.0))
                 clashes = subtitle_clashes(sed, strips)
                 if clashes:
                     problems.append(f"{where}: 字幕が{'・'.join(clashes)}の字幕と重なっています")

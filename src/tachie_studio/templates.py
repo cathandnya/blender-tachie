@@ -6,7 +6,8 @@
 - `{"kind": "media", "media": {...}}` — 画像・動画・音声・テキスト・カラー（`ymmp.Media` の値。座標は YMM4 と同じく
   画面中央からのピクセルで下が正、Zoom は %）
 - `{"kind": "line", "character", "text", "kana", "accent", "accent_kana", "style", "voice", "audio", "expression",
-  "look", "layout", "subtitle_offset", "subtitle_hidden", "face_parts"}` — セリフ（置くときに合成し直す）
+  "look", "layout", "subtitle_offset", "subtitle_style", "subtitle_hidden", "face_parts"}` — セリフ（置くときに合成し直す。
+  `subtitle_style` は字幕の [文字の大きさ, 折り返し幅]（px、0 はキャラの設定））
 - `{"kind": "face", "character", "expression", "look", "parts"}` — 表情ストリップ
 - `{"kind": "still", "character", "expression", "look", "parts", "pose", "flip", "jump"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
   `{"tachie_pos_x", "tachie_pos_y", "tachie_scale"}`。YMM4 の立ち絵アイテムは代わりに `x` / `y` / `zoom` を持ち、置くときに

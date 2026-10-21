@@ -15,7 +15,7 @@ from pathlib import Path
 
 import bpy
 
-from .properties import apply_placement, name_height, place_text, text_offset
+from .properties import apply_placement, apply_text_size, name_height, place_text, text_offset, text_style
 from .tachie_studio.ymmp import jump_keys
 
 # 声が出ているとみなす音量（lipsync.mouth の無音のしきい値と同じ）
@@ -284,15 +284,18 @@ def refresh_motion(scene, lines_dir: Path) -> int:
         s.blend_alpha = base_opacity(s)
     # セリフごとの字幕の位置（字幕ストリップでずらした量をキャラ名にも写す）。tachie_sub_x を持たない古いセリフの
     # 字幕は触らない（手で動かした location を、動きの作り直しのたびに既定の位置へ戻さないため）
-    offsets = {s["tachie_id"]: text_offset(s) for s in sed.strips
+    offsets = {s["tachie_id"]: (text_offset(s), text_style(s)) for s in sed.strips
                if s.type == "TEXT" and s.get("tachie_id") and s.get("tachie_role") != "name" and "tachie_sub_x" in s}
     for t in sed.strips:
         ch = characters.get(t.get("tachie_character"))
         if t.type != "TEXT" or ch is None or t.get("tachie_id") not in offsets:
             continue
+        text = t.get("tachie_placed_text", t.get("tachie_text", ""))
         if t.get("tachie_role") == "name":
-            t["tachie_sub_x"], t["tachie_sub_y"] = offsets[t["tachie_id"]]
-        place_text(t, ch, t.get("tachie_placed_text", t.get("tachie_text", "")))
+            (t["tachie_sub_x"], t["tachie_sub_y"]), (t["tachie_sub_size"], t["tachie_sub_width"]) = offsets[t["tachie_id"]]
+        else:
+            apply_text_size(t, ch, text)  # セリフごとの文字の大きさ・折り返し幅
+        place_text(t, ch, text)
     count = 0
     for t in texts:  # 字幕（とキャラ名）のフェードイン
         t.blend_alpha = 1.0
@@ -391,7 +394,7 @@ def sync_text_offsets(scene) -> int:
             continue
         ch = characters[s["tachie_character"]]
         if s.get("tachie_role") == "name":
-            base = name_height(ch, s.get("tachie_placed_text", s.get("tachie_text", "")))
+            base = name_height(ch, s.get("tachie_placed_text", s.get("tachie_text", "")), s)
         else:
             base = ch.subtitle_y
         offset = (s.location[0] - 0.5, s.location[1] - base)
@@ -422,6 +425,10 @@ def motion_signature(scene) -> str:
         if s.type == "TEXT" and s.get("tachie_id"):  # 字幕のフェードは字幕の位置で決まる
             offset = () if s.get("tachie_role") == "name" else tuple(round(v, 4) for v in text_offset(s))
             active = active or offset not in ((), (0.0, 0.0))
+            if s.get("tachie_role") != "name":
+                style = tuple(round(v, 2) for v in text_style(s))
+                active = active or style != (0.0, 0.0)
+                offset += style
             items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, offset))
             continue
         if owner(s) is None:

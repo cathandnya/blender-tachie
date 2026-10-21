@@ -325,11 +325,15 @@ def test_custom_subtitle(tmp_path):
                "Style": "Border", "StyleColor": "#FF33A65E"}]
     p = load_project(write(tmp_path, data))
     v = next(v for v in p.voices if v.frame == 400)
-    assert v.subtitle == "Custom" and (v.sub_x, v.sub_y) == (-20.5, 0.0)
-    assert "字幕をボイスごとに変えた文字の設定（位置だけ写す）" not in p.unsupported
-    items[-1]["FontSize"] = anim(40.0)
+    assert v.subtitle == "Custom" and (v.sub_x, v.sub_y) == (-20.5, 0.0) and v.sub_size == 120.0  # FontSize × Zoom
+    assert "字幕をボイスごとに変えた文字の設定（位置・大きさだけ写す）" not in p.unsupported
+    items[-1]["FontSize"] = anim(40.0)  # 文字の大きさは写すので報告しない
     p = load_project(write(tmp_path, data))
-    assert p.unsupported["字幕をボイスごとに変えた文字の設定（位置だけ写す）"] == 1
+    assert next(v for v in p.voices if v.frame == 400).sub_size == 60.0
+    assert "字幕をボイスごとに変えた文字の設定（位置・大きさだけ写す）" not in p.unsupported
+    items[-1]["FontColor"] = "#FFFF0000"
+    p = load_project(write(tmp_path, data))
+    assert p.unsupported["字幕をボイスごとに変えた文字の設定（位置・大きさだけ写す）"] == 1
 
 
 def test_jump_keys():

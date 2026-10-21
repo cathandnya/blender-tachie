@@ -292,14 +292,18 @@ def draw_pose(layout, strip) -> None:
 
 
 def draw_text_pose(layout, strip) -> None:
-    """セリフごとの字幕（とキャラ名）の位置。"""
-    from .operators import TEXT_POSE_PROPS
+    """セリフごとの字幕（とキャラ名）の位置・文字の大きさ・折り返し幅（0 はキャラの設定）。"""
+    from .operators import TEXT_POSE_PROPS, TEXT_STYLE_PROPS
 
     if strip is None or "tachie_sub_x" not in strip:
         return
     col = layout.column(align=True)
     for key, (label, _) in TEXT_POSE_PROPS.items():
         col.prop(strip, f'["{key}"]', text=label)
+    if "tachie_sub_size" in strip:
+        col = layout.column(align=True)
+        for key, (label, *_) in TEXT_STYLE_PROPS.items():
+            col.prop(strip, f'["{key}"]', text=label)
 
 
 class TACHIE_PT_voice(_Panel, bpy.types.Panel):
@@ -658,6 +662,7 @@ class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
         row.operator("tachie.pick_font", text=name, icon="FILE_FONT")
         col = layout.column(align=True)
         col.prop(ch, "font_size")
+        col.prop(ch, "subtitle_width")
         col.prop(ch, "subtitle_y")
         row = layout.row(align=True)
         row.prop(ch, "text_color", text="文字")
