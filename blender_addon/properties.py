@@ -523,7 +523,7 @@ class TachieCharacter(bpy.types.PropertyGroup):
     subtitle_y: FloatProperty(name="字幕の高さ", default=0.12, min=0.0, max=1.0, subtype="FACTOR",
                               update=_update_subtitle)
     subtitle_width: FloatProperty(name="折り返し幅", default=0.0, min=0.0, max=8000.0, subtype="PIXEL",
-                                  update=_update_subtitle,
+                                  step=1000, precision=0, update=_update_subtitle,  # 矢印で 10px ずつ
                                   description="字幕を折り返す幅（px、YMM4 の折り返し幅）。0 なら画面の幅の 80%")
 
     def expression(self):

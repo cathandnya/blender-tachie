@@ -652,9 +652,11 @@ def migrate_parts(scene) -> int:
     chars = {ch.name: ch for ch in scene.tachie.characters}
     count = 0
     for s in sed.strips:
-        if (s.type == "TEXT" and s.get("tachie_id") and s.get("tachie_role") != "name" and "tachie_sub_x" in s
-                and "tachie_sub_size" not in s):
-            set_text_style(s, None)  # 前の版の字幕にも、セリフごとの文字の大きさ・折り返し幅の欄を出す
+        if s.type == "TEXT" and s.get("tachie_id") and "tachie_sub_x" in s:
+            if "tachie_sub_size" in s:
+                set_text_style_ui(s)  # 前の版で置いた欄の刻み（1px）を今の刻みにそろえる
+            elif s.get("tachie_role") != "name":
+                set_text_style(s, None)  # 前の版の字幕にも、セリフごとの文字の大きさ・折り返し幅の欄を出す
         if LOOK in s:
             continue
         name = s.get("tachie_face") or s.get("tachie_still") or (s.get("tachie_character") if s.get("tachie_id") else None)
@@ -1075,18 +1077,25 @@ TEXT_POSE_PROPS = {
 
 # セリフごとの字幕の文字の大きさと折り返し幅（px。0 はキャラの設定。YMM4 のボイスごとの字幕の サイズ・折り返し幅）。
 # 字幕ストリップで編集し、自動の反映でキャラ名にも写す
+# (表示名, 最小, 最大, 矢印の刻み（Blender の step。100 で 1px）, 説明)
 TEXT_STYLE_PROPS = {
-    "tachie_sub_size": ("字幕の文字の大きさ", 0.0, 400.0, "このセリフの字幕の文字の大きさ（px）。0 ならキャラの設定"),
-    "tachie_sub_width": ("字幕の折り返し幅", 0.0, 8000.0, "このセリフの字幕を折り返す幅（px）。0 ならキャラの設定"),
+    "tachie_sub_size": ("字幕の文字の大きさ", 0.0, 400.0, 100, "このセリフの字幕の文字の大きさ（px）。0 ならキャラの設定"),
+    "tachie_sub_width": ("字幕の折り返し幅", 0.0, 8000.0, 1000, "このセリフの字幕を折り返す幅（px）。0 ならキャラの設定"),
 }
+
+
+def set_text_style_ui(strip) -> None:
+    """字幕の文字の大きさ・折り返し幅の欄の範囲と刻み（文字の大きさは 1px、折り返し幅は 10px ずつ）。"""
+    for key, (label, lo, hi, step, desc) in TEXT_STYLE_PROPS.items():
+        if key in strip:
+            strip.id_properties_ui(key).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=step, precision=0,
+                                               subtype="PIXEL", description=desc)
 
 
 def set_text_style(strip, style: tuple[float, float] | None) -> None:
     for key, value in zip(TEXT_STYLE_PROPS, style or (0.0, 0.0)):
-        label, lo, hi, desc = TEXT_STYLE_PROPS[key]
         strip[key] = float(value)
-        strip.id_properties_ui(key).update(min=lo, max=hi, soft_min=lo, soft_max=hi, step=100, precision=0,
-                                           subtype="PIXEL", description=desc)
+    set_text_style_ui(strip)
 
 
 def set_line_text_pose(strips, ch, text: str, offset, style) -> None:
