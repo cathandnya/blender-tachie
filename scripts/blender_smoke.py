@@ -1592,6 +1592,28 @@ cfg_engine = ops.config_of(zunda)
 cfg_engine.engine = "http://127.0.0.1:10101"
 ops.apply_config(zunda, cfg_engine)
 assert zunda.engine == "AIVIS"  # 既知のエンジンの URL は名前で選ばれる
+# 声のエンジンにつながらなくても、ダイアログの入力は次に開いたときに戻す（書き直さずに済むように）
+zunda.engine, zunda.engine_url = "CUSTOM", "http://127.0.0.1:9"
+s.active_character = list(s.characters).index(zunda)
+
+
+def fails(op, **kwargs):
+    try:
+        op(**kwargs)
+        raise AssertionError(f"{op.idname()} がつながらないエンジンで成功した")
+    except RuntimeError as e:
+        assert "もう一度開くと戻ります" in str(e), e
+
+
+first_zunda = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie_character"] == "ずんだもん")
+fails(bpy.ops.tachie.add_line, text="つながらないのだ")
+assert ops._unsent.pop(("add_line", "ずんだもん")) == "つながらないのだ"
+activate(sound(first_zunda))
+fails(bpy.ops.tachie.edit_line_text, text="書き直したのだ")
+assert ops._unsent.pop(("edit_line_text", first_zunda)) == "書き直したのだ"
+activate(sound(first_zunda))
+fails(bpy.ops.tachie.edit_kana, text="カキナオシタノダ'")
+assert ops._unsent.pop(("edit_kana", first_zunda)) == "カキナオシタノダ'"
 zunda.engine = "DEFAULT"
 assert scene.frame_end == max(r for _, r, _ in lines().values()) - 1, scene.frame_end
 

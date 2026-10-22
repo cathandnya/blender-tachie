@@ -1684,6 +1684,13 @@ def input_text(text: str) -> str:
     return mark_breaks(text)
 
 
+# 合成できなかった（VOICEVOX に接続できないなど）ダイアログの入力。次に同じダイアログを開いたときに戻す
+# （ダイアログを閉じると入力は消えるので、書き直さずに済むように）。キーは (ダイアログ, セリフの id)、
+# セリフの追加は ("add_line", キャラ名)。合成できたら（別の操作で作り直したときも）捨てる
+_unsent: dict[tuple[str, str], str] = {}
+UNSENT_NOTE = "（入力は、もう一度開くと戻ります）"
+
+
 class TACHIE_OT_add_line(bpy.types.Operator):
     """選択中のキャラクターでセリフを合成し、音声と字幕を再生位置に置く（重なる立ち絵が口パクする）"""
 
@@ -1702,6 +1709,7 @@ class TACHIE_OT_add_line(bpy.types.Operator):
             return {"CANCELLED"}
         # 空のまま「追加」しても、パネルから見えないシーンの入力（前の版の残りなど）で置かないように
         clear_text_input(seq_scene(context).tachie)
+        self.text = _unsent.pop(("add_line", ch.name), "")  # 前にこのキャラで合成できなかった入力
         return context.window_manager.invoke_props_dialog(self, width=760, title=f"{ch.name}のセリフを追加",
                                                           confirm_text="追加")
 
@@ -1724,14 +1732,20 @@ class TACHIE_OT_add_line(bpy.types.Operator):
         ensure_sequencer_scene(context)
         start = seq_scene(context).frame_current
         layout = line_layout(ch)
+        strips = None
         try:
             clip, lines_dir = render_clip(context, ch, text, settings.expression, kana=kana)
             channels = line_channels(context, ch, start, clip.frames, layout=layout)
             strips = place_strips(context, ch, clip, lines_dir, text, start, channels=channels, layout=layout)
             refresh_faces(context)  # 重なる立ち絵を口パクさせる
         except ERRORS as e:
-            self.report({"ERROR"}, str(e))
+            # 置けたあとの失敗（立ち絵の反映など）では戻さない（もう一度追加すると二重になる）
+            keep = strips is None and bool(self.text.strip())
+            if keep:
+                _unsent[("add_line", ch.name)] = self.text
+            self.report({"ERROR"}, f"{e}{UNSENT_NOTE if keep else ''}")
             return {"CANCELLED"}
+        _unsent.pop(("add_line", ch.name), None)
         connect(context, strips)
         clear_text_input(settings)  # YMM4 と同じく、追加したら入力欄を空にする
         if settings.advance:
@@ -1857,17 +1871,25 @@ class TACHIE_OT_regenerate(bpy.types.Operator):
         return _regenerate_active(self, context)
 
 
-def _regenerate_active(op, context, text: str | None = None, **kwargs):
-    """選択中のセリフを作り直す（テキストは `text` か選択中のストリップ。表情（パーツ）は引き継ぐ）。"""
+def _regenerate_active(op, context, text: str | None = None, unsent: tuple[str, str] | None = None, **kwargs):
+    """選択中のセリフを作り直す（テキストは `text` か選択中のストリップ。表情（パーツ）は引き継ぐ）。
+    `unsent`（ダイアログの名前, 入力）は、作り直せなかったときに次に開いたダイアログへ戻す入力。"""
     sed = seq_scene(context).sequence_editor
     active = sed.active_strip
+    clip_id = active_line_id(context)
+    strips = None
     try:
-        strips = regenerate(context, active_line_id(context), active["tachie_text"] if text is None else text,
-                            **kwargs)
+        strips = regenerate(context, clip_id, active["tachie_text"] if text is None else text, **kwargs)
         refresh_faces(context)
     except ERRORS as e:
-        op.report({"ERROR"}, str(e))
+        # 作り直せたあとの失敗（立ち絵の反映など）では戻さない（入力はもう反映されている）
+        keep = unsent is not None and strips is None
+        if keep:
+            _unsent[(unsent[0], clip_id)] = unsent[1]
+        op.report({"ERROR"}, f"{e}{UNSENT_NOTE if keep else ''}")
         return {"CANCELLED"}
+    for key in [k for k in _unsent if k[1] == clip_id]:
+        del _unsent[key]  # 作り直したので、前に合成できなかった入力は古い
     sed.active_strip = line_focus(strips)
     connect(context, strips)
     return {"FINISHED"}
@@ -2021,7 +2043,8 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
         return active_line_id(context) is not None
 
     def invoke(self, context, event):
-        self.text = input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", ""))
+        self.text = _unsent.pop(("edit_line_text", active_line_id(context)),
+                                input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", "")))
         return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映")
 
     def draw(self, context):
@@ -2040,7 +2063,7 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
             return {"CANCELLED"}  # 変えていなければ何もしない
         if self.subtitle_only:
             return self._set_subtitle(context)
-        return _regenerate_active(self, context, text=self.text)
+        return _regenerate_active(self, context, text=self.text, unsent=("edit_line_text", self.text))
 
     def _set_subtitle(self, context):
         """音声を作り直さずに、セリフのテキスト（字幕・キャラ名・字幕ファイル）だけ変える。"""
@@ -2117,7 +2140,7 @@ class TACHIE_OT_edit_kana(bpy.types.Operator):
         return (sound.get("tachie_kana") or "").strip()
 
     def invoke(self, context, event):
-        self.text = self.initial_kana(context)
+        self.text = _unsent.pop(("edit_kana", active_line_id(context)), self.initial_kana(context))
         return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映して作り直す")
 
     def draw(self, context):
@@ -2134,7 +2157,7 @@ class TACHIE_OT_edit_kana(bpy.types.Operator):
             # 変えていなければ再生成に任せる（自動の読みのままなら今の自動の読み、抑揚の編集も残す）
             kana = None
         # 空なら自動の読みに戻す（抑揚の編集も捨てる）。発音を変えると抑揚の編集は捨てる（再生成と同じ）
-        return _regenerate_active(self, context, kana=kana)
+        return _regenerate_active(self, context, kana=kana, unsent=("edit_kana", self.text))
 
 
 def play_preview(wav: bytes) -> str | None:
