@@ -334,9 +334,9 @@ def place_text(strip, ch, text: str) -> None:
     """
     dx, dy = text_offset(strip)
     if strip.get("tachie_role") == "name":
-        strip.location = (0.5 + dx, min(0.98, name_height(ch, text, strip) + dy))
+        strip.location = (0.5 + ch.subtitle_x + dx, min(0.98, name_height(ch, text, strip) + dy))
     else:
-        strip.location = (0.5 + dx, ch.subtitle_y + dy)
+        strip.location = (0.5 + ch.subtitle_x + dx, ch.subtitle_y + dy)
     strip["tachie_placed_loc"] = list(strip.location)
 
 
@@ -520,8 +520,22 @@ class TachieCharacter(bpy.types.PropertyGroup):
     subtitle_fade: FloatProperty(name="字幕のフェードイン", default=0.0, min=0.0, max=2.0, step=1, precision=2,
                                  unit="TIME_ABSOLUTE", update=_update_subtitle_fade,
                                  description="字幕（とキャラ名）が出るときにフェードする長さ（秒）。0 ならすぐ出る")
-    subtitle_y: FloatProperty(name="字幕の高さ", default=0.12, min=0.0, max=1.0, subtype="FACTOR",
-                              update=_update_subtitle)
+    # 字幕の位置は画面に対する割合で持ち（解像度を変えても同じ所）、パネルでは YMM4 と同じく画面の中央からの px で見せる
+    # （`subtitle_pos_x` / `subtitle_pos_y`）
+    subtitle_x: FloatProperty(name="字幕の横の位置（割合）", default=0.0, min=-1.0, max=1.0, update=_update_subtitle,
+                              description="字幕の横の位置（画面の中央からの、画面の幅に対する割合。右が正）")
+    subtitle_y: FloatProperty(name="字幕の縦の位置（割合）", default=0.12, min=0.0, max=1.0, subtype="FACTOR",
+                              update=_update_subtitle, description="字幕の下端の高さ（画面の下からの、画面の高さに対する割合）")
+    subtitle_pos_x: FloatProperty(name="X", subtype="PIXEL", step=1000, precision=1,
+                                  get=lambda self: self.subtitle_x * self.id_data.render.resolution_x,
+                                  set=lambda self, v: setattr(self, "subtitle_x", v / max(1, self.id_data.render.resolution_x)),
+                                  description="字幕の横の位置（px、YMM4 と同じく画面の中央が 0、右が正）")
+    subtitle_pos_y: FloatProperty(name="Y", subtype="PIXEL", step=1000, precision=1,
+                                  get=lambda self: (0.5 - self.subtitle_y) * self.id_data.render.resolution_y,
+                                  set=lambda self, v: setattr(self, "subtitle_y",
+                                                              0.5 - v / max(1, self.id_data.render.resolution_y)),
+                                  description="字幕の下端の縦の位置（px、YMM4 と同じく画面の中央が 0、下が正。"
+                                              "1080px の画面なら 540 が画面の下端）")
     subtitle_width: FloatProperty(name="折り返し幅", default=0.0, min=0.0, max=8000.0, subtype="PIXEL",
                                   step=1000, precision=0, update=_update_subtitle,  # 矢印で 10px ずつ
                                   description="字幕を折り返す幅（px、YMM4 の折り返し幅）。0 なら画面の幅の 80%")

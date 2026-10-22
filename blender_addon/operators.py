@@ -307,7 +307,8 @@ def config_of(ch) -> CharacterConfig:
                 **_config_motion(ch)},
         subtitle={"font": ch.font_path, "size": ch.font_size, "color": list(ch.text_color),
                   "outline_color": list(ch.outline_color), "outline_width": ch.outline_width,
-                  "line_spacing": ch.line_spacing, "y": ch.subtitle_y, "box": ch.subtitle_box, "box_color": list(ch.box_color),
+                  "line_spacing": ch.line_spacing, "y": ch.subtitle_y,
+                  "x": round(ch.subtitle_x, 6), "box": ch.subtitle_box,  # x は 0 でも書く（tachie.toml の値で補われないように） "box_color": list(ch.box_color),
                   "box_margin": ch.box_margin, "box_roundness": ch.box_roundness, "name": ch.show_name,
                   "fade": ch.subtitle_fade, **({"wrap_width": ch.subtitle_width} if ch.subtitle_width else {})},
         audio=character_audio(ch),
@@ -409,6 +410,7 @@ def apply_config(ch, config: CharacterConfig) -> None:
         if key in sub:
             setattr(ch, prop, sub[key])
     ch.subtitle_width = sub.get("wrap_width", 0.0)  # 書き出しで 0（既定値）は省くので、書いていなければ 0
+    ch.subtitle_x = sub.get("x", 0.0)
 
 
 # ---- キャラクター追加の初期値 ----

@@ -172,6 +172,7 @@ class Character:
     font_color: tuple = (1.0, 1.0, 1.0, 1.0)
     outline: bool = False
     outline_color: tuple = (0.0, 0.0, 0.0, 1.0)
+    subtitle_x: float = 0.0  # ピクセル、画面中央から右向き
     subtitle_y: float = 0.0  # ピクセル、画面中央から下向き
     line_height: float = 100.0  # 字幕の行間（%、100 が通常）
     subtitle_visible: bool = True
@@ -369,6 +370,7 @@ def _subtitle_style(c: Character, d: dict) -> None:
     c.font_color = color(d.get("FontColor"))
     c.outline = d.get("Style") == "Border"
     c.outline_color = color(d.get("StyleColor"), (0.0, 0.0, 0.0, 1.0))
+    c.subtitle_x = value(d.get("X"))
     c.subtitle_y = value(d.get("Y"))
     c.line_height = value(d.get("LineHeight2"), 100.0)
 

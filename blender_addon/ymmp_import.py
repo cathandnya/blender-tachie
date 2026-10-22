@@ -297,6 +297,7 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
         ch.outline_width = 0.0
     # YMM4 の字幕の Y は画面中央からの下向きのピクセル（下揃え）。このアドオンは画面の下からの割合
     ch.subtitle_y = min(1.0, max(0.0, 0.5 - c.subtitle_y / project.height))
+    ch.subtitle_x = min(1.0, max(-1.0, c.subtitle_x / project.width))
     base = tachie.parts if tachie is not None and any(tachie.parts.values()) else c.parts  # 立ち絵アイテムの見た目を優先
     if base:
         _set_parts(ch, _valid_parts(ch, base, problems))
@@ -649,9 +650,10 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                     s.mute = True
             else:
                 if v.subtitle == "Custom":
-                    # ボイスごとの字幕の位置（YMM4 の X / Y は画面中央からの下向きのピクセル、字幕の下端）を、
+                    # ボイスごとの字幕の位置（YMM4 の X / Y は画面中央からの右向き・下向きのピクセル、Y は字幕の下端）を、
                     # キャラの字幕の位置からずらす量（画面に対する割合）にする
-                    offset = (v.sub_x / project.width, 0.5 - v.sub_y / project.height - job.ch.subtitle_y)
+                    offset = (v.sub_x / project.width - job.ch.subtitle_x,
+                              0.5 - v.sub_y / project.height - job.ch.subtitle_y)
                     # 文字の大きさはキャラと違うときだけセリフごとの値にする
                     size = v.sub_size if v.sub_size and abs(v.sub_size - job.ch.font_size) > 1e-3 else 0.0
                     set_line_text_pose(strips, job.ch, v.text, offset, (size, 0.0))

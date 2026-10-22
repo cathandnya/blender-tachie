@@ -180,6 +180,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   字幕の文字の大きさと折り返し幅もセリフごとに `tachie_sub_size` / `tachie_sub_width`（px、0 はキャラの設定。
   `TEXT_STYLE_PROPS`、`properties.subtitle_metrics` / `apply_text_size`）。キャラの折り返し幅は `subtitle_width`（px、
   0 は画面の幅の 80%、TOML の subtitle の `wrap_width`。YMM4 の折り返し幅）。1 行の文字数は 折り返し幅 ÷ 文字の大きさ。
+  キャラの字幕の位置は割合で持ち（`subtitle_x`: 画面の中央からの幅に対する割合、`subtitle_y`: 下端の画面の下からの高さに
+  対する割合。TOML の subtitle の `x` / `y`）、パネルは YMM4 と同じく画面の中央からの px（`subtitle_pos_x` / `subtitle_pos_y`、
+  get / set で割合と換算。Y は下端で下が正）で見せる。YMM4 のキャラの字幕の X / Y もこれに写す。
   自動反映（`motion_signature` に含める）で `refresh_motion` が字幕の改行を入れ直し、ずらす量と文字の大きさ・折り返し幅を
   キャラ名にも写して location を当て直す。再生成・YMM4 の読み込み・テンプレートは `operators.set_line_text_pose` で両方に持たせる。
   `subtitle_clashes` で時間も位置も重なる字幕を知らせる。

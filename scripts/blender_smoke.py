@@ -991,6 +991,16 @@ metan.subtitle_width = 300.0
 assert msub.text.count("\n") >= 2
 metan.subtitle_width = 0.0
 assert msub.text.count("\n") == 0
+# キャラの字幕の位置は YMM4 と同じく画面の中央からの px（X は右が正、Y は字幕の下端で下が正）。キャラ名も一緒に動く
+w_px, h_px = scene.render.resolution_x, scene.render.resolution_y
+y_before, name_x = metan.subtitle_y, mname.location[0]
+assert abs(metan.subtitle_pos_y - (0.5 - y_before) * h_px) < 1e-3
+metan.subtitle_pos_x, metan.subtitle_pos_y = 192.0, h_px / 2
+dx_sub = msub["tachie_sub_x"]
+assert abs(metan.subtitle_x - 192.0 / w_px) < 1e-6 and abs(metan.subtitle_y) < 1e-6
+assert abs(msub.location[0] - (0.5 + 192.0 / w_px + dx_sub)) < 1e-5 and abs(mname.location[0] - (name_x + 192.0 / w_px)) < 1e-5
+assert abs(msub.location[1] - msub["tachie_sub_y"]) < 1e-5  # 下端が画面の下端
+metan.subtitle_x, metan.subtitle_y = 0.0, y_before
 cue_texts = [c.text for c in ops.subtitle_cues(scene)]
 assert any("同時に。" in t for t in cue_texts) and any("同時に喋りますわね" in t for t in cue_texts)
 assert any(a <= t0 and b >= role(msts, SOUND).right_handle for a, b in ducking.voice_spans(sed, 0))

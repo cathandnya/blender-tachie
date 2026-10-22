@@ -397,7 +397,7 @@ def sync_text_offsets(scene) -> int:
             base = name_height(ch, s.get("tachie_placed_text", s.get("tachie_text", "")), s)
         else:
             base = ch.subtitle_y
-        offset = (s.location[0] - 0.5, s.location[1] - base)
+        offset = (s.location[0] - 0.5 - ch.subtitle_x, s.location[1] - base)
         offsets[s["tachie_id"]] = tuple(round(max(-1.0, min(1.0, v)), 5) for v in offset)
     for t in _movable_texts(sed):
         if t["tachie_id"] in offsets and t.get("tachie_character") in characters:

@@ -41,7 +41,7 @@ def project_json(old: bool = False) -> dict:
                                "StyleID": 3, "Speed": 110, "Pitch": 100.0, "Intonation": 80.0,
                                "PrePhonemeLength": 0.1, "PostPhonemeLength": 0.1, "PauseLengthScale": 100.0},
             "Font": "メイリオ", "FontSize": anim(80.0), "Zoom": anim(150.0), "FontColor": "#FFFFFFFF", "Style": "Border",
-            "StyleColor": "#FF33A65E", "Y": anim(540.0), "IsJimakuVisible": True,
+            "StyleColor": "#FF33A65E", "X": anim(-96.0), "Y": anim(540.0), "IsJimakuVisible": True,
             "TachieType": "YukkuriMovieMaker.Plugin.Tachie.AnimationTachie.AnimationTachiePlugin, X",
             "TachieCharacterParameter": {"Directory": CHAR},
             "TachieDefaultItemParameter": {"Eyebrow": f"{CHAR}\\眉\\普通眉.png", "Eye": f"{CHAR}\\目\\普通白目_普通目.png",
@@ -102,7 +102,7 @@ def test_load_project(tmp_path, old):
     c = p.characters["ずんだもん"]
     assert c.folder_name == "ずんだもん" and c.style_id == 3 and c.has_tachie and c.after == 0.3
     assert c.voice["speedScale"] == 1.1 and c.voice["intonationScale"] == 0.8 and c.voice["pitchScale"] == 0.0
-    assert c.font == "メイリオ" and c.font_size == 120.0 and c.subtitle_y == 540.0 and c.outline
+    assert c.font == "メイリオ" and c.font_size == 120.0 and c.subtitle_y == 540.0 and c.subtitle_x == -96.0 and c.outline
     assert c.outline_color == pytest.approx((0x33 / 255, 0xA6 / 255, 0x5E / 255, 1.0))
     assert c.parts == {"眉": "普通眉", "目": "普通白目_普通目", "口": "むふ", "髪": "", "顔色": "", "体": "",
                        "他": ["左腕_基本", "右腕_基本"], "後": []}
