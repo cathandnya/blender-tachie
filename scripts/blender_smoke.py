@@ -1107,7 +1107,7 @@ for x in nl:
 run(bpy.ops.tachie.add_line, text="ダイアログから追加なのだ")
 nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"] == "ダイアログから追加なのだ")
 activate(ops.line_subtitle(nl))
-run(bpy.ops.tachie.edit_line_text, text="編集した\\nセリフなのだ")
+run(bpy.ops.tachie.edit_line_text, text="編集した\\nセリフなのだ", subtitle_only=False)
 nl = next(sts for _, (_, _, sts) in lines().items() if sts[0]["tachie_text"].startswith("編集した"))
 assert ops.line_subtitle(nl).text.split("\n")[:2] == ["編集した", "セリフなのだ"], ops.line_subtitle(nl).text
 # 字幕だけ変える: 音声は作り直さない（同じセリフの id・同じ音声）で、字幕のテキストだけ変わる
@@ -1639,8 +1639,9 @@ first_zunda = next(cid for cid, (_, _, sts) in lines().items() if sts[0]["tachie
 fails(bpy.ops.tachie.add_line, text="つながらないのだ")
 assert ops._unsent.pop(("add_line", "ずんだもん")) == "つながらないのだ"
 activate(sound(first_zunda))
-fails(bpy.ops.tachie.edit_line_text, text="書き直したのだ")
+fails(bpy.ops.tachie.edit_line_text, text="書き直したのだ", subtitle_only=False)
 assert ops._unsent.pop(("edit_line_text", first_zunda)) == "書き直したのだ"
+assert ops._unsent.pop((ops.EDIT_AUDIO_KEY, first_zunda))  # 次に開くと「字幕だけ変える」は外したまま
 activate(sound(first_zunda))
 fails(bpy.ops.tachie.edit_kana, text="カキナオシタノダ'")
 assert ops._unsent.pop(("edit_kana", first_zunda)) == "カキナオシタノダ'"

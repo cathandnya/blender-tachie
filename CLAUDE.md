@@ -108,8 +108,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   新しいセリフは「〇〇のセリフを追加」で開くダイアログ（`tachie.add_line` の invoke、`text`）で入力する（パネルに入力欄は無い。
   スクリプトから text を渡さずに呼ぶとシーンの `settings.text`。追加したとき・ダイアログを開くとき・.blend を開いたとき
   （`load_post` の `_clear_input_on_load`、前の版の残り）に空にする `clear_text_input`）。選択中のセリフの
-  テキストも折り返して見せ（`panels.draw_wrapped`）、押すと「セリフを編集」（`tachie.edit_line_text`、確定で再生成。
-  「字幕だけ変える」`subtitle_only` なら音声は作り直さず、全ストリップの `tachie_text` と `tachie_placed_text`（編集した発音・
+  テキストも折り返して見せ（`panels.draw_wrapped`）、押すと「セリフを編集」（`tachie.edit_line_text`、確定で反映。
+  「字幕だけ変える」`subtitle_only`（既定で入。スクリプトから作り直すときは False を渡す。外して閉じた・合成できなかった
+  ときは `_unsent` の `EDIT_AUDIO_KEY` で次も外したまま開く）なら音声は作り直さず、全ストリップの `tachie_text` と `tachie_placed_text`（編集した発音・
   抑揚のキーの text も）を書き換えて字幕・キャラ名を当て直す。今の読みは `tachie_kana_auto` を空にして編集した発音として持つ
   （再生成で新しいテキストの自動の読みにならない）。`{発音}` は使わない）。ストリップの
   `tachie_text` も `\n` の書き方のまま持ち（本当の改行はパネルの欄で見えない）、字幕（`properties.apply_subtitle` の

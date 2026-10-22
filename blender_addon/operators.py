@@ -1708,6 +1708,20 @@ def _keep_draft(name: str, key, initial):
     return update
 
 
+EDIT_AUDIO_KEY = "edit_line_text_audio"  # `_unsent` の印: セリフを編集で「字幕だけ変える」を外していた
+
+
+def _keep_audio_mode(context, audio: bool):
+    """セリフを編集の「字幕だけ変える」を外した（音声も作り直す）ことを、次に開くダイアログのために覚える。"""
+    cid = active_line_id(context)
+    if cid is None:
+        return
+    if audio:
+        _unsent[(EDIT_AUDIO_KEY, cid)] = "1"
+    else:
+        _unsent.pop((EDIT_AUDIO_KEY, cid), None)
+
+
 def _active_character_name(context) -> str | None:
     ch = seq_scene(context).tachie.character()
     return ch.name if ch else None
@@ -2054,7 +2068,7 @@ class TACHIE_OT_preview_line(bpy.types.Operator):
 
 
 class TACHIE_OT_edit_line_text(bpy.types.Operator):
-    """選択中のセリフのテキストを、広い欄で編集して作り直す"""
+    """選択中のセリフのテキストを、広い欄で編集する（既定は字幕だけ。外すと音声も作り直す）"""
 
     bl_idname = "tachie.edit_line_text"
     bl_label = "セリフを編集"
@@ -2064,7 +2078,8 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
     text: bpy.props.StringProperty(name="セリフ", options={"SKIP_SAVE"}, update=_keep_draft(
         "edit_line_text", active_line_id, lambda context: TACHIE_OT_edit_line_text.initial_text(context)))
     subtitle_only: bpy.props.BoolProperty(
-        name="字幕だけ変える（音声は作り直さない）", options={"SKIP_SAVE"},
+        name="字幕だけ変える（音声は作り直さない）", options={"SKIP_SAVE"}, default=True,
+        update=lambda self, context: _keep_audio_mode(context, not self.subtitle_only),
         description="音声はそのままで、字幕のテキストだけを書き換える（誤字の修正や、読みは同じで表記だけ変えるとき）")
 
     @classmethod
@@ -2077,7 +2092,10 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
         return input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", ""))
 
     def invoke(self, context, event):
-        self.text = _unsent.pop(("edit_line_text", active_line_id(context)), self.initial_text(context))
+        cid = active_line_id(context)
+        self.text = _unsent.pop(("edit_line_text", cid), self.initial_text(context))
+        # 前に「字幕だけ変える」を外して閉じた・合成できなかったなら、外したまま開く（既定の入に戻さない）
+        self.subtitle_only = _unsent.pop((EDIT_AUDIO_KEY, cid), None) is None
         return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映")
 
     def draw(self, context):
@@ -2085,7 +2103,7 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
         self.layout.prop(self, "text", text="")
         self.layout.prop(self, "subtitle_only")
         self.layout.label(text="字幕の改行は \\n、最後に {発音} と書ける" if not self.subtitle_only else
-                          "音声・口パクはそのまま。字幕（とキャラ名）のテキストだけ変える", icon="INFO")
+                          "字幕の改行は \\n。音声・口パクはそのままで、字幕（とキャラ名）のテキストだけ変える", icon="INFO")
 
     def execute(self, context):
         if not self.text.strip():
@@ -2096,6 +2114,7 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
             return {"CANCELLED"}  # 変えていなければ何もしない
         if self.subtitle_only:
             return self._set_subtitle(context)
+        _keep_audio_mode(context, True)  # 合成できなければ、次に開いたときも音声を作り直すまま（作り直せたら捨てる）
         return _regenerate_active(self, context, text=self.text, unsent=("edit_line_text", self.text))
 
     def _set_subtitle(self, context):
@@ -2139,6 +2158,7 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
                 pass
         refresh_motion_now(seq_scene(context))  # 字幕の位置（ずらす量）を当て直す
         _unsent.pop(("edit_line_text", cid), None)  # 反映したので、欄の update が覚えた入力は古い
+        _unsent.pop((EDIT_AUDIO_KEY, cid), None)
         if kana:
             self.report({"WARNING"}, "字幕だけ変えるときは {発音} を使いません（音声はそのまま）")
         return {"FINISHED"}
