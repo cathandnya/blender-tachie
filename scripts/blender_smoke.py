@@ -325,6 +325,17 @@ run(bpy.ops.tachie.preview_line)
 run(bpy.ops.tachie.clear_accent)
 first_id = sed.active_strip["tachie_id"]
 assert not sound(first_id).get("tachie_accent") and lines()[first_id][1] == r0
+# 確定せずに閉じた抑揚の編集は、同じセリフをもう一度開くと続きから（セリフが変わっていれば捨てる）
+activate(sound(first_id))
+strips_, text_, ch_, speaker_, kana_ = ops._line_context(bpy.context)
+fresh_ = ops._fresh_accent(bpy.context, text_, speaker_, kana_)
+ops.start_accent_edit(edit, first_id, text_, kana_ or "", speaker_, ch_.name, fresh_)
+assert not edit.resumed
+edit.phrases[0].moras[0].vowel_length += 0.2
+ops.start_accent_edit(edit, first_id, text_, kana_ or "", speaker_, ch_.name, fresh_)
+assert edit.resumed and abs(edit.phrases[0].moras[0].vowel_length - fresh_[0]["moras"][0]["vowel_length"] - 0.2) < 1e-4
+ops.start_accent_edit(edit, first_id, text_ + "よ", kana_ or "", speaker_, ch_.name, fresh_)
+assert not edit.resumed
 # 抑揚の編集の棒・アクセントの位置・句の結合と分割（YMM4 の「抑揚を編集」に近い形）
 from bl_ext.user_default.blender_tachie.tachie_studio.voicevox.accent import kana_from_phrases  # noqa: E402
 
@@ -1633,6 +1644,14 @@ assert ops._unsent.pop(("edit_line_text", first_zunda)) == "書き直したの�
 activate(sound(first_zunda))
 fails(bpy.ops.tachie.edit_kana, text="カキナオシタノダ'")
 assert ops._unsent.pop(("edit_kana", first_zunda)) == "カキナオシタノダ'"
+# ダイアログの外を押して閉じても、入力するたびに覚えた入力が次に開いたときに戻る（欄の update）
+activate(sound(first_zunda))
+ops._keep_draft("edit_kana", ops.active_line_id, ops.TACHIE_OT_edit_kana.initial_kana)(
+    type("P", (), {"text": "トジタノダ'"})(), bpy.context)
+assert ops._unsent.pop(("edit_kana", first_zunda)) == "トジタノダ'"
+ops._keep_draft("edit_kana", ops.active_line_id, ops.TACHIE_OT_edit_kana.initial_kana)(
+    type("P", (), {"text": ops.TACHIE_OT_edit_kana.initial_kana(bpy.context)})(), bpy.context)
+assert ("edit_kana", first_zunda) not in ops._unsent  # 最初の値に戻したら覚えない
 zunda.engine = "DEFAULT"
 assert scene.frame_end == max(r for _, r, _ in lines().values()) - 1, scene.frame_end
 

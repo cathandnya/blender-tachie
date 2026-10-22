@@ -102,6 +102,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   合成できなかった（VOICEVOX に接続できないなど）ときは、ダイアログ（セリフを追加・セリフを編集・発音を編集）の入力を
   `operators._unsent`（(ダイアログ, セリフの id) → 入力。追加はキャラ名）に覚え、次に同じダイアログを開いたときに戻す（報告に
   `UNSENT_NOTE`。置けた・作り直せたあとの失敗では覚えず、作り直せたらそのセリフの分は捨てる）。
+  ダイアログの外を押す・Esc で閉じたことはアドオンから分からないので、入力の欄の update（`_keep_draft`）が入力するたびに
+  `_unsent` に覚える（最初の値と同じなら捨てる）。抑揚の編集は WindowManager の `tachie_accent` に残り、同じセリフを開いたときに
+  セリフの抑揚が開いたとき（`base`）のままなら続きにする（`start_accent_edit`、`resumed`。反映したら `base` を空にする）。
   新しいセリフは「〇〇のセリフを追加」で開くダイアログ（`tachie.add_line` の invoke、`text`）で入力する（パネルに入力欄は無い。
   スクリプトから text を渡さずに呼ぶとシーンの `settings.text`。追加したとき・ダイアログを開くとき・.blend を開いたとき
   （`load_post` の `_clear_input_on_load`、前の版の残り）に空にする `clear_text_input`）。選択中のセリフの

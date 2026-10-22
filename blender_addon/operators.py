@@ -1686,11 +1686,31 @@ def input_text(text: str) -> str:
     return mark_breaks(text)
 
 
-# 合成できなかった（VOICEVOX に接続できないなど）ダイアログの入力。次に同じダイアログを開いたときに戻す
-# （ダイアログを閉じると入力は消えるので、書き直さずに済むように）。キーは (ダイアログ, セリフの id)、
-# セリフの追加は ("add_line", キャラ名)。合成できたら（別の操作で作り直したときも）捨てる
+# 合成できなかった（VOICEVOX に接続できないなど）ダイアログの入力と、確定せずに閉じた（ダイアログの外を押した・
+# Esc）ダイアログの入力。次に同じダイアログを開いたときに戻す（ダイアログを閉じると入力は消えるので、書き直さずに
+# 済むように）。キーは (ダイアログ, セリフの id)、セリフの追加は ("add_line", キャラ名)。合成できたら（別の操作で
+# 作り直したときも）捨てる
 _unsent: dict[tuple[str, str], str] = {}
 UNSENT_NOTE = "（入力は、もう一度開くと戻ります）"
+
+
+def _keep_draft(name: str, key, initial):
+    """ダイアログの欄の update: 入力するたびに `_unsent` に覚える（Blender のダイアログは外を押すと閉じ、
+    閉じたことはアドオンから分からないため）。`key(context)` はセリフの id かキャラ名、最初の値と同じなら捨てる。"""
+    def update(self, context):
+        k = key(context)
+        if k is None:
+            return
+        if self.text == initial(context):
+            _unsent.pop((name, k), None)
+        else:
+            _unsent[(name, k)] = self.text
+    return update
+
+
+def _active_character_name(context) -> str | None:
+    ch = seq_scene(context).tachie.character()
+    return ch.name if ch else None
 
 
 class TACHIE_OT_add_line(bpy.types.Operator):
@@ -1702,7 +1722,8 @@ class TACHIE_OT_add_line(bpy.types.Operator):
     bl_options = {"UNDO"}
 
     text: bpy.props.StringProperty(name="セリフ", options={"SKIP_SAVE"},
-                                   description="追加するセリフ。字幕の改行は \\n（¥n）、最後に {発音} と書ける")
+                                   description="追加するセリフ。字幕の改行は \\n（¥n）、最後に {発音} と書ける",
+                                   update=_keep_draft("add_line", _active_character_name, lambda context: ""))
 
     def invoke(self, context, event):
         ch = seq_scene(context).tachie.character()
@@ -1745,6 +1766,8 @@ class TACHIE_OT_add_line(bpy.types.Operator):
             keep = strips is None and bool(self.text.strip())
             if keep:
                 _unsent[("add_line", ch.name)] = self.text
+            else:  # 欄の update が覚えた入力も捨てる
+                _unsent.pop(("add_line", ch.name), None)
             self.report({"ERROR"}, f"{e}{UNSENT_NOTE if keep else ''}")
             return {"CANCELLED"}
         _unsent.pop(("add_line", ch.name), None)
@@ -1888,6 +1911,9 @@ def _regenerate_active(op, context, text: str | None = None, unsent: tuple[str, 
         keep = unsent is not None and strips is None
         if keep:
             _unsent[(unsent[0], clip_id)] = unsent[1]
+        elif strips is not None:  # 欄の update が覚えた入力も捨てる
+            for key in [k for k in _unsent if k[1] == clip_id]:
+                del _unsent[key]
         op.report({"ERROR"}, f"{e}{UNSENT_NOTE if keep else ''}")
         return {"CANCELLED"}
     for key in [k for k in _unsent if k[1] == clip_id]:
@@ -2035,7 +2061,8 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
     # 「最後の操作を調整」に出さない（テキストを変えるたびに合成し直さないように）。元に戻すは UNDO で効く
     bl_options = {"UNDO"}
 
-    text: bpy.props.StringProperty(name="セリフ", options={"SKIP_SAVE"})
+    text: bpy.props.StringProperty(name="セリフ", options={"SKIP_SAVE"}, update=_keep_draft(
+        "edit_line_text", active_line_id, lambda context: TACHIE_OT_edit_line_text.initial_text(context)))
     subtitle_only: bpy.props.BoolProperty(
         name="字幕だけ変える（音声は作り直さない）", options={"SKIP_SAVE"},
         description="音声はそのままで、字幕のテキストだけを書き換える（誤字の修正や、読みは同じで表記だけ変えるとき）")
@@ -2044,9 +2071,13 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
     def poll(cls, context):
         return active_line_id(context) is not None
 
+    @staticmethod
+    def initial_text(context) -> str:
+        """ダイアログに最初に入れるテキスト（選択中のストリップのテキスト、改行は \\n の書き方）。"""
+        return input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", ""))
+
     def invoke(self, context, event):
-        self.text = _unsent.pop(("edit_line_text", active_line_id(context)),
-                                input_text(seq_scene(context).sequence_editor.active_strip.get("tachie_text", "")))
+        self.text = _unsent.pop(("edit_line_text", active_line_id(context)), self.initial_text(context))
         return context.window_manager.invoke_props_dialog(self, width=760, confirm_text="反映")
 
     def draw(self, context):
@@ -2107,6 +2138,7 @@ class TACHIE_OT_edit_line_text(bpy.types.Operator):
             except ValueError:
                 pass
         refresh_motion_now(seq_scene(context))  # 字幕の位置（ずらす量）を当て直す
+        _unsent.pop(("edit_line_text", cid), None)  # 反映したので、欄の update が覚えた入力は古い
         if kana:
             self.report({"WARNING"}, "字幕だけ変えるときは {発音} を使いません（音声はそのまま）")
         return {"FINISHED"}
@@ -2120,7 +2152,8 @@ class TACHIE_OT_edit_kana(bpy.types.Operator):
     # 「最後の操作を調整」に出さない（テキストを変えるたびに合成し直さないように）。元に戻すは UNDO で効く
     bl_options = {"UNDO"}
 
-    text: bpy.props.StringProperty(name="発音", options={"SKIP_SAVE"})
+    text: bpy.props.StringProperty(name="発音", options={"SKIP_SAVE"}, update=_keep_draft(
+        "edit_kana", active_line_id, lambda context: TACHIE_OT_edit_kana.initial_kana(context)))
 
     @classmethod
     def poll(cls, context):
@@ -2216,6 +2249,22 @@ def load_accent_edit(edit, phrases: list) -> None:
     finally:
         properties._loading_accent = False
     fit_accent_range(edit)
+
+
+def start_accent_edit(edit, clip_id: str, text: str, kana: str, speaker: int, character: str, phrases: list) -> None:
+    """抑揚の編集ダイアログの中身をセリフの抑揚にする。確定せずに閉じた（ダイアログの外を押した・Esc）同じセリフの
+    編集があり、セリフがそのとき（`edit.base`）のままなら続きにする（`edit.resumed`）。"""
+    key = json.dumps([clip_id, text, kana, speaker], ensure_ascii=False)
+    draft = (accent_from_edit(edit), edit.changed) if edit.key == key and edit.base else None
+    edit.clip_id, edit.text, edit.kana, edit.speaker = clip_id, text, kana, speaker
+    edit.character, edit.changed = character, False
+    load_accent_edit(edit, phrases)
+    base = json.dumps(accent_from_edit(edit), ensure_ascii=False)
+    edit.resumed = draft is not None and base == edit.base and json.dumps(draft[0], ensure_ascii=False) != base
+    if edit.resumed:
+        load_accent_edit(edit, draft[0])
+        edit.changed = draft[1]
+    edit.key, edit.base = key, base
 
 
 def fit_accent_range(edit) -> None:
@@ -2360,11 +2409,9 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
-        edit.clip_id, edit.text, edit.kana, edit.speaker = active_line_id(context), text, kana or "", speaker
-        edit.character, edit.changed = ch.name, False
-        load_accent_edit(edit, phrases)
+        start_accent_edit(edit, active_line_id(context), text, kana or "", speaker, ch.name, phrases)
         # 句を横に並べ、入りきらなければ次の段へ（YMM4 の「抑揚を編集」と同じ並び）
-        total = sum(len(p["moras"]) for p in phrases) + len(phrases)
+        total = sum(len(p.moras) for p in edit.phrases) + len(edit.phrases)
         edit.width = max(480, min(1500, int(MORA_UNITS * 20 * total) + 60))
         return context.window_manager.invoke_props_dialog(self, width=edit.width, confirm_text="反映して作り直す")
 
@@ -2375,6 +2422,8 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         row.prop(edit, "tab", expand=True)
         row.operator("tachie.preview_accent", text="", icon="PLAY")
         row.operator("tachie.reload_accent", text="", icon="FILE_REFRESH")
+        if edit.resumed:
+            layout.label(text="確定せずに閉じたときの編集の続きです（右上のボタンで自動の抑揚に戻せます）", icon="INFO")
         pitch = edit.tab == "PITCH"
         attr, level = ("pitch", "pitch_level") if pitch else ("vowel_length", "length_level")
         # ダイアログの幅も UI の単位も画面の倍率で大きくなるので、倍率で割らない
@@ -2430,7 +2479,10 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         accent = accent_from_edit(edit)
         # アクセントの位置・句の区切りを変えたら、発音も句から作り直す（パネルの発音の欄に出る）
         kana = kana_from_phrases(accent) if edit.changed else (edit.kana or None)
-        return _regenerate_active(self, context, kana=kana, accent=accent)
+        result = _regenerate_active(self, context, kana=kana, accent=accent)
+        if result == {"FINISHED"}:
+            edit.base = ""  # 反映したので、次に開くときは続きにしない
+        return result
 
 
 class TACHIE_OT_preview_accent(bpy.types.Operator):
@@ -2473,6 +2525,7 @@ class TACHIE_OT_reload_accent(bpy.types.Operator):
             ch = next((c for c in seq_scene(context).tachie.characters if c.name == name), None)
             load_accent_edit(edit, _fresh_accent(context, edit.text, edit.speaker, edit.kana or None, ch))
             edit.changed = False  # 句の区切り・アクセントの位置も発音のものに戻った
+            edit.resumed = False  # 続きの編集も捨てた
         except ERRORS as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
