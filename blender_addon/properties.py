@@ -604,7 +604,60 @@ class TachieYmmpCharacter(bpy.types.PropertyGroup):
     folder_name: StringProperty()  # YMM4 の素材フォルダの名前
 
 
+def _active_line_texts(settings):
+    """アクティブなストリップのセリフの (字幕, 字幕とキャラ名, キャラ)。セリフでなければ (None, [], None)。"""
+    from .operators import line_strips, line_subtitle
+
+    sed = settings.id_data.sequence_editor
+    strip = sed.active_strip if sed else None
+    clip_id = strip.get("tachie_id") if strip else None
+    if not clip_id:
+        return None, [], None
+    texts = [s for s in line_strips(sed, clip_id) if s.type == "TEXT"]
+    subtitle = line_subtitle(texts)
+    ch = settings.characters.get(texts[0].get("tachie_character", "")) if texts else None
+    return subtitle, texts, ch
+
+
+def _line_pos_get(axis: int):
+    """選択中のセリフの字幕の位置（px、YMM4 と同じく画面の中央が 0。Y は字幕の下端で下が正）。中身はキャラの位置からの
+    ずれ（`tachie_sub_x` / `tachie_sub_y`、画面に対する割合）。"""
+    def get(self):
+        subtitle, _, ch = _active_line_texts(self)
+        if subtitle is None or ch is None or "tachie_sub_x" not in subtitle:
+            return 0.0
+        render = self.id_data.render
+        if axis == 0:
+            return (ch.subtitle_x + float(subtitle["tachie_sub_x"])) * render.resolution_x
+        return (0.5 - ch.subtitle_y - float(subtitle["tachie_sub_y"])) * render.resolution_y
+    return get
+
+
+def _line_pos_set(axis: int):
+    def set_(self, value):
+        subtitle, texts, ch = _active_line_texts(self)
+        if subtitle is None or ch is None or "tachie_sub_x" not in subtitle:
+            return
+        render = self.id_data.render
+        if axis == 0:
+            key, offset = "tachie_sub_x", value / max(1, render.resolution_x) - ch.subtitle_x
+        else:
+            key, offset = "tachie_sub_y", 0.5 - value / max(1, render.resolution_y) - ch.subtitle_y
+        offset = max(-1.0, min(1.0, offset))
+        for t in texts:  # キャラ名にも写して、すぐ置き直す
+            t[key] = offset
+            place_text(t, ch, t.get("tachie_placed_text", t.get("tachie_text", "")))
+    return set_
+
+
 class TachieSceneSettings(bpy.types.PropertyGroup):
+    # 選択中のセリフの字幕の位置（px で見せる。中身はセリフの字幕ストリップの tachie_sub_x / tachie_sub_y）
+    line_sub_pos_x: FloatProperty(name="字幕の X", subtype="PIXEL", step=1000, precision=1,
+                                  get=_line_pos_get(0), set=_line_pos_set(0),
+                                  description="このセリフの字幕の横の位置（px、YMM4 と同じく画面の中央が 0、右が正）")
+    line_sub_pos_y: FloatProperty(name="字幕の Y", subtype="PIXEL", step=1000, precision=1,
+                                  get=_line_pos_get(1), set=_line_pos_set(1),
+                                  description="このセリフの字幕の下端の縦の位置（px、YMM4 と同じく画面の中央が 0、下が正）")
     characters: CollectionProperty(type=TachieCharacter)
     active_character: IntProperty(name="キャラクター", default=0)
     text: StringProperty(name="セリフ", default="",

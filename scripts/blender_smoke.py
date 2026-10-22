@@ -1001,6 +1001,15 @@ assert abs(metan.subtitle_x - 192.0 / w_px) < 1e-6 and abs(metan.subtitle_y) < 1
 assert abs(msub.location[0] - (0.5 + 192.0 / w_px + dx_sub)) < 1e-5 and abs(mname.location[0] - (name_x + 192.0 / w_px)) < 1e-5
 assert abs(msub.location[1] - msub["tachie_sub_y"]) < 1e-5  # 下端が画面の下端
 metan.subtitle_x, metan.subtitle_y = 0.0, y_before
+# セリフごとの字幕の位置も px（画面の中央からの、そのセリフの字幕の X / Y）。中身はキャラの位置からのずれ（割合）
+activate(msub)
+s.line_sub_pos_x, s.line_sub_pos_y = -96.0, h_px / 2 - 100.0
+assert abs(msub["tachie_sub_x"] - (-96.0 / w_px - metan.subtitle_x)) < 1e-6
+assert abs(msub["tachie_sub_y"] - (100.0 / h_px - metan.subtitle_y)) < 1e-6
+assert mname["tachie_sub_x"] == msub["tachie_sub_x"] and abs(msub.location[0] - (0.5 - 96.0 / w_px)) < 1e-5
+assert abs(msub.location[1] - 100.0 / h_px) < 1e-5 and abs(s.line_sub_pos_x + 96.0) < 1e-3
+msub["tachie_sub_x"] = msub["tachie_sub_y"] = 0.0
+ops.refresh_motion_now(scene)
 cue_texts = [c.text for c in ops.subtitle_cues(scene)]
 assert any("同時に。" in t for t in cue_texts) and any("同時に喋りますわね" in t for t in cue_texts)
 assert any(a <= t0 and b >= role(msts, SOUND).right_handle for a, b in ducking.voice_spans(sed, 0))

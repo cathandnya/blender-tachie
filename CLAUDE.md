@@ -176,7 +176,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   古い設定で使わない。TOML の `[キャラ.layout]` の channel は書かず読まない。
   同時に喋るセリフ（#17）: `line_channels` がそのキャラのレーンを返す（同じキャラのセリフも重ねてよい。埋まっていればあふれ、
   キャラ名は字幕より上）。セリフのストリップはチャンネルではなく `tachie_id` と種類・`tachie_role` で探す。
-  字幕をセリフごとにずらす量は字幕ストリップの `tachie_sub_x` / `tachie_sub_y`（`properties.place_text`、再生成で引き継ぐ）。
+  字幕をセリフごとにずらす量は字幕ストリップの `tachie_sub_x` / `tachie_sub_y`（キャラの位置からのずれ、画面に対する割合。
+  `properties.place_text`、再生成で引き継ぐ）。ストリップタブでは YMM4 のボイスごとの字幕と同じく、そのセリフの字幕の
+  画面の中央からの px（シーンの `line_sub_pos_x` / `line_sub_pos_y`、アクティブなセリフの値を get / set で換算し、キャラ名にも
+  写して置き直す）で見せる。
   字幕の文字の大きさと折り返し幅もセリフごとに `tachie_sub_size` / `tachie_sub_width`（px、0 はキャラの設定。
   `TEXT_STYLE_PROPS`、`properties.subtitle_metrics` / `apply_text_size`）。キャラの折り返し幅は `subtitle_width`（px、
   0 は画面の幅の 80%、TOML の subtitle の `wrap_width`。YMM4 の折り返し幅）。1 行の文字数は 折り返し幅 ÷ 文字の大きさ。

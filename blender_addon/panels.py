@@ -220,7 +220,7 @@ class TACHIE_PT_strip(_StripPanel, bpy.types.Panel):
                 col.operator("tachie.reset_line_voice", icon="LOOP_BACK")
             else:
                 col.label(text="声はキャラクターの既定値（再生成すると編集できます）")
-            draw_text_pose(layout, line_subtitle(strips))
+            draw_text_pose(layout, line_subtitle(strips), seq_scene(context).tachie)
             row = layout.row(align=True)
             row.scale_y = 1.2
             row.operator("tachie.regenerate", icon="FILE_REFRESH")
@@ -322,15 +322,21 @@ def draw_pose(layout, strip) -> None:
         col.prop(strip, f'["{key}"]', text=label)
 
 
-def draw_text_pose(layout, strip) -> None:
-    """セリフごとの字幕（とキャラ名）の位置・文字の大きさ・折り返し幅（0 はキャラの設定）。"""
-    from .operators import TEXT_POSE_PROPS, TEXT_STYLE_PROPS
+def draw_text_pose(layout, strip, settings) -> None:
+    """セリフごとの字幕（とキャラ名）の位置（px）・文字の大きさ・折り返し幅（0 はキャラの設定）。"""
+    from .operators import TEXT_STYLE_PROPS
 
     if strip is None or "tachie_sub_x" not in strip:
         return
     col = layout.column(align=True)
-    for key, (label, _) in TEXT_POSE_PROPS.items():
-        col.prop(strip, f'["{key}"]', text=label)
+    if settings.characters.get(strip.get("tachie_character", "")) is not None:
+        col.prop(settings, "line_sub_pos_x")
+        col.prop(settings, "line_sub_pos_y")
+    else:  # 消したキャラのセリフは px に換算できないので、ずらす量（割合）をそのまま見せる
+        from .operators import TEXT_POSE_PROPS
+
+        for key, (label, _) in TEXT_POSE_PROPS.items():
+            col.prop(strip, f'["{key}"]', text=label)
     if "tachie_sub_size" in strip:
         col = layout.column(align=True)
         for key, (label, *_) in TEXT_STYLE_PROPS.items():
