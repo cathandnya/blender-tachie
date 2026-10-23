@@ -21,6 +21,25 @@ class _StripPanel:
     bl_context = "strip"
 
 
+class TACHIE_PT_video_format(bpy.types.Panel):
+    """出力タブのいちばん上（見出しの無いパネルは Blender のパネルより上に並ぶ）に、動画の書き出し設定のボタン。"""
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "output"
+    bl_label = "動画の書き出し設定（立ち絵）"
+    bl_options = {"HIDE_HEADER"}
+
+    def draw(self, context):
+        r = context.scene.render
+        video = r.image_settings.file_format == "FFMPEG"
+        row = self.layout.row(align=True)
+        def name(owner, prop):  # 画面に出る名前（MPEG-4・H.264 など）
+            return owner.bl_rna.properties[prop].enum_items[getattr(owner, prop)].name
+        row.label(text=f"{name(r.ffmpeg, 'format')}（{name(r.ffmpeg, 'codec')} / {name(r.ffmpeg, 'audio_codec')}）"
+                  if video else name(r.image_settings, "file_format"), icon="FILE_MOVIE")
+        row.operator("tachie.video_format", text="MP4 の書き出し設定にする")
+
+
 class TACHIE_UL_characters(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -884,6 +903,7 @@ def draw_char_lanes(layout, scene, name: str) -> None:
 
 
 _classes = (
+    TACHIE_PT_video_format,
     TACHIE_UL_characters,
     TACHIE_MT_characters,
     TACHIE_PT_main,
