@@ -812,10 +812,13 @@ class TACHIE_PT_export(_Panel, bpy.types.Panel):
         r = seq_scene(context).render
         fps = r.fps / r.fps_base
         video = r.image_settings.file_format == "FFMPEG"
-        summary = f"{r.resolution_x * r.resolution_percentage // 100}×{r.resolution_y * r.resolution_percentage // 100}" \
-                  f" / {fps:g}fps / " + (f"{r.ffmpeg.format}（{r.ffmpeg.codec}）" if video else r.image_settings.file_format)
+        # タイムライン（解像度・fps）と書き出し（大きさの % と形式）は別。書き出し設定はタイムラインを変えない
+        layout.label(text=f"タイムライン: {r.resolution_x}×{r.resolution_y} / {fps:g}fps", icon="SEQUENCE")
+        layout.operator_menu_enum("tachie.timeline_preset", "preset", text="タイムラインの解像度・fps", icon="PRESET")
+        summary = f"書き出し: {r.resolution_x * r.resolution_percentage // 100}×{r.resolution_y * r.resolution_percentage // 100}" \
+                  " / " + (f"{r.ffmpeg.format}（{r.ffmpeg.codec}）" if video else r.image_settings.file_format)
         layout.label(text=summary, icon="OUTPUT")
-        layout.operator_menu_enum("tachie.render_preset", "preset", text="書き出し設定を選ぶ", icon="PRESET")
+        layout.operator_menu_enum("tachie.output_preset", "preset", text="書き出し設定を選ぶ", icon="PRESET")
         row = layout.row()
         row.scale_y = 1.2
         op = row.operator("render.render", text="動画を書き出す", icon="RENDER_ANIMATION")

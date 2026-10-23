@@ -14,8 +14,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   「」の中で改行可）と CSV / TSV（`load_script` が拡張子で選ぶ。3 列目以降は無視、UTF-8 で読めなければ cp932）。
   キャラ名の欄の `(表情)` とセリフ末尾の `{発音}` はどの形でも使える。アドオンのテキストは名前の拡張子で形を選ぶ。
 - `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
-- 書き出し設定のプリセット（`operators.RENDER_PRESETS`、`apply_render_preset`）: Blender 5 は `image_settings.media_type = "VIDEO"`
-  にしてから `file_format = "FFMPEG"`。解像度・fps はセリフの連番・立ち位置・大きさに効くので、置いたあとに変えたら全再生成を案内する。
+- 書き出し設定（`operators.OUTPUT_PRESETS`、`apply_output_preset`）は書き出すときの大きさ（`resolution_percentage`）と形式だけで、
+  タイムラインの解像度・fps は変えない（fps を変えると音声は秒、動画・立ち絵・字幕はフレーム数を保つのでタイムラインがずれる）。
+  Blender 5 は `image_settings.media_type = "VIDEO"` にしてから `file_format = "FFMPEG"`。タイムラインの解像度・fps は別の
+  `TIMELINE_PRESETS`（`tachie.timeline_preset`）で、セリフの連番・立ち位置・大きさに効くので、置いたあとに変えるときは確かめて
+  （`invoke_confirm`）全再生成を案内する。
 - `src/tachie_studio/srt.py` — 字幕ファイル（SRT / WebVTT）。アドオンの「書き出し」パネルは置いた字幕ストリップの位置（シーン開始 = 0 秒、ミュートは除く）、CLI の `--srt` はセリフを順に `--gap` 秒あけて並べた時刻。
 - `src/tachie_studio/ymmp.py` — YMM4 のプロジェクト（.ymmp、UTF-8 BOM の JSON）を読む（#15）。`Timelines`（古い版は `Timeline`）、
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は

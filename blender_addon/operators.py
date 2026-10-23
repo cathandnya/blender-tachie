@@ -4373,8 +4373,15 @@ class TACHIE_OT_export_subtitles(bpy.types.Operator, ExportHelper):
         return {"FINISHED"}
 
 
-# 動画の書き出し設定: 名前 → (表示名, 幅, 高さ, fps)
-RENDER_PRESETS = {
+# 動画の書き出し設定: 名前 → (表示名, %)。書き出しの大きさ（タイムラインの解像度に対する %、resolution_percentage）と形式。タイムライン（立ち位置・字幕・
+# セリフのコマ・fps）には触らない（書き出すときに参照されるだけ）
+OUTPUT_PRESETS = {
+    "FULL": ("タイムラインと同じ大きさ（MP4）", 100),
+    "HALF": ("半分の大きさ（MP4、確認用・軽い）", 50),
+    "DOUBLE": ("2 倍の大きさ（MP4、1080p → 4K など）", 200),
+}
+# タイムライン（映像）の解像度・fps: 名前 → (表示名, 幅, 高さ, fps)。セリフの連番・立ち位置・大きさ・ストリップの長さ（フレーム数）がこれで決まる
+TIMELINE_PRESETS = {
     "FHD30": ("1920×1080 / 30fps（YouTube 標準）", 1920, 1080, 30),
     "FHD60": ("1920×1080 / 60fps", 1920, 1080, 60),
     "HD30": ("1280×720 / 30fps（軽い）", 1280, 720, 30),
@@ -4383,13 +4390,10 @@ RENDER_PRESETS = {
 }
 
 
-def apply_render_preset(scene, preset: str) -> bool:
-    """解像度・fps・MP4（H.264 / AAC）を設定する。解像度か fps が変わったら True。"""
-    _, w, h, fps = RENDER_PRESETS[preset]
+def apply_output_preset(scene, preset: str) -> None:
+    """書き出しの大きさと MP4（H.264 / AAC）を設定する。解像度・fps は変えない。"""
     r = scene.render
-    changed = (r.resolution_x, r.resolution_y, r.resolution_percentage) != (w, h, 100) or scene_fps(scene) != fps
-    r.resolution_x, r.resolution_y, r.resolution_percentage = w, h, 100
-    r.fps, r.fps_base = fps, 1.0
+    r.resolution_percentage = OUTPUT_PRESETS[preset][1]
     im = r.image_settings
     if hasattr(im, "media_type"):  # Blender 5: 動画は media_type を VIDEO にしてから
         im.media_type = "VIDEO"
@@ -4401,27 +4405,69 @@ def apply_render_preset(scene, preset: str) -> bool:
     r.use_sequencer = True
     if bpy.data.filepath:
         r.filepath = f"//render/{Path(bpy.data.filepath).stem}_"
+
+
+def timeline_changes(scene, preset: str) -> bool:
+    _, w, h, fps = TIMELINE_PRESETS[preset]
+    r = scene.render
+    return (r.resolution_x, r.resolution_y) != (w, h) or scene_fps(scene) != fps
+
+
+def apply_timeline_preset(scene, preset: str) -> bool:
+    """タイムラインの解像度・fps を設定する。変わったら True。"""
+    changed = timeline_changes(scene, preset)
+    _, w, h, fps = TIMELINE_PRESETS[preset]
+    r = scene.render
+    r.resolution_x, r.resolution_y = w, h
+    r.fps, r.fps_base = fps, 1.0
     return changed
 
 
-class TACHIE_OT_render_preset(bpy.types.Operator):
-    """動画の書き出し設定（解像度・フレームレート・MP4 / H.264 / AAC）をまとめて設定する"""
+def _has_placed(scene) -> bool:
+    sed = scene.sequence_editor
+    return sed is not None and any(s.get("tachie_id") or s.get("tachie_still") for s in sed.strips)
 
-    bl_idname = "tachie.render_preset"
+
+class TACHIE_OT_output_preset(bpy.types.Operator):
+    """書き出す動画の大きさと形式（MP4 / H.264 / AAC）を設定する（タイムラインの解像度・fps は変えない）"""
+
+    bl_idname = "tachie.output_preset"
     bl_label = "書き出し設定"
     bl_options = {"REGISTER", "UNDO"}
 
-    preset: bpy.props.EnumProperty(name="書き出し設定", items=[(k, v[0], "") for k, v in RENDER_PRESETS.items()])
+    preset: bpy.props.EnumProperty(name="書き出し設定", items=[(k, v[0], "") for k, v in OUTPUT_PRESETS.items()])
+
+    def execute(self, context):
+        apply_output_preset(seq_scene(context), self.preset)
+        self.report({"INFO"}, f"書き出し設定: {OUTPUT_PRESETS[self.preset][0]}")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_timeline_preset(bpy.types.Operator):
+    """タイムラインの解像度・フレームレートを設定する（セリフを置く前に決める。置いたあとに変えると位置・長さがずれる）"""
+
+    bl_idname = "tachie.timeline_preset"
+    bl_label = "タイムラインの解像度・fps"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: bpy.props.EnumProperty(name="タイムライン", items=[(k, v[0], "") for k, v in TIMELINE_PRESETS.items()])
+
+    def invoke(self, context, event):
+        scene = seq_scene(context)
+        if _has_placed(scene) and timeline_changes(scene, self.preset):
+            return context.window_manager.invoke_confirm(
+                self, event, title="タイムラインの解像度・fps を変えますか？", icon="WARNING", confirm_text="変える",
+                message="解像度を変えると置いてある立ち絵・字幕の位置と大きさが、fps を変えると（音声は秒の長さのまま、"
+                        "動画・立ち絵・字幕はフレーム数のままなので）位置と長さがずれます。"
+                        "変えたら「全セリフを再生成」で合わせてください")
+        return self.execute(context)
 
     def execute(self, context):
         scene = seq_scene(context)
-        changed = apply_render_preset(scene, self.preset)
-        sed = scene.sequence_editor
-        placed = sed is not None and any(s.get("tachie_id") or s.get("tachie_still") for s in sed.strips)
-        if changed and placed:
+        if apply_timeline_preset(scene, self.preset) and _has_placed(scene):
             self.report({"WARNING"}, "解像度かフレームレートが変わりました。置いてあるセリフは「全セリフを再生成」で合わせてください")
         else:
-            self.report({"INFO"}, f"書き出し設定: {RENDER_PRESETS[self.preset][0]}")
+            self.report({"INFO"}, f"タイムライン: {TIMELINE_PRESETS[self.preset][0]}")
         return {"FINISHED"}
 
 
@@ -4721,7 +4767,8 @@ _classes = (
     TACHIE_OT_remove_sound_effect,
     TACHIE_OT_add_sound_effect,
     TACHIE_OT_unset_bgm,
-    TACHIE_OT_render_preset,
+    TACHIE_OT_output_preset,
+    TACHIE_OT_timeline_preset,
     TACHIE_OT_export_characters,
 )
 

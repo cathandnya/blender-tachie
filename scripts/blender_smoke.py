@@ -1600,13 +1600,17 @@ assert ": " in srt_text.splitlines()[2]  # キャラ名付き
 run(bpy.ops.tachie.export_subtitles, filepath=str(srt), format="VTT")
 assert (out / "subtitles.vtt").read_text(encoding="utf-8").startswith("WEBVTT")
 print(srt_text.splitlines()[:3])
-# 書き出し設定のプリセット（セリフを置いたあとで fps を変えると再生成を案内する）
+# 書き出し設定は大きさ（%）と形式だけで、タイムラインの解像度・fps は変えない
 fps_before = (scene.render.fps, scene.render.resolution_x, scene.render.resolution_y)
-run(bpy.ops.tachie.render_preset, preset="FHD60")
+run(bpy.ops.tachie.output_preset, preset="HALF")
 r = scene.render
-assert (r.resolution_x, r.resolution_y, r.fps, r.image_settings.file_format, r.ffmpeg.codec, r.ffmpeg.audio_codec) == \
-    (1920, 1080, 60, "FFMPEG", "H264", "AAC")
+assert (r.fps, r.resolution_x, r.resolution_y) == fps_before
+assert (r.resolution_percentage, r.image_settings.file_format, r.ffmpeg.codec, r.ffmpeg.audio_codec) == (50, "FFMPEG", "H264", "AAC")
+# タイムラインの解像度・fps は別のボタン（セリフを置いたあとで変えると再生成を案内する）
+run(bpy.ops.tachie.timeline_preset, preset="FHD60")
+assert (r.resolution_x, r.resolution_y, r.fps) == (1920, 1080, 60)
 r.fps, r.resolution_x, r.resolution_y = fps_before  # 以降のテストは元の設定で
+r.resolution_percentage = 100
 r.image_settings.media_type = "IMAGE"
 # 声のエンジン（VOICEVOX 互換）: キャラごとに URL を指定する（ここでは同じエンジンを別の URL 表記で）
 # （VOICEVOX_URL で別のマシンを指定したときは、末尾に / を付けた表記にする）
