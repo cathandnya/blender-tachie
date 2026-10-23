@@ -1600,17 +1600,111 @@ assert ": " in srt_text.splitlines()[2]  # キャラ名付き
 run(bpy.ops.tachie.export_subtitles, filepath=str(srt), format="VTT")
 assert (out / "subtitles.vtt").read_text(encoding="utf-8").startswith("WEBVTT")
 print(srt_text.splitlines()[:3])
-# 書き出し設定は大きさ（%）と形式だけで、タイムラインの解像度・fps は変えない
-fps_before = (scene.render.fps, scene.render.resolution_x, scene.render.resolution_y)
-run(bpy.ops.tachie.output_preset, preset="HALF")
+# MP4 で書き出す設定（タイムラインの解像度・fps は変えない）
 r = scene.render
+fps_before = (r.fps, r.resolution_x, r.resolution_y)
+run(bpy.ops.tachie.video_format)
 assert (r.fps, r.resolution_x, r.resolution_y) == fps_before
-assert (r.resolution_percentage, r.image_settings.file_format, r.ffmpeg.codec, r.ffmpeg.audio_codec) == (50, "FFMPEG", "H264", "AAC")
-# タイムラインの解像度・fps は別のボタン（セリフを置いたあとで変えると再生成を案内する）
-run(bpy.ops.tachie.timeline_preset, preset="FHD60")
-assert (r.resolution_x, r.resolution_y, r.fps) == (1920, 1080, 60)
-r.fps, r.resolution_x, r.resolution_y = fps_before  # 以降のテストは元の設定で
-r.resolution_percentage = 100
+assert (r.image_settings.file_format, r.ffmpeg.codec, r.ffmpeg.audio_codec) == ("FFMPEG", "H264", "AAC")
+# fps・解像度を変える: 置いてあるものは時間（秒）と画面に対する位置・大きさを保って変換する
+from bl_ext.user_default.blender_tachie import timeline as timeline_mod  # noqa: E402
+
+assert timeline_mod.changed_from(scene) is None, timeline_mod.changed_from(scene)
+
+
+def timing():
+    """{id: (始まりの秒, 終わりの秒, 音声の長さの秒)}"""
+    fps = r.fps / r.fps_base
+    out = {}
+    for cid, (left, right, sts) in lines().items():
+        snd = next(x for x in sts if x.type == "SOUND")
+        out[cid] = ((left - scene.frame_start) / fps, (right - scene.frame_start) / fps, snd.duration / fps)
+    return out
+
+
+def check_stills():
+    for st in sed.strips:
+        if st.get("tachie_still"):
+            assert len(st.elements) == st.duration, (st.name, len(st.elements), st.duration)
+
+
+movie = sed.strips.new_movie("動画のテスト", str(out / "clip.mp4"), 1, max(x.right_handle for x in sed.strips) + 100)
+movie_left = movie.left_handle
+movie_len = movie.right_handle - movie.left_handle
+before_t = timing()
+before_size, before_sub = zunda.font_size, [x.font_size for x in sed.strips if x.type == "TEXT" and x.get("tachie_id")]
+
+
+def still_height():
+    """最初の立ち絵のコマの画像の高さ（PNG の IHDR）。画面の無い Blender では orig_height が読めないため。"""
+    st = next(x for x in sed.strips if x.get("tachie_still"))
+    data = (Path(bpy.path.abspath(st.directory)) / st.elements[0].filename).read_bytes()[16:24]
+    return int.from_bytes(data[4:8], "big")
+
+
+still_h = still_height()
+run(bpy.ops.tachie.timeline_settings, fps="60", size="1080")
+assert (r.fps, r.resolution_x, r.resolution_y) == (60, 1920, 1080)
+after_t = timing()
+for cid, (a0, a1, d) in before_t.items():
+    b0, b1, e = after_t[cid]
+    assert abs(a0 - b0) <= 1 / 30 and abs(a1 - b1) <= 1 / 30 and abs(d - e) <= 1 / 30, (cid, before_t[cid], after_t[cid])
+    snd = sound(cid)
+    # 動きの json は書き換えず（元に戻すで戻らないため）、読むときに今の fps で数え直す
+    motion_json = Path(bpy.path.abspath(snd.sound.filepath)).with_suffix(".json")
+    assert ops.LineMotion.load(motion_json).fps == 30
+    motion = motion_mod.load_motion(motion_json, 60)
+    assert motion.fps == 60 and motion.frames == snd["tachie_frames"], (motion.fps, motion.frames, snd["tachie_frames"])
+check_stills()
+assert timeline_mod.changed_from(scene) is None
+# 動画は素材の 1 コマ = シーンの 1 コマなので、速度の補正（フレーム番号）を重ねて同じ速さで再生する
+movie = sed.strips["動画のテスト"]
+assert movie.left_handle - scene.frame_start == (movie_left - scene.frame_start) * 2
+assert movie.right_handle - movie.left_handle == movie_len * 2
+speed = next(x for x in sed.strips if x.type == "SPEED" and x.input_1 == movie)
+from bl_ext.user_default.blender_tachie import ymmp_media  # noqa: E402
+
+keys = [tuple(k.co) for k in ymmp_media._keyframes(scene, speed, "speed_frame_number")]
+assert keys == [(movie.left_handle, 0), (movie.right_handle, movie_len)], keys  # 両端は前と同じ素材のコマ
+# 解像度（縦横比は同じ）: px の値（文字の大きさ）は同じ比で、立ち絵は大きく作り直す
+run(bpy.ops.tachie.timeline_settings, fps="60", size="2160")
+assert (r.resolution_x, r.resolution_y) == (3840, 2160) and abs(zunda.font_size - before_size * 2) < 1e-4
+assert still_height() > still_h * 1.8, (still_height(), still_h)
+check_stills()
+# 戻すと元のタイミング・大きさ
+run(bpy.ops.tachie.timeline_settings, fps="30", size="1080")
+assert (r.fps, r.resolution_x, r.resolution_y) == fps_before
+for cid, t in timing().items():
+    assert all(abs(x - y) <= 1 / 30 for x, y in zip(t, before_t[cid])), (cid, t, before_t[cid])
+assert abs(zunda.font_size - before_size) < 1e-4
+assert [x.font_size for x in sed.strips if x.type == "TEXT" and x.get("tachie_id")] == before_sub
+movie = sed.strips["動画のテスト"]
+assert movie.left_handle == movie_left and movie.right_handle - movie.left_handle == movie_len
+check_stills()
+# 出力タブで直接変えたら知らせ、合わせる・戻すができる
+r.fps = 24
+assert timeline_mod.changed_from(scene) == (30, 1920, 1080)
+run(bpy.ops.tachie.timeline_revert)
+assert r.fps == 30 and timeline_mod.changed_from(scene) is None
+r.fps = 60
+run(bpy.ops.tachie.timeline_follow)
+assert timeline_mod.changed_from(scene) is None
+for cid, t in timing().items():
+    assert all(abs(x - y) <= 1 / 30 for x, y in zip(t, before_t[cid])), (cid, t, before_t[cid])
+run(bpy.ops.tachie.timeline_settings, fps="30", size="1080")
+r.resolution_x = 1000  # 縦横比が変わったら変換しない
+assert timeline_mod.changed_from(scene) is not None
+fails_plain = False
+try:
+    bpy.ops.tachie.timeline_follow()
+except RuntimeError as e:
+    fails_plain = "縦横比" in str(e)
+assert fails_plain
+run(bpy.ops.tachie.timeline_revert)
+assert (r.fps, r.resolution_x, r.resolution_y) == fps_before
+for x in [x for x in sed.strips if x.type == "SPEED" and x.input_1 and x.input_1.name == "動画のテスト"]:
+    sed.strips.remove(x)
+sed.strips.remove(sed.strips["動画のテスト"])
 r.image_settings.media_type = "IMAGE"
 # 声のエンジン（VOICEVOX 互換）: キャラごとに URL を指定する（ここでは同じエンジンを別の URL 表記で）
 # （VOICEVOX_URL で別のマシンを指定したときは、末尾に / を付けた表記にする）

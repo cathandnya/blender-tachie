@@ -49,6 +49,25 @@ class TACHIE_MT_characters(bpy.types.Menu):
         self.layout.operator("tachie.reload_character", icon="FILE_REFRESH")
 
 
+def draw_timeline_changed(layout, scene) -> None:
+    """出力タブなどで fps・解像度が置いたときから変わっていれば知らせ、合わせる・戻すボタンを出す。"""
+    from . import timeline
+
+    old = timeline.changed_from(scene)
+    if old is None:
+        return
+    fps, w, h = timeline.current(scene)
+    box = layout.box()
+    box.alert = True
+    box.label(text=f"fps・解像度が変わっています: {old[1]}×{old[2]} / {old[0]:g}fps → {w}×{h} / {fps:g}fps",
+              icon="ERROR")
+    box.label(text="このままでは音声と立ち絵・字幕の時間や大きさが合いません")
+    row = box.row(align=True)
+    if timeline.same_shape((old[1], old[2]), (w, h)):
+        row.operator("tachie.timeline_follow", text="合わせる（変換する）")
+    row.operator("tachie.timeline_revert", text="元に戻す")
+
+
 class TACHIE_PT_main(_Panel, bpy.types.Panel):
     bl_label = "Blender Tachie"
 
@@ -67,6 +86,7 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         col.operator("tachie.character_move", text="", icon="TRIA_UP").direction = "UP"
         col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
 
+        draw_timeline_changed(layout, seq_scene(context))
         ch = s.character()
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
@@ -812,13 +832,16 @@ class TACHIE_PT_export(_Panel, bpy.types.Panel):
         r = seq_scene(context).render
         fps = r.fps / r.fps_base
         video = r.image_settings.file_format == "FFMPEG"
-        # タイムライン（解像度・fps）と書き出し（大きさの % と形式）は別。書き出し設定はタイムラインを変えない
-        layout.label(text=f"タイムライン: {r.resolution_x}×{r.resolution_y} / {fps:g}fps", icon="SEQUENCE")
-        layout.operator_menu_enum("tachie.timeline_preset", "preset", text="タイムラインの解像度・fps", icon="PRESET")
+        # タイムラインの fps・解像度（基本的には最初に決める。変えると置いてあるものを変換する）
+        row = layout.row(align=True)
+        row.label(text=f"{r.resolution_x}×{r.resolution_y} / {fps:g}fps", icon="SEQUENCE")
+        row.operator("tachie.timeline_settings", text="変える", icon="PREFERENCES")
+        # 書き出しの大きさ（%）・形式は Blender の出力タブ（タイムラインは変わらない）
         summary = f"書き出し: {r.resolution_x * r.resolution_percentage // 100}×{r.resolution_y * r.resolution_percentage // 100}" \
                   " / " + (f"{r.ffmpeg.format}（{r.ffmpeg.codec}）" if video else r.image_settings.file_format)
         layout.label(text=summary, icon="OUTPUT")
-        layout.operator_menu_enum("tachie.output_preset", "preset", text="書き出し設定を選ぶ", icon="PRESET")
+        if not video:
+            layout.operator("tachie.video_format", icon="FILE_MOVIE")
         row = layout.row()
         row.scale_y = 1.2
         op = row.operator("render.render", text="動画を書き出す", icon="RENDER_ANIMATION")

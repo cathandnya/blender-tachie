@@ -505,6 +505,9 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             render.resolution_x, render.resolution_y, render.resolution_percentage = (project.width, project.height,
                                                                                       100)
             render.fps, render.fps_base = round(project.fps), 1.0
+            from . import timeline
+
+            timeline.remember(scene, force=True)  # 前から置いてあったものは下の案内のとおり作り直す
             placed_before = scene.sequence_editor and any(
                 s.get("tachie_id") or s.get("tachie_still") for s in scene.sequence_editor.strips)
             if placed_before and before != (render.resolution_x, render.resolution_y, scene_fps(scene)):

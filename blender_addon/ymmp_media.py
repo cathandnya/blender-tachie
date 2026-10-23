@@ -171,6 +171,9 @@ class MediaPlacer:
                  find_font: Callable[[str], str | None], behind: bool | None = None):
         """`behind` は映像を全部立ち絵より奥（True）・手前（False）に置く（テンプレート）。None なら YMM4 のレイヤーで決める。"""
         self.scene = seq_scene(context)
+        from . import timeline
+
+        timeline.remember(self.scene)
         self.effects_dir = output_dir(context) / "media"  # 縁取りなどを焼き込んだ画像
         self.behind = behind
         self.project = project

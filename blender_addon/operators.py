@@ -1,6 +1,7 @@
 import dataclasses
 import hashlib
 import json
+import math
 import os
 import sys
 import shutil
@@ -16,6 +17,7 @@ from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import channels as lanes
+from . import timeline
 from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, apply_text_size, clear_text_input, place_text, still_flip, system_fonts, text_offset, text_style
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
@@ -152,6 +154,7 @@ def _migrate_on_load(*_args):
                 migrate_parts(scene)
             except ERRORS as e:
                 print("表情のパーツを書けません:", e)
+            timeline.remember(scene)  # 前の版の .blend は置いたときの fps を覚えていない（セリフの動きの fps）
     _applied_signatures.clear()  # 前に開いていた .blend の記録（同じ名前のシーンでも別のもの）
     # ファイルを開くと Blender は登録してあったタイマー（persistent でないもの）を消すので、待っていた自動の反映の印も戻す
     # （戻さないと「待っている」のまま残り、以後の自動の反映が止まる）
@@ -756,6 +759,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     `parts` はセリフの表情のパーツ（None なら合成したときのプリセット `clip.extra["expression"]` のパーツを写す）。
     """
     scene = seq_scene(context)
+    timeline.remember(scene)  # 最初に置いたときの fps・解像度（出力タブで変えられたら知らせる）
     settings = scene.tachie
     label = clip.extra.get("expression", "")
     if parts is None:
@@ -1510,6 +1514,7 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     写す（`preset` は表示用の名前）。セリフ・表情ストリップの区間は、このパーツの上にそのパーツを重ねる。
     `reuse` は作り直す前の立ち絵（`remake_still`）。同じ位置・長さならそのストリップのコマを書き換える。"""
     scene = seq_scene(context)
+    timeline.remember(scene)
     sed = scene.sequence_editor or scene.sequence_editor_create()
     lanes.ensure_layout(scene)  # 立ち絵のレーン（ch.channel）に置く
     if scene.view_settings.view_transform != "Standard":
@@ -1540,12 +1545,12 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
             caches[key] = character_cache(context, ch, look, clean_parts(extra, ch, problems))
         return caches[key]
 
-    from .motion import motion_paths
+    from .motion import load_motion, motion_paths
 
     motion_path = motion_paths(sed, lines_dir)
     for clip_id, offset, line_parts, length in talking:
         path = motion_path(clip_id)
-        motion = LineMotion.load(path) if path.is_file() else None
+        motion = load_motion(path, scene_fps(scene)) if path.is_file() else None
         if motion is None or motion.frames != length:
             if problems is not None:
                 problems.append(f"{ch.name}のセリフ {clip_id} の口の動きがありません（再生成すると口パクします）")
@@ -4373,27 +4378,9 @@ class TACHIE_OT_export_subtitles(bpy.types.Operator, ExportHelper):
         return {"FINISHED"}
 
 
-# 動画の書き出し設定: 名前 → (表示名, %)。書き出しの大きさ（タイムラインの解像度に対する %、resolution_percentage）と形式。タイムライン（立ち位置・字幕・
-# セリフのコマ・fps）には触らない（書き出すときに参照されるだけ）
-OUTPUT_PRESETS = {
-    "FULL": ("タイムラインと同じ大きさ（MP4）", 100),
-    "HALF": ("半分の大きさ（MP4、確認用・軽い）", 50),
-    "DOUBLE": ("2 倍の大きさ（MP4、1080p → 4K など）", 200),
-}
-# タイムライン（映像）の解像度・fps: 名前 → (表示名, 幅, 高さ, fps)。セリフの連番・立ち位置・大きさ・ストリップの長さ（フレーム数）がこれで決まる
-TIMELINE_PRESETS = {
-    "FHD30": ("1920×1080 / 30fps（YouTube 標準）", 1920, 1080, 30),
-    "FHD60": ("1920×1080 / 60fps", 1920, 1080, 60),
-    "HD30": ("1280×720 / 30fps（軽い）", 1280, 720, 30),
-    "UHD30": ("3840×2160 / 30fps（4K）", 3840, 2160, 30),
-    "SHORT30": ("1080×1920 / 30fps（縦長・ショート）", 1080, 1920, 30),
-}
-
-
-def apply_output_preset(scene, preset: str) -> None:
-    """書き出しの大きさと MP4（H.264 / AAC）を設定する。解像度・fps は変えない。"""
+def apply_video_format(scene) -> None:
+    """書き出しを MP4（H.264 / AAC）にする。解像度・fps（タイムライン）は変えない。"""
     r = scene.render
-    r.resolution_percentage = OUTPUT_PRESETS[preset][1]
     im = r.image_settings
     if hasattr(im, "media_type"):  # Blender 5: 動画は media_type を VIDEO にしてから
         im.media_type = "VIDEO"
@@ -4407,67 +4394,155 @@ def apply_output_preset(scene, preset: str) -> None:
         r.filepath = f"//render/{Path(bpy.data.filepath).stem}_"
 
 
-def timeline_changes(scene, preset: str) -> bool:
-    _, w, h, fps = TIMELINE_PRESETS[preset]
-    r = scene.render
-    return (r.resolution_x, r.resolution_y) != (w, h) or scene_fps(scene) != fps
+class TACHIE_OT_video_format(bpy.types.Operator):
+    """書き出しを MP4（H.264 / AAC）にする（タイムラインの解像度・fps は変えない）"""
 
-
-def apply_timeline_preset(scene, preset: str) -> bool:
-    """タイムラインの解像度・fps を設定する。変わったら True。"""
-    changed = timeline_changes(scene, preset)
-    _, w, h, fps = TIMELINE_PRESETS[preset]
-    r = scene.render
-    r.resolution_x, r.resolution_y = w, h
-    r.fps, r.fps_base = fps, 1.0
-    return changed
-
-
-def _has_placed(scene) -> bool:
-    sed = scene.sequence_editor
-    return sed is not None and any(s.get("tachie_id") or s.get("tachie_still") for s in sed.strips)
-
-
-class TACHIE_OT_output_preset(bpy.types.Operator):
-    """書き出す動画の大きさと形式（MP4 / H.264 / AAC）を設定する（タイムラインの解像度・fps は変えない）"""
-
-    bl_idname = "tachie.output_preset"
-    bl_label = "書き出し設定"
+    bl_idname = "tachie.video_format"
+    bl_label = "MP4（H.264 / AAC）で書き出す設定にする"
     bl_options = {"REGISTER", "UNDO"}
 
-    preset: bpy.props.EnumProperty(name="書き出し設定", items=[(k, v[0], "") for k, v in OUTPUT_PRESETS.items()])
-
     def execute(self, context):
-        apply_output_preset(seq_scene(context), self.preset)
-        self.report({"INFO"}, f"書き出し設定: {OUTPUT_PRESETS[self.preset][0]}")
+        apply_video_format(seq_scene(context))
         return {"FINISHED"}
 
 
-class TACHIE_OT_timeline_preset(bpy.types.Operator):
-    """タイムラインの解像度・フレームレートを設定する（セリフを置く前に決める。置いたあとに変えると位置・長さがずれる）"""
+def _fps_items(self, context):
+    fps = round(scene_fps(seq_scene(context)), 3)
+    values = sorted(set(timeline.FPS_CHOICES) | {fps})
+    _fps_items.cache = [(f"{v:g}", f"{v:g}fps", "") for v in values]  # Blender は items を覚えないので持っておく
+    return _fps_items.cache
 
-    bl_idname = "tachie.timeline_preset"
-    bl_label = "タイムラインの解像度・fps"
+
+def _size_items(self, context):
+    scene = seq_scene(context)
+    w, h = scene.render.resolution_x, scene.render.resolution_y
+    if timeline.baseline(scene) is None:  # 何も置いていなければ、選んだ形
+        _, w, h = timeline.SHAPES[self.shape]
+    _size_items.cache = [(str(short), "{}×{}".format(*timeline.size_for(w, h, short)), "")
+                         for short in sorted(set(timeline.SIZE_CHOICES) | {min(scene.render.resolution_x,
+                                                                                scene.render.resolution_y)})]
+    return _size_items.cache
+
+
+def set_timeline(scene, fps: float, width: int, height: int) -> None:
+    r = scene.render
+    r.resolution_x, r.resolution_y = width, height
+    if abs(fps - round(fps)) < 1e-6:
+        r.fps, r.fps_base = round(fps), 1.0
+    else:  # 29.97 など（NTSC）
+        r.fps = math.ceil(fps)
+        r.fps_base = r.fps / fps
+
+
+def change_timeline(context, old: tuple, problems: list) -> None:
+    """fps・解像度を `old` から今の値に変えたシーンの置いてあるものを変換し、立ち絵を作り直す。"""
+    scene = seq_scene(context)
+    timeline.convert(context, old, problems)
+    sed = scene.sequence_editor
+    if sed is None:
+        return
+    for strip in [s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_still")]:
+        try:
+            remake_still(context, strip, problems=problems)
+        except ERRORS as e:
+            problems.append(f"{strip.name}: {e}")
+    refresh_faces(context, problems)
+
+
+def _report_problems(op, problems: list) -> None:
+    for p in problems:
+        op.report({"WARNING"}, p)
+
+
+class TACHIE_OT_timeline_settings(bpy.types.Operator):
+    """タイムラインの fps・解像度を変える。置いてあるものは時間（秒）と画面に対する位置・大きさを保って変換する
+    （縦横比は変えられない。基本的には最初に決める）"""
+
+    bl_idname = "tachie.timeline_settings"
+    bl_label = "fps・解像度を変える"
     bl_options = {"REGISTER", "UNDO"}
 
-    preset: bpy.props.EnumProperty(name="タイムライン", items=[(k, v[0], "") for k, v in TIMELINE_PRESETS.items()])
+    shape: bpy.props.EnumProperty(name="形", items=[(k, v[0], "") for k, v in timeline.SHAPES.items()],
+                                  description="画面の形（何も置いていないときだけ選べる）")
+    size: bpy.props.EnumProperty(name="解像度", items=_size_items)
+    fps: bpy.props.EnumProperty(name="fps", items=_fps_items)
 
     def invoke(self, context, event):
+        fps, w, h = timeline.current(seq_scene(context))
+        self.shape = "TALL" if h > w else "SQUARE" if h == w else "WIDE"
+        self.size, self.fps = str(min(w, h)), f"{round(fps, 3):g}"
+        return context.window_manager.invoke_props_dialog(self, width=380, confirm_text="変える")
+
+    def draw(self, context):
         scene = seq_scene(context)
-        if _has_placed(scene) and timeline_changes(scene, self.preset):
-            return context.window_manager.invoke_confirm(
-                self, event, title="タイムラインの解像度・fps を変えますか？", icon="WARNING", confirm_text="変える",
-                message="解像度を変えると置いてある立ち絵・字幕の位置と大きさが、fps を変えると（音声は秒の長さのまま、"
-                        "動画・立ち絵・字幕はフレーム数のままなので）位置と長さがずれます。"
-                        "変えたら「全セリフを再生成」で合わせてください")
-        return self.execute(context)
+        fps, w, h = timeline.current(scene)
+        layout = self.layout
+        layout.label(text=f"今: {w}×{h} / {fps:g}fps")
+        placed = timeline.baseline(scene) is not None
+        if not placed:
+            layout.prop(self, "shape")
+        layout.prop(self, "size")
+        layout.prop(self, "fps")
+        if placed:
+            layout.label(text="置いてあるものは、時間と画面での位置・大きさを保って変換します", icon="INFO")
+            layout.label(text="縦横比は変えられません（基本的には最初に決めます）")
 
     def execute(self, context):
         scene = seq_scene(context)
-        if apply_timeline_preset(scene, self.preset) and _has_placed(scene):
-            self.report({"WARNING"}, "解像度かフレームレートが変わりました。置いてあるセリフは「全セリフを再生成」で合わせてください")
-        else:
-            self.report({"INFO"}, f"タイムライン: {TIMELINE_PRESETS[self.preset][0]}")
+        fps, w, h = timeline.current(scene)
+        old = timeline.changed_from(scene) or (fps, w, h)  # 出力タブで変えてあれば、置いたときの値から
+        if timeline.baseline(scene) is None:
+            _, w, h = timeline.SHAPES[self.shape]
+        width, height = timeline.size_for(w, h, int(self.size))
+        set_timeline(scene, float(self.fps), width, height)
+        problems: list[str] = []
+        try:
+            change_timeline(context, old, problems)
+        except ValueError as e:
+            set_timeline(scene, *old)
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        _report_problems(self, problems)
+        self.report({"INFO"}, f"タイムライン: {width}×{height} / {float(self.fps):g}fps")
+        return {"FINISHED"}
+
+
+class TACHIE_OT_timeline_follow(bpy.types.Operator):
+    """出力タブなどで変えた fps・解像度に、置いてあるものを合わせる（時間と画面での位置・大きさを保って変換する）"""
+
+    bl_idname = "tachie.timeline_follow"
+    bl_label = "今の fps・解像度に合わせる"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return timeline.changed_from(seq_scene(context)) is not None
+
+    def execute(self, context):
+        problems: list[str] = []
+        try:
+            change_timeline(context, timeline.changed_from(seq_scene(context)), problems)
+        except ValueError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        _report_problems(self, problems)
+        return {"FINISHED"}
+
+
+class TACHIE_OT_timeline_revert(bpy.types.Operator):
+    """fps・解像度を、置いたときの値に戻す（置いてあるものは変えない）"""
+
+    bl_idname = "tachie.timeline_revert"
+    bl_label = "置いたときの fps・解像度に戻す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return timeline.changed_from(seq_scene(context)) is not None
+
+    def execute(self, context):
+        set_timeline(seq_scene(context), *timeline.changed_from(seq_scene(context)))
+        refresh_faces(context)
         return {"FINISHED"}
 
 
@@ -4767,8 +4842,10 @@ _classes = (
     TACHIE_OT_remove_sound_effect,
     TACHIE_OT_add_sound_effect,
     TACHIE_OT_unset_bgm,
-    TACHIE_OT_output_preset,
-    TACHIE_OT_timeline_preset,
+    TACHIE_OT_video_format,
+    TACHIE_OT_timeline_settings,
+    TACHIE_OT_timeline_follow,
+    TACHIE_OT_timeline_revert,
     TACHIE_OT_export_characters,
 )
 

@@ -14,11 +14,24 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   「」の中で改行可）と CSV / TSV（`load_script` が拡張子で選ぶ。3 列目以降は無視、UTF-8 で読めなければ cp932）。
   キャラ名の欄の `(表情)` とセリフ末尾の `{発音}` はどの形でも使える。アドオンのテキストは名前の拡張子で形を選ぶ。
 - `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
-- 書き出し設定（`operators.OUTPUT_PRESETS`、`apply_output_preset`）は書き出すときの大きさ（`resolution_percentage`）と形式だけで、
-  タイムラインの解像度・fps は変えない（fps を変えると音声は秒、動画・立ち絵・字幕はフレーム数を保つのでタイムラインがずれる）。
-  Blender 5 は `image_settings.media_type = "VIDEO"` にしてから `file_format = "FFMPEG"`。タイムラインの解像度・fps は別の
-  `TIMELINE_PRESETS`（`tachie.timeline_preset`）で、セリフの連番・立ち位置・大きさに効くので、置いたあとに変えるときは確かめて
-  （`invoke_confirm`）全再生成を案内する。
+- タイムラインの fps・解像度（`blender_addon/timeline.py`、`operators.TACHIE_OT_timeline_settings`、「書き出し」パネルの「変える」）:
+  基本的には最初に決める（README にも書いた）。置いたあとに変えると、時間（秒）と画面に対する位置・大きさを保って変換する
+  （`timeline.convert` → 立ち絵を全部作り直す `operators.change_timeline`）。fps: Blender は fps を変えると音声だけ長さと頭の
+  切り取りを秒のまま数え直し（位置はフレーム数のまま）、他のストリップ・キーフレームはフレーム数のまま。`_retime` は全ストリップを
+  シーンの開始からの比で動かし（伸ばすときは後ろから、縮めるときは前から。重なると Blender が別のチャンネルへ逃がすため）、
+  セリフの動きの json を `render.retime_motion`（声の長さと音量は wav から、口の形は同じ時刻のコマ。合成し直さない）で数え直して
+  `tachie_frames` と字幕の長さに入れ、キーフレーム（全スロットの channelbag）・マーカー・frame_end を写す。動画は素材の
+  1 コマ = シーンの 1 コマなので SPEED（フレーム番号の直線キー、キーを写したあとに打つ）を重ねる。SPEED の元の動画・
+  retiming キーのある動画・すぐ上が埋まっている動画・メタストリップの中は扱わず報告する。解像度（縦横比は同じ、`same_shape`。
+  短い辺で選ぶ `size_for`、偶数）: `_rescale` が px の値（テキストの font_size、画像・動画の offset と拡大率、そのキーフレーム、
+  `tachie_sub_size` / `tachie_sub_width`、キャラの font_size / subtitle_width（update で字幕に当て直す）、見出しの大きさ）を写す。
+  アドオンの立ち絵は作り直す（合成キャッシュは画面の高さで大きさが決まる）。置いたときの fps・解像度はシーンの
+  `timeline_fps` / `timeline_width` / `timeline_height`（`timeline.remember`: 何も置いていないとき・`place_strips` / `place_still` /
+  `MediaPlacer` の頭・変換したとき・`load_post`。前の版の .blend はセリフの動きの json の fps）に覚え、出力タブで直接変えられたら
+  （`changed_from`）サイドバーの上（`panels.draw_timeline_changed`）に知らせて「合わせる」（`tachie.timeline_follow`）・
+  「元に戻す」（`tachie.timeline_revert`、音声は Blender が秒から数え直すので元に戻る）を出す。書き出しの形式は
+  `tachie.video_format`（MP4 / H.264 / AAC。Blender 5 は `image_settings.media_type = "VIDEO"` にしてから `file_format = "FFMPEG"`）、
+  書き出す大きさは Blender の出力タブの %（タイムラインは変わらない）。
 - `src/tachie_studio/srt.py` — 字幕ファイル（SRT / WebVTT）。アドオンの「書き出し」パネルは置いた字幕ストリップの位置（シーン開始 = 0 秒、ミュートは除く）、CLI の `--srt` はセリフを順に `--gap` 秒あけて並べた時刻。
 - `src/tachie_studio/ymmp.py` — YMM4 のプロジェクト（.ymmp、UTF-8 BOM の JSON）を読む（#15）。`Timelines`（古い版は `Timeline`）、
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は
