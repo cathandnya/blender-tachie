@@ -667,7 +667,7 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     script: PointerProperty(name="台本", type=bpy.types.Text,
                             description="テキストエディタの台本（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」）")
     line_gap: FloatProperty(name="セリフの間隔", default=0.2, min=0.0, max=10.0, unit="TIME_ABSOLUTE",
-                            description="台本を流し込むときのセリフとセリフの間（秒）")
+                            description="台本を読み込むときのセリフとセリフの間（秒）")
 
     # レーン（キャラ × 役割のチャンネル）のいちばん下。下の番号は動画・背景・効果音・BGM の場所
     channel_base: IntProperty(name="いちばん下のチャンネル", default=10, min=1, max=128, update=_update_lanes,

@@ -1546,7 +1546,7 @@ assert abs(again["ずんだもん"].audio["after"] - 0.3) < 1e-6 and again["四�
 assert again["ずんだもん"].layout["period"] == 0.5 and "enter" not in again["ずんだもん"].layout
 print(exported.read_text(encoding="utf-8"))
 
-# 台本の流し込み（テキストエディタの台本、表情つき）
+# 台本の読み込み（テキストエディタの台本、表情つき）
 for st in [st for st in sed.strips if st.get("tachie_id") or st.get("tachie_still")]:
     sed.strips.remove(st)
 scene.frame_end = 1  # 置いたセリフ・立ち絵の分だけ伸びる
@@ -1556,7 +1556,7 @@ s.script = text
 s.line_gap = 0.2
 scene.frame_current = 1
 run(bpy.ops.tachie.import_script, use_text=True)
-dump("台本を流し込み")
+dump("台本を読み込み")
 placed = list(lines().values())
 assert len(placed) == 5
 assert [v[2][0].get("tachie_expression") for v in placed] == ["", "", "困り", "おこ", "ドヤ"]

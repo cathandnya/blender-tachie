@@ -491,7 +491,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
             return {"CANCELLED"}
         if not self.pending and self.confirm and prepare_pending(settings, project, self.match_video,
                                                                  self.import_media):
-            self.report({"WARNING"}, "見つからない素材・ファイルがあります。「台本の流し込み」で場所を指定して"
+            self.report({"WARNING"}, "見つからない素材・ファイルがあります。「台本の読み込み」で場所を指定して"
                                      "「読み込む」を押してください")
             return {"FINISHED"}
         if self.pending or self.confirm:

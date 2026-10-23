@@ -40,7 +40,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   アドオンは `blender_addon/ymmp_import.py`（`tachie.import_ymmp`）: 立ち絵の無いキャラは素材を探さずに追加する。素材フォルダ（`resolve_material`）と画像など（`MediaFinder`）は
   まず YMM4 の元のパスの後ろの部分を .ymmp のフォルダとその上 3 階層から探す（`ymmp.find_by_tail`。Windows と同じ並びで
   持ってくれば指定不要）。素材は次に `ymmp_material_root` → `ymmp_media_root` → .ymmp のフォルダの下（2 階層）から同じ名前。
-  ファイル選択から読むとき（`confirm`）に見つからないものがあれば、すぐには読まず `ymmp_pending*` に入れて「台本の流し込み」
+  ファイル選択から読むとき（`confirm`）に見つからないものがあれば、すぐには読まず `ymmp_pending*` に入れて「台本の読み込み」
   パネルに確認の欄を出し（`panels.draw_ymmp_pending`。読み込みのファイル選択の中からはフォルダを選べないため）、キャラごとの
   素材フォルダ・探す場所を指定して「読み込む」（`pending`）。指定した素材の隣から他のキャラも探す（`fill_pending_folders`）。
   素材フォルダは眉・目・口などのフォルダがあるものだけ使う（`material_problem`。写真のフォルダを素材にするとシンプル立ち絵として
@@ -129,7 +129,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `tachie_text` も `\n` の書き方のまま持ち（本当の改行はパネルの欄で見えない）、字幕（`properties.apply_subtitle` の
   `subtitle.breaks`）・字幕ファイル・読み上げ（`operators._Client.audio_query`）のときに改行にする。YMM4 のセリフの改行も
   `place_strips` が `\n` にそろえる（`subtitle.mark_breaks`）。
-  台本の流し込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。
+  台本の読み込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。
   再生成のテキストは、パネルで編集する選択中のストリップから取る（他のストリップは古いまま）。表情（パーツ）は引き継ぐ
   （`regenerate` に `preset` を渡したときだけ、そのプリセットのパーツを写す）。
   「選択中」は選ばれているアクティブなストリップだけ（`operators.active_selected`。Blender は選択を外してもアクティブな

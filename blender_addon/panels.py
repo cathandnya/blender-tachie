@@ -688,7 +688,7 @@ def draw_ymmp_pending(layout, s) -> None:
 
 
 class TACHIE_PT_script(_Panel, bpy.types.Panel):
-    bl_label = "台本の流し込み"
+    bl_label = "台本の読み込み"
     bl_parent_id = "TACHIE_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -703,8 +703,8 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
         row.prop(s, "script", text="")
         sub = row.row(align=True)
         sub.enabled = s.script is not None
-        sub.operator("tachie.import_script", text="流し込む", icon="PLAY").use_text = True
-        layout.operator("tachie.import_script", text="ファイルから流し込む", icon="FILE_TEXT").use_text = False
+        sub.operator("tachie.import_script", text="読み込む", icon="PLAY").use_text = True
+        layout.operator("tachie.import_script", text="ファイルから読み込む", icon="FILE_TEXT").use_text = False
         layout.operator("tachie.import_ymmp", icon="IMPORT")
         if s.ymmp_pending:
             draw_ymmp_pending(layout, s)

@@ -4409,7 +4409,7 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
     YMM4 の台本（キャラ名「セリフ」、CSV・TSV）も読める）"""
 
     bl_idname = "tachie.import_script"
-    bl_label = "台本を流し込む"
+    bl_label = "台本を読み込む"
     bl_options = {"REGISTER", "UNDO"}
 
     filename_ext = ".txt"
