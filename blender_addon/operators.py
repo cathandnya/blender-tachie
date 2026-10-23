@@ -4317,9 +4317,11 @@ class TACHIE_OT_add_sound_effect(bpy.types.Operator):
         return {"FINISHED"}
 
 
+DEFAULT_OUTPUTS = ("", "/tmp/", "/tmp\\", "\\tmp\\")  # Blender の既定の書き出し先（変えていない）
+
+
 def apply_video_format(scene) -> None:
-    """動画の書き出し設定（MP4 / H.264 / AAC、画質「高」、ステレオ 48kHz 192kbps、シーケンサーを書き出す、書き出し先は
-    .blend のフォルダの render/）。解像度・fps・%（タイムライン）は変えない。"""
+    """動画の書き出し設定（MP4 / H.264 / AAC、画質「高」、ステレオ 48kHz 192kbps）。解像度・fps・%（タイムライン）は変えない。"""
     r = scene.render
     im = r.image_settings
     if hasattr(im, "media_type"):  # Blender 5: 動画は media_type を VIDEO にしてから
@@ -4329,22 +4331,49 @@ def apply_video_format(scene) -> None:
     f.format, f.codec = "MPEG4", "H264"
     f.constant_rate_factor, f.ffmpeg_preset = "HIGH", "GOOD"
     f.audio_codec, f.audio_channels, f.audio_mixrate, f.audio_bitrate = "AAC", "STEREO", 48000, 192
-    r.use_sequencer = True
-    if bpy.data.filepath:
+
+
+def prepare_render(scene) -> list[str]:
+    """動画を書き出す前の設定。まだ動画の形式でなければ MP4 にし（動画の形式なら変えた設定のまま）、シーケンサーを
+    書き出す。書き出し先が Blender の既定のままなら .blend のフォルダの render/。変えたものの説明を返す。"""
+    r = scene.render
+    done = []
+    if r.image_settings.file_format != "FFMPEG":
+        apply_video_format(scene)
+        done.append("MP4（H.264 / AAC）にしました")
+    elif r.ffmpeg.audio_codec == "NONE":  # 音声なしの動画だとセリフの声が入らない
+        r.ffmpeg.audio_codec, r.ffmpeg.audio_channels, r.ffmpeg.audio_mixrate = "AAC", "STEREO", 48000
+        done.append("音声を AAC で入れるようにしました")
+    if not r.use_sequencer:
+        r.use_sequencer = True
+        done.append("シーケンサーを書き出すようにしました")
+    if bpy.data.filepath and r.filepath in DEFAULT_OUTPUTS:
         r.filepath = f"//render/{Path(bpy.data.filepath).stem}_"
+        done.append(f"書き出し先を {r.filepath} にしました")
+    return done
 
 
-class TACHIE_OT_video_format(bpy.types.Operator):
-    """動画の書き出し設定（MP4 / H.264 / AAC、画質「高」、ステレオ 48kHz 192kbps、シーケンサーを書き出す、書き出し先は .blend の
-    フォルダの render/）にする。解像度・fps・% は変えない"""
+class TACHIE_OT_render_video(bpy.types.Operator):
+    """動画を書き出す（出力タブの設定で。まだ動画の形式でなければ MP4 / H.264 / AAC にし、書き出し先が既定のままなら
+    .blend のフォルダの render/ にする。解像度・fps・% は変えない）"""
 
-    bl_idname = "tachie.video_format"
-    bl_label = "MP4（H.264 / AAC）の書き出し設定にする"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_idname = "tachie.render_video"
+    bl_label = "動画を書き出す"
+    bl_options = {"REGISTER", "UNDO"}  # 変えた設定は元に戻せる
+
+    start: bpy.props.BoolProperty(name="書き出しを始める", default=True, options={"SKIP_SAVE"},
+                                  description="切ると設定だけする（スクリプト・テスト用）")
 
     def execute(self, context):
-        apply_video_format(context.scene)  # 出力タブ・レンダーはウィンドウのシーン
-        self.report({"INFO"}, f"MP4（H.264 / AAC）の書き出し設定にしました（書き出し先: {context.scene.render.filepath}）")
+        scene = context.scene  # 出力タブ・レンダーはウィンドウのシーン
+        for note in prepare_render(scene):
+            self.report({"INFO"}, note)
+        if self.start:
+            try:
+                bpy.ops.render.render("INVOKE_DEFAULT" if not bpy.app.background else "EXEC_DEFAULT", animation=True)
+            except RuntimeError as e:  # 書き出し中など、レンダーの poll が通らない
+                self.report({"ERROR"}, f"書き出しを始められません: {e}")
+                return {"CANCELLED"}
         return {"FINISHED"}
 
 
@@ -4671,7 +4700,7 @@ _classes = (
     TACHIE_OT_add_sound_effect,
     TACHIE_OT_unset_bgm,
     TACHIE_OT_timeline_revert,
-    TACHIE_OT_video_format,
+    TACHIE_OT_render_video,
     TACHIE_OT_export_characters,
 )
 

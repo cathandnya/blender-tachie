@@ -21,23 +21,29 @@ class _StripPanel:
     bl_context = "strip"
 
 
-class TACHIE_PT_video_format(bpy.types.Panel):
-    """出力タブのいちばん上（見出しの無いパネルは Blender のパネルより上に並ぶ）に、動画の書き出し設定のボタン。"""
+class TACHIE_PT_render_video(bpy.types.Panel):
+    """出力タブのいちばん上（見出しの無いパネルは Blender のパネルより上に並ぶ）に「動画を書き出す」。"""
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context = "output"
-    bl_label = "動画の書き出し設定（立ち絵）"
+    bl_label = "動画を書き出す（立ち絵）"
     bl_options = {"HIDE_HEADER"}
 
     def draw(self, context):
         r = context.scene.render
-        video = r.image_settings.file_format == "FFMPEG"
-        row = self.layout.row(align=True)
+        layout = self.layout
+
         def name(owner, prop):  # 画面に出る名前（MPEG-4・H.264 など）
             return owner.bl_rna.properties[prop].enum_items[getattr(owner, prop)].name
-        row.label(text=f"{name(r.ffmpeg, 'format')}（{name(r.ffmpeg, 'codec')} / {name(r.ffmpeg, 'audio_codec')}）"
-                  if video else name(r.image_settings, "file_format"), icon="FILE_MOVIE")
-        row.operator("tachie.video_format", text="MP4 の書き出し設定にする")
+        if r.image_settings.file_format == "FFMPEG":
+            kind = f"{name(r.ffmpeg, 'format')}（{name(r.ffmpeg, 'codec')} / {name(r.ffmpeg, 'audio_codec')}）"
+        else:
+            kind = f"{name(r.image_settings, 'file_format')}（書き出すときに MP4 にします）"
+        size = f"{r.resolution_x * r.resolution_percentage // 100}×{r.resolution_y * r.resolution_percentage // 100}"
+        layout.label(text=f"{size} / {kind}", icon="FILE_MOVIE")
+        row = layout.row()
+        row.scale_y = 1.4
+        row.operator("tachie.render_video", icon="RENDER_ANIMATION")
 
 
 class TACHIE_UL_characters(bpy.types.UIList):
@@ -903,7 +909,7 @@ def draw_char_lanes(layout, scene, name: str) -> None:
 
 
 _classes = (
-    TACHIE_PT_video_format,
+    TACHIE_PT_render_video,
     TACHIE_UL_characters,
     TACHIE_MT_characters,
     TACHIE_PT_main,

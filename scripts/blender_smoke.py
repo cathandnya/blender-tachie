@@ -1602,12 +1602,19 @@ from bl_ext.user_default.blender_tachie import timeline as timeline_mod  # noqa:
 r = scene.render
 fps_before = (r.fps, r.resolution_x, r.resolution_y)
 assert timeline_mod.changed_from(scene) is None, timeline_mod.changed_from(scene)
-# 出力タブの「MP4 の書き出し設定にする」は形式・画質・音声だけで、解像度・fps・% は変えない
+# 出力タブの「動画を書き出す」は、まだ動画の形式でなければ MP4 にしてから書き出す（解像度・fps・% は変えない）
 percent = r.resolution_percentage
-run(bpy.ops.tachie.video_format)
+r.image_settings.media_type = "IMAGE"
+run(bpy.ops.tachie.render_video, start=False)
 assert (r.fps, r.resolution_x, r.resolution_y, r.resolution_percentage) == fps_before + (percent,)
 assert (r.image_settings.file_format, r.ffmpeg.format, r.ffmpeg.codec, r.ffmpeg.audio_codec, r.ffmpeg.audio_mixrate,
         r.use_sequencer) == ("FFMPEG", "MPEG4", "H264", "AAC", 48000, True)
+r.ffmpeg.codec = "AV1"
+run(bpy.ops.tachie.render_video, start=False)
+assert r.ffmpeg.codec == "AV1"  # 動画の形式なら変えた設定のまま
+r.ffmpeg.audio_codec = "NONE"
+run(bpy.ops.tachie.render_video, start=False)
+assert r.ffmpeg.audio_codec == "AAC" and r.ffmpeg.codec == "AV1"  # 音声なしだとセリフの声が入らない
 r.image_settings.media_type = "IMAGE"
 sound_lengths = {cid: sound(cid).duration for cid in lines()}
 r.fps = 24

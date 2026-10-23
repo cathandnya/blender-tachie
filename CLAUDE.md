@@ -19,9 +19,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   px の値はそのまま）。置いたものを変換する機能は作らない（作ったが戻した: リタイミングした動画のキーは API で動かすと
   Blender が落ち、分割したストリップのキーの位置は別のストリップを基準にした値を返す）。動画・字幕ファイルの書き出しも
   アドオンには置かない（Blender の出力タブとレンダー。手順は README の「動画を書き出す」）。出力タブのいちばん上
-  （`panels.TACHIE_PT_video_format`、HIDE_HEADER）の `tachie.video_format`（`operators.apply_video_format`、ウィンドウの
-  シーン）が MP4 / H.264 / AAC などの書き出し設定だけを入れる（解像度・fps・% は変えない。Blender 5 は
-  `image_settings.media_type = "VIDEO"` にしてから `file_format = "FFMPEG"`）。
+  （`panels.TACHIE_PT_render_video`、HIDE_HEADER）の「動画を書き出す」（`tachie.render_video`、ウィンドウのシーン）が
+  `operators.prepare_render`（まだ動画の形式でなければ MP4 / H.264 / AAC（`apply_video_format`）、シーケンサーを入れる、
+  書き出し先が既定（`DEFAULT_OUTPUTS`）なら .blend のフォルダの render/。解像度・fps・% は変えない。Blender 5 は
+  `image_settings.media_type = "VIDEO"` にしてから `file_format = "FFMPEG"`）のあと `render.render(animation=True)`
+  （`start=False` で設定だけ。smoke 用）。
   `blender_addon/timeline.py`: 置いたときの fps・解像度をシーンの `timeline_fps` / `timeline_width` / `timeline_height` に覚え
   （`remember`: 何も置いていないとき・`place_strips` / `place_still` / `MediaPlacer` の頭・YMM4 の読み込みで合わせたとき（force）・
   `load_post`。前の版の .blend はセリフの動きの json の fps）、出力タブで変えられたら（`changed_from`）サイドバーの上
