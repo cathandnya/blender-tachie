@@ -18,7 +18,7 @@ from PIL import Image
 
 from ..lipsync import blink_track, frame_count, phonemes_from_query, read_wav, scale_to
 from ..lipsync.mouth import CLOSED, levels_from_rms, vowel_track, vowels_to_levels
-from ..lipsync.wav import Wav, apply_fade, frame_rms
+from ..lipsync.wav import apply_fade, frame_rms
 from ..tachie import Character, Expression, Part, compose, load_character
 from ..tachie.compose import psd_part, simple_mouth
 from ..voicevox import VoicevoxClient
@@ -154,28 +154,6 @@ class LineMotion:
     @classmethod
     def load(cls, path: Path) -> "LineMotion":
         return cls(**json.loads(path.read_text(encoding="utf-8")))
-
-
-def retime_motion(motion: LineMotion, fps: float, wav: Wav | None = None) -> LineMotion:
-    """セリフの動きを別の fps に数え直す（タイムラインの fps を変えたとき。音声は合成し直さない）。
-
-    声の長さは wav（無ければ前の長さを秒にしたもの）、余韻は前の秒の長さのまま。音量は wav があれば
-    数え直し、口の形は前のコマのうち同じ時刻のもの（音素の時刻はエンジンに聞かないと分からないため）。
-    """
-    if motion.fps <= 0 or abs(motion.fps - fps) < 1e-9:
-        return motion
-    voice_seconds = wav.duration if wav is not None else motion.voice_frames / motion.fps
-    n = frame_count(voice_seconds, fps)
-    after_seconds = (motion.frames - motion.voice_frames) / motion.fps
-    after = frame_count(after_seconds, fps) if after_seconds > 0 else 0
-
-    def sample(track: list):
-        if not track:
-            return []
-        return [track[min(len(track) - 1, int((i + 0.5) / fps * motion.fps))] for i in range(n)]
-    rms = frame_rms(wav, fps, n) if wav is not None else sample(motion.rms)
-    vowels = sample(motion.vowels) if motion.vowels else []
-    return replace(motion, frames=n + after, voice_frames=n, fps=fps, vowels=vowels, rms=rms)
 
 
 def mouth_states(motion: LineMotion, character: Character, expr: Expression) -> tuple[str, list[MouthState]]:

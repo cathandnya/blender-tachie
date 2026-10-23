@@ -14,25 +14,17 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   「」の中で改行可）と CSV / TSV（`load_script` が拡張子で選ぶ。3 列目以降は無視、UTF-8 で読めなければ cp932）。
   キャラ名の欄の `(表情)` とセリフ末尾の `{発音}` はどの形でも使える。アドオンのテキストは名前の拡張子で形を選ぶ。
 - `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
-- タイムラインの fps・解像度（`blender_addon/timeline.py`、`operators.TACHIE_OT_timeline_settings`、「書き出し」パネルの「変える」）:
-  基本的には最初に決める（README にも書いた）。置いたあとに変えると、時間（秒）と画面に対する位置・大きさを保って変換する
-  （`timeline.convert` → 立ち絵を全部作り直す `operators.change_timeline`）。fps: Blender は fps を変えると音声だけ長さと頭の
-  切り取りを秒のまま数え直し（位置はフレーム数のまま）、他のストリップ・キーフレームはフレーム数のまま。`_retime` は全ストリップを
-  シーンの開始からの比で動かし（伸ばすときは後ろから、縮めるときは前から。重なると Blender が別のチャンネルへ逃がすため）、
-  セリフの動きの json を `render.retime_motion`（声の長さと音量は wav から、口の形は同じ時刻のコマ。合成し直さない）で数え直して
-  `tachie_frames` と字幕の長さに入れ、キーフレーム（全スロットの channelbag）・マーカー・frame_end を写す。動画は素材の
-  1 コマ = シーンの 1 コマなので SPEED（フレーム番号の直線キー、キーを写したあとに打つ）を重ねる。SPEED の元の動画・
-  retiming キーのある動画・すぐ上が埋まっている動画・メタストリップの中は扱わず報告する。解像度（縦横比は同じ、`same_shape`。
-  短い辺で選ぶ `size_for`、偶数）: `_rescale` が px の値（テキストの font_size、画像・動画の offset と拡大率、そのキーフレーム、
-  `tachie_sub_size` / `tachie_sub_width`、キャラの font_size / subtitle_width（update で字幕に当て直す）、見出しの大きさ）を写す。
-  アドオンの立ち絵は作り直す（合成キャッシュは画面の高さで大きさが決まる）。置いたときの fps・解像度はシーンの
-  `timeline_fps` / `timeline_width` / `timeline_height`（`timeline.remember`: 何も置いていないとき・`place_strips` / `place_still` /
-  `MediaPlacer` の頭・変換したとき・`load_post`。前の版の .blend はセリフの動きの json の fps）に覚え、出力タブで直接変えられたら
-  （`changed_from`）サイドバーの上（`panels.draw_timeline_changed`）に知らせて「合わせる」（`tachie.timeline_follow`）・
-  「元に戻す」（`tachie.timeline_revert`、音声は Blender が秒から数え直すので元に戻る）を出す。書き出しの形式は
-  `tachie.video_format`（MP4 / H.264 / AAC。Blender 5 は `image_settings.media_type = "VIDEO"` にしてから `file_format = "FFMPEG"`）、
-  書き出す大きさは Blender の出力タブの %（タイムラインは変わらない）。
-- `src/tachie_studio/srt.py` — 字幕ファイル（SRT / WebVTT）。アドオンの「書き出し」パネルは置いた字幕ストリップの位置（シーン開始 = 0 秒、ミュートは除く）、CLI の `--srt` はセリフを順に `--gap` 秒あけて並べた時刻。
+- タイムラインの fps・解像度は置く前に Blender の出力タブで決める（README）。置いたあとに変えるとずれる（Blender は fps を
+  変えると音声だけ長さと頭の切り取りを秒のまま数え直し、他のストリップ・キーフレームはフレーム数のまま。解像度を変えても
+  px の値はそのまま）。置いたものを変換する機能は作らない（作ったが戻した: リタイミングした動画のキーは API で動かすと
+  Blender が落ち、分割したストリップのキーの位置は別のストリップを基準にした値を返す）。動画・字幕ファイルの書き出しも
+  アドオンには置かない（Blender の出力タブとレンダー。手順は README の「動画を書き出す」）。
+  `blender_addon/timeline.py`: 置いたときの fps・解像度をシーンの `timeline_fps` / `timeline_width` / `timeline_height` に覚え
+  （`remember`: 何も置いていないとき・`place_strips` / `place_still` / `MediaPlacer` の頭・YMM4 の読み込みで合わせたとき（force）・
+  `load_post`。前の版の .blend はセリフの動きの json の fps）、出力タブで変えられたら（`changed_from`）サイドバーの上
+  （`panels.draw_timeline`。何も置いていなければ今の fps・解像度の案内）に知らせて「元に戻す」（`tachie.timeline_revert`、
+  音声は Blender が秒から数え直すので元に戻る）を出す。
+- `src/tachie_studio/srt.py` — 字幕ファイル（SRT / WebVTT）。CLI の `--srt`（セリフを順に `--gap` 秒あけて並べた時刻）だけが使う。
 - `src/tachie_studio/ymmp.py` — YMM4 のプロジェクト（.ymmp、UTF-8 BOM の JSON）を読む（#15）。`Timelines`（古い版は `Timeline`）、
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は
   Speed/Intonation/PauseLengthScale が %、Pitch は 100 が 0（(Pitch-100)/100）。`Pronounce.AudioQuery` があればその値と
@@ -233,8 +225,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
   キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。
   字幕の装飾（#12）: テキストストリップの box（`use_box` / `box_color` / `box_margin` / `box_roundness`）。キャラ名は
-  セリフの 4 本目のストリップ（`tachie_role = "name"`、キャラ名のレーン、字幕の行数から高さを見積もる `properties.apply_name`）で、
-  字幕ファイル（`subtitle_cues`）には入れない。字幕のフェードインは `motion.refresh_motion` が blend_alpha に打つ。
+  セリフの 4 本目のストリップ（`tachie_role = "name"`、キャラ名のレーン、字幕の行数から高さを見積もる `properties.apply_name`）。字幕のフェードインは `motion.refresh_motion` が blend_alpha に打つ。
   見出しテロップは `tachie_headline` のテキストストリップ（`headline_channel`、スタイルはシーンの `headline_*` で即反映）。
   1 文字ずつ出す字幕は作っていない
   （テキストストリップに文字を段階的に出す仕組みが無い）。

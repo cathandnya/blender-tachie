@@ -701,25 +701,3 @@ def test_merge_parts_and_layers():
     stacked = merge_layers(merge_layers({"X/*a": True}, {"X/*b": True}), {"X/*a": True})
     assert list(stacked)[-1] == "X/*a"  # 3 段目で選び直した a が最後（選ばれる）
     assert merge_parts({LAYERS_KEY: {"X/*a": True}}, {LAYERS_KEY: {"X/*b": True}})[LAYERS_KEY] == {"X/*a": True, "X/*b": True}
-
-
-def test_retime_motion():
-    from array import array
-
-    from tachie_studio.lipsync.wav import Wav
-    from tachie_studio.pipeline.render import LineMotion, retime_motion
-
-    # 30fps で 1 秒の声（前半 a・後半 o）+ 余韻 0.5 秒
-    motion = LineMotion(frames=45, voice_frames=30, fps=30.0, seed=7, mouth="vowel",
-                        vowels=["a"] * 15 + ["o"] * 15, rms=[0.1] * 15 + [0.2] * 15)
-    m60 = retime_motion(motion, 60.0)
-    assert (m60.frames, m60.voice_frames, m60.fps, m60.seed) == (90, 60, 60.0, 7)
-    assert m60.vowels == ["a"] * 30 + ["o"] * 30 and m60.rms == [0.1] * 30 + [0.2] * 30
-    m24 = retime_motion(motion, 24.0)
-    assert (m24.frames, m24.voice_frames) == (36, 24) and m24.vowels[11] == "a" and m24.vowels[12] == "o"
-    assert retime_motion(m60, 30.0).vowels == motion.vowels  # 戻すと同じ
-    assert retime_motion(motion, 30.0) is motion
-    # wav があれば声の長さと音量は wav から
-    wav = Wav(samples=array("f", [0.5] * 24000), rate=24000)
-    mw = retime_motion(motion, 60.0, wav)
-    assert mw.voice_frames == 60 and all(abs(r - 0.5) < 1e-6 for r in mw.rms)

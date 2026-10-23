@@ -49,23 +49,23 @@ class TACHIE_MT_characters(bpy.types.Menu):
         self.layout.operator("tachie.reload_character", icon="FILE_REFRESH")
 
 
-def draw_timeline_changed(layout, scene) -> None:
-    """出力タブなどで fps・解像度が置いたときから変わっていれば知らせ、合わせる・戻すボタンを出す。"""
+def draw_timeline(layout, scene) -> None:
+    """何も置いていなければ fps・解像度を最初に決めるよう案内し、置いたときから出力タブで変えられていれば知らせて
+    元に戻すボタンを出す（置いてあるものは変換しない。`timeline`）。"""
     from . import timeline
 
+    fps, w, h = timeline.current(scene)
     old = timeline.changed_from(scene)
+    if timeline.baseline(scene) is None:
+        layout.label(text=f"{w}×{h} / {fps:g}fps（fps・解像度は置く前に出力タブで決める）", icon="INFO")
     if old is None:
         return
-    fps, w, h = timeline.current(scene)
     box = layout.box()
     box.alert = True
     box.label(text=f"fps・解像度が変わっています: {old[1]}×{old[2]} / {old[0]:g}fps → {w}×{h} / {fps:g}fps",
               icon="ERROR")
-    box.label(text="このままでは音声と立ち絵・字幕の時間や大きさが合いません")
-    row = box.row(align=True)
-    if timeline.same_shape((old[1], old[2]), (w, h)):
-        row.operator("tachie.timeline_follow", text="合わせる（変換する）")
-    row.operator("tachie.timeline_revert", text="元に戻す")
+    box.label(text="置いた音声と立ち絵・字幕の時間や大きさが合わなくなるので、元に戻してください")
+    box.operator("tachie.timeline_revert", text="元に戻す")
 
 
 class TACHIE_PT_main(_Panel, bpy.types.Panel):
@@ -86,7 +86,7 @@ class TACHIE_PT_main(_Panel, bpy.types.Panel):
         col.operator("tachie.character_move", text="", icon="TRIA_UP").direction = "UP"
         col.operator("tachie.character_move", text="", icon="TRIA_DOWN").direction = "DOWN"
 
-        draw_timeline_changed(layout, seq_scene(context))
+        draw_timeline(layout, seq_scene(context))
         ch = s.character()
         tachie = ch is not None and bool(ch.folder)  # 立ち絵のあるキャラ
         row = layout.row(align=True)
@@ -822,35 +822,6 @@ class TACHIE_PT_templates(_Panel, bpy.types.Panel):
         layout.operator("tachie.import_ymm4_templates", icon="IMPORT")
 
 
-class TACHIE_PT_export(_Panel, bpy.types.Panel):
-    bl_label = "書き出し"
-    bl_parent_id = "TACHIE_PT_main"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context):
-        layout = self.layout
-        r = seq_scene(context).render
-        fps = r.fps / r.fps_base
-        video = r.image_settings.file_format == "FFMPEG"
-        # タイムラインの fps・解像度（基本的には最初に決める。変えると置いてあるものを変換する）
-        row = layout.row(align=True)
-        row.label(text=f"{r.resolution_x}×{r.resolution_y} / {fps:g}fps", icon="SEQUENCE")
-        row.operator("tachie.timeline_settings", text="変える", icon="PREFERENCES")
-        # 書き出しの大きさ（%）・形式は Blender の出力タブ（タイムラインは変わらない）
-        summary = f"書き出し: {r.resolution_x * r.resolution_percentage // 100}×{r.resolution_y * r.resolution_percentage // 100}" \
-                  " / " + (f"{r.ffmpeg.format}（{r.ffmpeg.codec}）" if video else r.image_settings.file_format)
-        layout.label(text=summary, icon="OUTPUT")
-        if not video:
-            layout.operator("tachie.video_format", icon="FILE_MOVIE")
-        row = layout.row()
-        row.scale_y = 1.2
-        op = row.operator("render.render", text="動画を書き出す", icon="RENDER_ANIMATION")
-        op.animation = True
-        # シーケンサーに映っているシーン（設定を表示しているもの）を書き出す。ウィンドウのシーンと違うことがある
-        op.use_sequencer_scene = getattr(context, "sequencer_scene", None) is not None
-        layout.operator("tachie.export_subtitles", text="字幕を書き出す（SRT / WebVTT）", icon="TEXT")
-
-
 class TACHIE_PT_channels(_Panel, bpy.types.Panel):
     bl_label = "チャンネル"
     bl_parent_id = "TACHIE_PT_main"
@@ -931,7 +902,6 @@ _classes = (
     TACHIE_PT_bgm,
     TACHIE_PT_sound_effects,
     TACHIE_PT_templates,
-    TACHIE_PT_export,
     TACHIE_PT_channels,
 )
 

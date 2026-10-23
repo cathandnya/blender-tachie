@@ -85,14 +85,6 @@ def _key(strip, path: str, frame: int, value: float) -> None:
     target.keyframe_insert(attr, frame=frame)
 
 
-def load_motion(path: Path, fps: float):
-    """セリフの動き（lines/<id>.json）を今の fps のコマで。タイムラインの fps を変えても json は書き換えないので
-    （ファイルは元に戻す（undo）で戻らない）、読むときに数え直す（`render.retime_motion`。同じ json と fps なら同じ長さ）。"""
-    from .tachie_studio.pipeline.render import LineMotion, retime_motion
-
-    return retime_motion(LineMotion.load(path), fps)
-
-
 def _talk(strip, ch, motion_path: Path, fps: float, height: int, start: int | None = None) -> None:
     """喋っている間、半周期ごとに跳ねる（上下）・揺れる（回転）キーフレームを打つ。
 
@@ -100,7 +92,9 @@ def _talk(strip, ch, motion_path: Path, fps: float, height: int, start: int | No
     声の区間はストリップの区間で切る。"""
     if not motion_path.is_file():
         return
-    motion = load_motion(motion_path, fps)
+    from .tachie_studio.pipeline.render import LineMotion
+
+    motion = LineMotion.load(motion_path)
     half = max(1, round(ch.talk_period * fps / 2))
     amp_y = ch.talk_bounce * height
     amp_r = math.radians(ch.talk_sway)
