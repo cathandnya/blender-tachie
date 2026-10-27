@@ -30,7 +30,7 @@ from .tachie_studio.templates import (
 from .tachie_studio.pipeline.config import merge_parts
 from .tachie_studio.ymmp import Media, Project
 from . import channels as lanes
-from .ymmp_media import MediaFinder, MediaPlacer, box_height, media_root
+from .ymmp_media import MediaFinder, MediaPlacer, box_height, media_root, place_transition
 
 REPORT_TEXT = "YMM4 のテンプレートの読み込み結果"
 
@@ -300,6 +300,11 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
         problems += placer.problems + [f"見つからないファイル: {n}" for n in placer.missing]
         if placer.missing:
             problems.append("素材のある場所をテンプレートの「素材を探す場所」に指定すると、そこから探します")
+    # 場面転換（テンプレートの映像を置いたあとで、境目で終わる・始まる画像・動画を探す）
+    for item in (i for i in items if i["kind"] == "transition"):
+        a = frame(item["frame"])
+        if place_transition(context, item, a, max(a + 1, frame(item["frame"] + item["length"])), problems):
+            placed["transition"] += 1
     # セリフ
     lines = sorted((i for i in items if i["kind"] == "line"), key=lambda i: i["frame"])
     for n, item in enumerate(lines):
@@ -392,7 +397,7 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
 # ---- オペレーター ----
 
 LABELS = {"line": "セリフ", "face": "表情", "still": "立ち絵", "image": "画像", "video": "動画", "audio": "音声", "text": "テキスト",
-          "color": "カラー", "video_sound": "動画の音"}
+          "color": "カラー", "video_sound": "動画の音", "transition": "場面転換"}
 
 
 class TACHIE_OT_register_template(bpy.types.Operator):

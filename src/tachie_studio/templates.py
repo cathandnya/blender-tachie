@@ -9,6 +9,8 @@
   "look", "layout", "subtitle_offset", "subtitle_style", "subtitle_hidden", "face_parts"}` — セリフ（置くときに合成し直す。
   `subtitle_style` は字幕の [文字の大きさ, 折り返し幅]（px、0 はキャラの設定））
 - `{"kind": "face", "character", "expression", "look", "parts"}` — 表情ストリップ
+- `{"kind": "transition", "type", "easing", "mode", "angle"}` — 場面転換（type は fade / push。置くときに再生位置
+  （テンプレートの頭からのずれ）を前の場面と新しい場面の境目にして、前の場面の残像を作る）
 - `{"kind": "still", "character", "expression", "look", "parts", "pose", "flip", "jump"}` — 立ち絵（`pose` は立ち絵ごとの位置・大きさ
   `{"tachie_pos_x", "tachie_pos_y", "tachie_scale"}`。YMM4 の立ち絵アイテムは代わりに `x` / `y` / `zoom` を持ち、置くときに
   キャラの立ち位置・高さとの差にする。`flip` は左右反転（None ならキャラの設定）、`jump` は跳ねながら登場退場
@@ -32,8 +34,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from .ymmp import (ITEM_LABELS, MEDIA_KINDS, Media, _media, _note_unsupported, _span, _type, _voice, jump_on_screen,
-                   parts_of, tachie_settings)
+from .ymmp import (ITEM_LABELS, MEDIA_KINDS, TRANSITION_TYPES, Media, _effects, _media, _note_unsupported, _span, _type,
+                   _voice, jump_on_screen, parts_of, tachie_settings, value)
 
 VERSION = 1
 # YMM4 の音量（50 が等倍）
@@ -145,6 +147,20 @@ def from_ymm4(template: dict) -> tuple[dict, bool, Counter]:
             for n in span.unsupported:
                 skipped[n] += 1
             _note_unsupported(SimpleNamespace(unsupported=skipped), kind, item)
+        elif kind == "TransitionItem":
+            t_kind = TRANSITION_TYPES.get(_type({"$type": item.get("TransitionType", "")}))
+            if t_kind is None:
+                plugin = _type({"$type": item.get("TransitionType", "")})
+                skipped["トランジション" + (f" {plugin}" if plugin else "")] += 1
+                continue
+            if item.get("IsHidden"):
+                continue
+            p = item.get("TransitionParameter") or {}
+            items.append({"kind": "transition", "frame": int(item.get("Frame", 0)), "length": int(item.get("Length", 0)),
+                          "layer": int(item.get("Layer", 0)), "type": t_kind, "easing": p.get("EasingType") or "Linear",
+                          "mode": p.get("EasingMode") or "InOut", "angle": value(p.get("Angle"))})
+            for e in _effects(item, "VideoEffects", "BeforeVideoEffects", "AfterVideoEffects"):
+                skipped[f"トランジションのエフェクト {e}"] += 1
         elif kind == "TachieFaceItem":
             span = _span(item, parts_of(item.get("TachieFaceParameter"), full=False))
             if not span.hidden:

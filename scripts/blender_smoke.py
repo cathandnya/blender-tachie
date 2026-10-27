@@ -1449,6 +1449,58 @@ assert Path(bpy.path.abspath(se_strip.sound.filepath)).name == "ping.wav"
 sed.strips.remove(se_strip)
 templates.remove(list(templates).index(se_tpl))
 prefs.media_root = ""
+# 場面転換: 再生位置で終わる画像・動画（前の場面）の最後のコマの残像をすぐ上に作り、プッシュは押し出す・フェードは薄くする
+from bl_ext.user_default.blender_tachie import ymmp_media  # noqa: E402
+
+keys_of = lambda strip, attr: [tuple(k.co) for k in ymmp_media._keyframes(scene, strip, attr)]
+pngs = []
+for i, color in enumerate(((1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0))):
+    img = bpy.data.images.new(f"場面{i}", 64, 36)
+    img.pixels[:] = color * (64 * 36)
+    img.filepath_raw, img.file_format = str(out / f"scene{i}.png"), "PNG"
+    img.save()
+    bpy.data.images.remove(img)
+    pngs.append(out / f"scene{i}.png")
+tr_at = max(x.right_handle for x in sed.strips) + 20
+scene_a = sed.strips.new_image("場面A", str(pngs[0]), 2, tr_at - 30, fit_method="FIT")
+scene_a.right_handle = tr_at
+scene_b = sed.strips.new_image("場面B", str(pngs[1]), 2, tr_at, fit_method="FIT")
+scene_b.right_handle = tr_at + 60
+tr_tpl = templates.add()
+tr_tpl.name = "場面転換テスト"
+tr_tpl.data = json.dumps({"version": 1, "fps": 30.0, "items": [
+    {"kind": "transition", "frame": 0, "length": 20, "layer": 2, "type": "push", "easing": "Expo", "mode": "InOut",
+     "angle": 0.0}]})
+scene.frame_current = tr_at
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+hold, = [x for x in sed.strips if x.get("tachie_transition") and x.type == "IMAGE"]
+assert (hold.channel, hold.left_handle, hold.right_handle) == (3, tr_at, tr_at + 20)
+assert Path(hold.elements[0].filename).name == pngs[0].name
+assert abs(hold.transform.scale_x - scene_a.transform.scale_x) < 1e-6  # 前の場面と同じ大きさ
+w_res = scene.render.resolution_x
+assert keys_of(hold.transform, "offset_x") == [(tr_at, 0.0), (tr_at + 19, -w_res)]  # 左へ押し出す
+assert keys_of(scene_b.transform, "offset_x") == [(tr_at, w_res), (tr_at + 19, 0.0)]  # 新しい場面は右から
+# 動画の前の場面は、最後に映っていたコマで止めた残像（速度の補正のフレーム番号を固定）。フェードは薄くする
+mv_at = tr_at + 100
+movie_a = sed.strips.new_movie("場面C", str(out / "clip.mp4"), 2, mv_at - 40, fit_method="FIT")
+movie_a.right_handle = mv_at
+tr_tpl.data = json.dumps({"version": 1, "fps": 30.0, "items": [
+    {"kind": "transition", "frame": 0, "length": 200, "layer": 2, "type": "fade", "easing": "Linear", "mode": "InOut",
+     "angle": 0.0}]})
+scene.frame_current = mv_at
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+stop, = [x for x in sed.strips if x.get("tachie_transition") and x.type == "SPEED"]
+assert stop.input_1.type == "MOVIE" and stop.speed_frame_number == 39 and stop.channel == 4
+assert keys_of(stop, "blend_alpha") == [(mv_at, 1.0), (mv_at + 199, 0.0)]
+assert stop.right_handle == mv_at + 200  # 素材（120 コマ）より長い場面転換でも残像は最後まで
+# 前の場面が無ければ置かない（理由を知らせる）
+scene.frame_current = mv_at + 400
+assert bpy.ops.tachie.insert_template(index=list(templates).index(tr_tpl)) == {"CANCELLED"}
+for x in [x for x in sed.strips if x.get("tachie_transition") and x.type == "SPEED"]:
+    sed.strips.remove(x)
+for x in [x for x in sed.strips if x.get("tachie_transition") or x.name in ("場面A", "場面B", "場面C")]:
+    sed.strips.remove(x)
+templates.remove(list(templates).index(tr_tpl))
 # 片付け
 for x in [x for x in sed.strips if x.left_handle >= t_at and (x.get("tachie_id") or x.get("tachie_ymmp")
                                                              or x.get("tachie_still"))]:

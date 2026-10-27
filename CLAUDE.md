@@ -257,7 +257,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   表情は `_free_face_channel`、立ち絵は `place_still`）。YMM4 のテンプレートは ItemSettings.json の `Templates`（Items は .ymmp と同じ形、
   `Path` は名前を含むフォルダの列）を `from_ymm4` で読み、表情は YMM4 のパーツのまま持って置くときにアイテムのパーツにする
   （`_ymm4_look`、.ymmp の読み込みと同じ。プリセットは作らない）。YMM4 のテンプレートのボイスは VoiceLength が 0 なので、余韻はアイテムの `AdditionalTime`（無ければキャラの
-  既定値）。中身が空になるテンプレートは登録しない。
+  既定値）。中身が空になるテンプレートは登録しない。場面転換（TransitionItem のフェード・プッシュ）は `{"kind": "transition",
+  type, easing, mode, angle}` で持ち、置くときは `ymmp_media.place_transition`: 再生位置（テンプレートの頭からのずれ）で終わる
+  画像・動画（`_scene_strip`: アドオンのストリップ・効果の元・残像でないもの）のいちばん上を前の場面、そこから始まるものを
+  新しい場面にして、前の場面の最後のコマの残像（画像は同じファイル、動画は元の動画 + SPEED のフレーム番号を固定。変形・
+  不透明度はキーフレームの終わりの値。`tachie_transition`）をすぐ上（前の場面がレーンより下ならレーンより下）に作り、
+  `animate_transition`（.ymmp の読み込みの `MediaPlacer._transition` と共通）で動かす。retiming キーのある動画は前の場面にしない。
   AI で表情を割り当てる（#27、`blender_addon/faceassign.py`、LLM 側は `tachie_studio/faceassign.py`。cathandnya/ymm4faceassign を
   移したもの）: 選んだセリフ（プリセットのあるキャラのセリフ）をキャラごとに、シーンのセリフ全部を台本にして
   OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。

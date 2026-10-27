@@ -84,6 +84,25 @@ def test_from_ymm4(tmp_path: Path):
     assert from_ymm4({"Items": [image]})[2] == {"画像の合成モード Add": 1, "ImageItem の X のアニメーション": 1}
 
 
+def test_from_ymm4_transition():
+    """場面転換（プッシュ・フェード）は種類・角度・イージング・長さごと持つ（置くときに前の場面の残像を作る）。"""
+    push = {"$type": ITEM + "TransitionItem, YukkuriMovieMaker", "Frame": 2808, "Layer": 2, "Length": 150,
+            "TransitionType": "YukkuriMovieMaker.Transition.PushTransitionPlugin, YukkuriMovieMaker, Version=4.56.1.0",
+            "TransitionParameter": {"Angle": anim(90.0), "EasingType": "Expo", "EasingMode": "InOut"}}
+    audio = {"$type": ITEM + "AudioItem, YukkuriMovieMaker", "FilePath": "C:\\se.mp3", "Frame": 2847, "Layer": 3,
+             "Length": 111}
+    data, behind, skipped = from_ymm4({"FPS": 60, "Items": [push, audio]})
+    tr, se = data["items"]
+    assert tr == {"kind": "transition", "frame": 0, "length": 150, "layer": 2, "type": "push", "easing": "Expo",
+                  "mode": "InOut", "angle": 90.0}
+    assert se["media"]["frame"] == 39 and not skipped and not behind and end_frame(data) == 150
+    fade = {**push, "TransitionType": "YukkuriMovieMaker.Transition.FadeTransitionPlugin, YukkuriMovieMaker",
+            "TransitionParameter": {}}
+    assert from_ymm4({"Items": [fade]})[0]["items"][0]["type"] == "fade"
+    wipe = {**push, "TransitionType": "YukkuriMovieMaker.Transition.WipeTransitionPlugin, YukkuriMovieMaker"}
+    assert from_ymm4({"Items": [wipe]})[2] == {"トランジション WipeTransitionPlugin": 1}  # 写せない種類は報告する
+
+
 def test_round_trip_and_helpers():
     m = Media(kind="text", frame=5, length=10, layer=3, text="見出し", font_color=(1.0, 0.0, 0.0, 1.0),
               background=(0.0, 0.5, 1.0, 0.8), background_margin=12.0, background_round=6.0,
