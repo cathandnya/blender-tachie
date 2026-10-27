@@ -218,6 +218,17 @@ def _keyed(scene, strip, attrs) -> bool:
     return any(_fcurve(scene, strip, a) is not None for a in attrs)
 
 
+def _copy_look(scene, dst, src, frame: int) -> None:
+    """変形（`frame` での値。動いていた場面は終わりの位置で止める）・切り抜き・左右反転を写す。"""
+    t, b = dst.transform, src.transform
+    for attr in ("offset_x", "offset_y", "scale_x", "scale_y", "rotation"):
+        setattr(t, attr, _value_at(scene, src, f"transform.{attr}", frame, getattr(b, attr)))
+    t.origin = b.origin
+    dst.crop.min_x, dst.crop.max_x, dst.crop.min_y, dst.crop.max_y = (src.crop.min_x, src.crop.max_x, src.crop.min_y,
+                                                                      src.crop.max_y)
+    dst.use_flip_x, dst.use_flip_y = src.use_flip_x, src.use_flip_y
+
+
 def place_transition(context, tr: dict, start: int, end: int, problems: list[str]) -> bool:
     """テンプレートの場面転換を置く。`start` を前の場面（そこで終わる画像・動画のいちばん上）と新しい場面（そこから
     始まる画像・動画）の境目として、前の場面の最後のコマで止めた残像をすぐ上に作り、`animate_transition` で動かす
@@ -230,8 +241,10 @@ def place_transition(context, tr: dict, start: int, end: int, problems: list[str
     if before is None:
         problems.append(f"{label}: 再生位置で終わる画像・動画（前の場面）が無いので置きませんでした")
         return False
-    if before.type == "MOVIE" and len(before.retiming_keys):
-        problems.append(f"{label}: 前の場面の動画「{before.name}」は再生速度を変えてあるので置きませんでした")
+    source = before.input_1 if before.type == "SPEED" else before
+    if (source.type == "MOVIE" and len(source.retiming_keys)) or (
+            before.type == "SPEED" and before.speed_control != "FRAME_NUMBER"):
+        problems.append(f"{label}: 前の場面の動画「{source.name}」は再生速度を変えてあるので置きませんでした")
         return False
     after = max((s for s in scenes if abs(s.left_handle - start) <= 1 and s != before), key=lambda s: s.channel,
                 default=None)
@@ -266,14 +279,12 @@ def place_transition(context, tr: dict, start: int, end: int, problems: list[str
         top = sed.strips.new_effect(name=f"{name} 止め", type="SPEED", channel=channel + 1, frame_start=start,
                                     input1=hold)
         top.speed_control = "FRAME_NUMBER"
-        top.speed_frame_number = frame_number
-    t, b = hold.transform, before.transform
-    for attr in ("offset_x", "offset_y", "scale_x", "scale_y", "rotation"):  # 動いていた場面は終わりの位置で止める
-        setattr(t, attr, _value_at(scene, before, f"transform.{attr}", last, getattr(b, attr)))
-    t.origin = b.origin
-    hold.crop.min_x, hold.crop.max_x, hold.crop.min_y, hold.crop.max_y = (before.crop.min_x, before.crop.max_x,
-                                                                          before.crop.min_y, before.crop.max_y)
-    hold.use_flip_x, hold.use_flip_y = before.use_flip_x, before.use_flip_y
+        # 画面から追加した動画は素材の fps に合わせて伸び縮みする（24fps のシーンに 30fps の素材なら 0.8 倍の長さ）が、
+        # API で作った動画は素材の 1 コマ = 1 フレーム。フレーム番号は素材の中の位置（長さの比）で写す
+        scale = hold.frame_duration / max(1, movie.frame_duration)
+        top.speed_frame_number = min(max(0, hold.frame_duration - 1), max(0, round(frame_number * scale)))
+    # 見えている場面の変形（速度の補正をかけた動画は補正のストリップが持つ。YMM4 の読み込みと同じ）を残像に写す
+    _copy_look(scene, hold, before, last)
     top.blend_type = before.blend_type
     # 不透明度はキーフレームのいちばん濃い値（前の場面のフェードアウトで 0 になった終わりの値を使うと、残像が初めから見えない）
     alpha_curve = _fcurve(scene, before, "blend_alpha")
