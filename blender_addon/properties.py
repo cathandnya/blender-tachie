@@ -137,6 +137,10 @@ class TachiePreferences(bpy.types.AddonPreferences):
     )
     sound_effects: CollectionProperty(type=TachieSoundEffect)
     templates: CollectionProperty(type=TachieTemplate)
+    media_root: StringProperty(
+        name="素材を探す場所", subtype="DIR_PATH", default="",
+        description="テンプレート・YMM4 のプロジェクトの画像・動画・音声が元の場所（Windows のパスなど）に無いとき、"
+                    "この中から探す（Windows と同じ並びの後ろの部分、無ければ下の階層の同じ名前）。全プロジェクト共通")
     # AI で表情を割り当てる（#27、OpenAI 互換のチャット API）
     llm_url: StringProperty(name="接続先", default="http://127.0.0.1:1234",
                             description="OpenAI 互換のチャット API。LM Studio は http://127.0.0.1:1234、"
@@ -171,6 +175,7 @@ class TachiePreferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.prop(self, "voicevox_url")
         layout.prop(self, "output_dir")
+        layout.prop(self, "media_root")
         box = layout.box()
         box.label(text="キャラクターを追加するときの初期値（素材の tachie.toml より優先）")
         try:

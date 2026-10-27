@@ -1430,6 +1430,25 @@ scene.frame_current = t_at4 + 10
 assert bpy.ops.tachie.insert_template(  # 何も置けなければ CANCELLED
     index=list(templates).index(next(t for t in templates if t.name == "立ち絵だけ"))) == {"CANCELLED"}
 assert len([x for x in sed.strips if x.get("tachie_still") == "ずんだもん" and x.left_handle >= t_at4]) == 1
+# テンプレートの画像・音声が元の場所（Windows のパス）に無ければ、アドオン設定の「素材を探す場所」から探す
+# （Windows と同じ並びの後ろの部分。`動画\sound\...` を `<探す場所>/sound/...` に見つける）
+se_root = out / "media_root"
+(se_root / "sound" / "SE").mkdir(parents=True, exist_ok=True)
+(se_root / "sound" / "SE" / "ping.wav").write_bytes((out / "bgm.wav").read_bytes())
+se_tpl = templates.add()
+se_tpl.name = "探す場所テスト"
+se_tpl.data = json.dumps({"version": 1, "fps": 30.0, "items": [{"kind": "media", "media": {
+    "kind": "audio", "frame": 0, "length": 30, "layer": 3,
+    "file": "C:\\Users\\x\\Documents\\動画\\sound\\SE\\ping.wav"}}]}, ensure_ascii=False)
+scene.frame_current = max(x.right_handle for x in sed.strips) + 20
+assert bpy.ops.tachie.insert_template(index=list(templates).index(se_tpl)) == {"CANCELLED"}  # 見つからない
+prefs.media_root = str(se_root)
+run(bpy.ops.tachie.insert_template, index=list(templates).index(se_tpl))
+se_strip, = [x for x in sed.strips if x.type == "SOUND" and x.get("tachie_ymmp") and x.left_handle == scene.frame_current]
+assert Path(bpy.path.abspath(se_strip.sound.filepath)).name == "ping.wav"
+sed.strips.remove(se_strip)
+templates.remove(list(templates).index(se_tpl))
+prefs.media_root = ""
 # 片付け
 for x in [x for x in sed.strips if x.left_handle >= t_at and (x.get("tachie_id") or x.get("tachie_ymmp")
                                                              or x.get("tachie_still"))]:

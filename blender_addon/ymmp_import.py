@@ -29,7 +29,7 @@ from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
 from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, system_fonts
 from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
-from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer
+from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer, media_root
 from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary,
                                  jump_on_screen, voice_wav)
 
@@ -78,7 +78,7 @@ def resolve_material(settings, c, ymmp: Path) -> str | None:
     found = find_by_tail(c.folder, ymmp.parent, directory=True) if c.folder else None
     if found is not None and material_problem(str(found)) is None:
         return str(found)
-    roots = (settings.ymmp_material_root, settings.ymmp_media_root, str(ymmp.parent))
+    roots = (settings.ymmp_material_root, media_root(settings), str(ymmp.parent))
     return next((f for r in dict.fromkeys(roots) if (f := find_material(r, c.folder_name))), None)
 
 
@@ -97,7 +97,7 @@ def _used_characters(project: Project) -> set[str]:
 
 def _missing_media(settings, ymmp: Path, project: Project) -> tuple[int, list[str], bool]:
     """(画像・動画などのファイルの数, 見つからないファイル名, 探す場所が広すぎて途中までしか探していないか)。"""
-    finder = MediaFinder(ymmp, settings.ymmp_media_root)
+    finder = MediaFinder(ymmp, media_root(settings))
     files = sorted({m.file for m in project.media if m.file})
     missing = sorted({PureWindowsPath(f).name for f in files if finder.find(f) is None})
     return len(files), missing, finder.truncated
@@ -564,7 +564,7 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
         # 画像・動画・音声・テキスト（キャラのチャンネルが決まってから、セリフを置く前に。チャンネルをずらすことがある）
         media = None
         if self.import_media and project.media:
-            media = MediaPlacer(context, project, MediaFinder(Path(self.filepath), settings.ymmp_media_root), frame,
+            media = MediaPlacer(context, project, MediaFinder(Path(self.filepath), media_root(settings)), frame,
                                 find_font)
             try:
                 media.place()

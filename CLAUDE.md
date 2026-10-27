@@ -71,7 +71,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   Blender の動画ストリップは素材の 1 フレーム = シーンの 1 フレーム（フレームレートを合わせない）ので、素材の fps × 再生速度が
   シーンと違えば SPEED ストリップ（`FRAME_NUMBER` に素材のフレーム番号の直線キー）を重ねる。retiming キーの
   `timeline_frame` を API で動かすと、他のストリップがあるシーンで Blender 5.2.2 が落ちる。置いたストリップは `tachie_ymmp`。
-  ファイルは `MediaFinder`（元のパス → .ymmp のフォルダ → その下 3 階層 → `ymmp_media_root` の下）。
+  ファイルは `MediaFinder`（元のパス → .ymmp のフォルダ → その下 3 階層 → 探す場所の下）。探す場所は
+  `ymmp_media.media_root`（シーンの `ymmp_media_root`、無ければアドオン設定の `media_root`（全プロジェクト共通、テンプレートの
+  パネルにも欄））。テンプレートは .blend のフォルダを .ymmp のフォルダの代わりにする（未保存なら探す場所の下だけ）。
+  テンプレートのパネルの欄は、シーンの `ymmp_media_root` があればそれ（優先されるため）。
   写せる映像エフェクト（写したものは `Media.effects` から外し、残りは「写せなかった設定」に出す）:
   背景塗りつぶし（テキスト、単色）→ テキストストリップの box（余白は上下左右の平均、`box_height` で角の丸みの割合）。
   画面外から移動して登場・退場 → `Media.slide`、location / offset に画面 1 つ分ずらしたキーフレーム（`_slide`、イージングは

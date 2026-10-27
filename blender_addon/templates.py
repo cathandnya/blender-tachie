@@ -30,7 +30,7 @@ from .tachie_studio.templates import (
 from .tachie_studio.pipeline.config import merge_parts
 from .tachie_studio.ymmp import Media, Project
 from . import channels as lanes
-from .ymmp_media import MediaFinder, MediaPlacer, box_height
+from .ymmp_media import MediaFinder, MediaPlacer, box_height, media_root
 
 REPORT_TEXT = "YMM4 のテンプレートの読み込み結果"
 
@@ -287,8 +287,8 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
                           media=media)
         # 元のパスに無ければ「画像・動画などを探す場所」→ .blend のフォルダの下。未保存なら探す場所だけ
         # （bpy.path.abspath("//") は "" になり、カレントディレクトリ（/ のこともある）の下を探してしまう）
-        base = settings.ymmp_media_root or ("//" if bpy.data.filepath else "")
-        finder = MediaFinder(Path(bpy.path.abspath(base)) / "_" if base else None, settings.ymmp_media_root)
+        root = media_root(settings)
+        finder = MediaFinder(Path(bpy.path.abspath("//")) / "_" if bpy.data.filepath else None, root)
         from .ymmp_import import find_font
 
         placer = MediaPlacer(context, project, finder, frame, find_font, behind=behind)
@@ -298,6 +298,8 @@ def insert_template(context, data: dict, behind: bool) -> tuple[Counter, list[st
             problems.append(str(e))
         placed.update(placer.placed)
         problems += placer.problems + [f"見つからないファイル: {n}" for n in placer.missing]
+        if placer.missing:
+            problems.append("素材のある場所をテンプレートの「素材を探す場所」に指定すると、そこから探します")
     # セリフ
     lines = sorted((i for i in items if i["kind"] == "line"), key=lambda i: i["frame"])
     for n, item in enumerate(lines):

@@ -843,6 +843,11 @@ class TACHIE_PT_templates(_Panel, bpy.types.Panel):
         layout = self.layout
         layout.label(text="再生位置に置きます（名前の変更・削除はアドオン設定）")
         draw_templates(layout.column(align=True), prefs(context))
+        s = seq_scene(context).tachie
+        if s.ymmp_media_root:  # シーンの指定（YMM4 の読み込みで指定したもの）がアドオン設定より優先
+            layout.prop(s, "ymmp_media_root", text="素材を探す場所（このシーン）")
+        else:
+            layout.prop(prefs(context), "media_root")
         layout.operator("tachie.register_template", icon="ADD")
         layout.operator("tachie.import_ymm4_templates", icon="IMPORT")
 

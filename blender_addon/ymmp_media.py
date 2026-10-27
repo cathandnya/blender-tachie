@@ -45,6 +45,11 @@ def _nfc(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
+def media_root(settings) -> str:
+    """画像・動画などを探す場所: シーンの指定（YMM4 の読み込みのときに指定したもの）→ アドオン設定（全プロジェクト共通）。"""
+    return settings.ymmp_media_root or bpy.context.preferences.addons[__package__].preferences.media_root
+
+
 class MediaFinder:
     """YMM4 のパス（Windows）のファイルを、元のパス → 元のパスの後ろの部分（.ymmp のフォルダとその上から）
     → .ymmp と同じフォルダ → その下 → `root` の下 の順で探す。"""
