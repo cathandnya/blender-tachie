@@ -1449,7 +1449,7 @@ assert Path(bpy.path.abspath(se_strip.sound.filepath)).name == "ping.wav"
 sed.strips.remove(se_strip)
 templates.remove(list(templates).index(se_tpl))
 prefs.media_root = ""
-# 場面転換: 再生位置で終わる画像・動画（前の場面）の最後のコマの残像をすぐ上に作り、プッシュは押し出す・フェードは薄くする
+# 場面転換: 前の場面（再生位置で終わる画像・動画）のお尻を伸ばし、前の場面自身を動かす（再生したまま。blender-tools と同じ）
 from bl_ext.user_default.blender_tachie import ymmp_media  # noqa: E402
 
 keys_of = lambda strip, attr: [tuple(k.co) for k in ymmp_media._keyframes(scene, strip, attr)]
@@ -1473,14 +1473,12 @@ tr_tpl.data = json.dumps({"version": 1, "fps": 30.0, "items": [
      "angle": 0.0}]})
 scene.frame_current = tr_at
 run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
-hold, = [x for x in sed.strips if x.get("tachie_transition") and x.type == "IMAGE"]
-assert (hold.channel, hold.left_handle, hold.right_handle) == (3, tr_at, tr_at + 20)
-assert Path(hold.elements[0].filename).name == pngs[0].name
-assert abs(hold.transform.scale_x - scene_a.transform.scale_x) < 1e-6  # 前の場面と同じ大きさ
+assert scene_a.right_handle == tr_at + 20 and scene_b.channel == 3  # 前の場面を伸ばし、新しい場面は上のチャンネルへ
 w_res = scene.render.resolution_x
-assert keys_of(hold.transform, "offset_x") == [(tr_at, 0.0), (tr_at + 19, -w_res)]  # 左へ押し出す
+assert keys_of(scene_a.transform, "offset_x") == [(tr_at, 0.0), (tr_at + 19, -w_res)]  # 左へ押し出す
 assert keys_of(scene_b.transform, "offset_x") == [(tr_at, w_res), (tr_at + 19, 0.0)]  # 新しい場面は右から
-# 動画の前の場面は、最後に映っていたコマで止めた残像（速度の補正のフレーム番号を固定）。フェードは薄くする
+assert not [x for x in sed.strips if x.name.startswith("場面転換")]  # 残像は作らない
+# 動画の前の場面も伸ばして再生したまま。素材が足りない分は最後のコマで止まる（知らせる）。フェードは上にある方の不透明度
 mv_at = tr_at + 100
 movie_a = sed.strips.new_movie("場面C", str(out / "clip.mp4"), 2, mv_at - 40, fit_method="FIT")
 movie_a.right_handle = mv_at
@@ -1489,16 +1487,41 @@ tr_tpl.data = json.dumps({"version": 1, "fps": 30.0, "items": [
      "angle": 0.0}]})
 scene.frame_current = mv_at
 run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
-stop, = [x for x in sed.strips if x.get("tachie_transition") and x.type == "SPEED"]
-assert stop.input_1.type == "MOVIE" and stop.speed_frame_number == 39 and stop.channel == 4
-assert keys_of(stop, "blend_alpha") == [(mv_at, 1.0), (mv_at + 199, 0.0)]
-assert stop.right_handle == mv_at + 200  # 素材（120 コマ）より長い場面転換でも残像は最後まで
-# 前の場面が無ければ置かない（理由を知らせる）
-scene.frame_current = mv_at + 400
+assert movie_a.right_handle == mv_at + 200
+assert keys_of(movie_a, "blend_alpha") == [(mv_at, 1.0), (mv_at + 199, 0.0)]
+# 速度の補正をかけた動画は動かせないので付けない（blender-tools と同じ）
+sp_at = mv_at + 400
+movie_s = sed.strips.new_movie("場面D", str(out / "clip.mp4"), 2, sp_at - 40, fit_method="FIT")
+movie_s.right_handle = sp_at
+sed.strips.new_effect("場面D 速度", "SPEED", 3, frame_start=sp_at - 40, input1=movie_s)
+scene.frame_current = sp_at
 assert bpy.ops.tachie.insert_template(index=list(templates).index(tr_tpl)) == {"CANCELLED"}
-for x in [x for x in sed.strips if x.get("tachie_transition") and x.type == "SPEED"]:
+assert movie_s.right_handle == sp_at
+# 前の場面が無ければ置かない（理由を知らせる）
+scene.frame_current = sp_at + 300
+assert bpy.ops.tachie.insert_template(index=list(templates).index(tr_tpl)) == {"CANCELLED"}
+# .ymmp の読み込みの場面転換も同じ（前の場面のストリップを伸ばして動かす。残像は作らない）
+from bl_ext.user_default.blender_tachie.tachie_studio.ymmp import Media as YMedia, Project as YProject, _transitions  # noqa: E402
+from bl_ext.user_default.blender_tachie.ymmp_import import find_font  # noqa: E402
+
+ym_at = sp_at + 600
+ma, mb = (YMedia(kind="image", frame=0, length=30, layer=1, file=str(pngs[0])),
+          YMedia(kind="image", frame=30, length=60, layer=1, file=str(pngs[1])))
+proj = YProject(path=out / "x.ymmp", fps=30.0, length=90, media=[ma, mb], others=[
+    {"$type": "YukkuriMovieMaker.Project.Items.TransitionItem, Y", "Frame": 30, "Layer": 2, "Length": 20,
+     "TransitionType": "YukkuriMovieMaker.Transition.PushTransitionPlugin, Y", "TransitionParameter": {}}])
+_transitions(proj, set())
+placer = ymmp_media.MediaPlacer(bpy.context, proj, ymmp_media.MediaFinder(out / "x.ymmp"), lambda f: ym_at + f,
+                                find_font)
+placer.place()
+ya, yb = (next(x for x in sed.strips if x.get("tachie_ymmp") and x.left_handle == ym_at + f) for f in (0, 30))
+assert ya.right_handle == ym_at + 50 and placer.placed["transition"] == 1, (ya.right_handle, placer.placed)
+assert keys_of(ya.transform, "offset_x")[-1] == (ym_at + 49, -w_res) and keys_of(yb.transform, "offset_x")[0][1] == w_res
+for x in (ya, yb):
     sed.strips.remove(x)
-for x in [x for x in sed.strips if x.get("tachie_transition") or x.name in ("場面A", "場面B", "場面C")]:
+for x in [x for x in sed.strips if x.type == "SPEED" and x.name == "場面D 速度"]:
+    sed.strips.remove(x)
+for x in [x for x in sed.strips if x.name in ("場面A", "場面B", "場面C", "場面D")]:
     sed.strips.remove(x)
 templates.remove(list(templates).index(tr_tpl))
 # 片付け

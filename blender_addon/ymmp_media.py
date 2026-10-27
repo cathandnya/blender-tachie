@@ -165,40 +165,13 @@ def _ease(scene, strip, attr: str, frame: int, slide: dict, out: bool) -> None:
             k.easing = easing
 
 
-def animate_transition(scene, top, hold, after, tr: dict, start: int, end: int) -> None:
-    """場面転換（`tr`: type = fade / push、easing・mode・angle）のキーフレームを打つ。フェードは残像（いちばん上で重ねる
-    ストリップ `top`）を薄くし、プッシュは残像（位置を動かすストリップ `hold`。動画の残像は速度の補正の元の動画）を
-    押し出して新しい場面 `after` を反対側から入れる（角度 0 で左へ、画面 1 つ分）。"""
-    last = max(start, end - 1)
-    if tr["type"] == "fade":
-        _key(top, "blend_alpha", start, top.blend_alpha)
-        _key(top, "blend_alpha", last, 0.0)
-        _ease(scene, top, "blend_alpha", start, tr, out=False)
-        return
-    render = scene.render
-    angle = math.radians(tr.get("angle") or 0.0)
-    dx, dy = -math.cos(angle) * render.resolution_x, math.sin(angle) * render.resolution_y
-    for target, (frm, to) in ((hold, (0.0, 1.0)), (after, (-1.0, 0.0))):
-        if target is None:
-            continue
-        t = target.transform
-        base_x, base_y = t.offset_x, t.offset_y
-        for attr, base, d in (("offset_x", base_x, dx), ("offset_y", base_y, dy)):
-            if abs(d) < 1e-6:
-                continue
-            _key(target, f"transform.{attr}", start, base + d * frm)
-            _key(target, f"transform.{attr}", last, base + d * to)
-            _ease(scene, t, attr, start, tr, out=False)
-            setattr(t, attr, base)
-
-
 def _scene_strips(sed) -> list:
-    """場面（場面転換の前・新しい場面）になれるストリップ: 画像・動画（速度の補正をかけた動画はその補正のストリップ）で、
-    アドオンの立ち絵などでも、効果の元でもないもの。"""
+    """場面（場面転換の前・新しい場面）になれるストリップ: 画像・動画（速度の補正などの効果をかけた動画はその効果の
+    ストリップ）で、アドオンの立ち絵などでないもの。"""
     inputs = {e.input_1.name for e in sed.strips if getattr(e, "input_1", None) is not None}
     return [s for s in sed.strips
-            if (s.type in ("IMAGE", "MOVIE") or (s.type == "SPEED" and s.input_1 is not None and s.input_1.type == "MOVIE"))
-            and not s.mute and lanes.lane_key(s) is None and not s.get("tachie_transition") and s.name not in inputs]
+            if (s.type in ("IMAGE", "MOVIE") or (getattr(s, "input_1", None) is not None and s.input_1.type == "MOVIE"))
+            and not s.mute and lanes.lane_key(s) is None and s.name not in inputs]
 
 
 def _fcurve(scene, strip, attr: str):
@@ -208,95 +181,117 @@ def _fcurve(scene, strip, attr: str):
     return next((f for f in bag.fcurves if f.data_path == path), None) if bag is not None else None
 
 
-def _value_at(scene, strip, attr: str, frame: int, default: float) -> float:
-    """`attr` の `frame` での値（キーフレームがあればその値）。"""
-    fcurve = _fcurve(scene, strip, attr)
-    return fcurve.evaluate(frame) if fcurve is not None else default
+def _keyed_between(scene, owner, attrs, lo: int, hi: int) -> bool:
+    """`owner`（ストリップか transform）の `attrs` に [lo, hi] のキーがあるか。"""
+    bag = _channelbag(scene)
+    if bag is None:
+        return False
+    paths = {f"{owner.path_from_id()}.{a}" for a in attrs}
+    return any(lo <= k.co[0] <= hi for f in bag.fcurves if f.data_path in paths for k in f.keyframe_points)
 
 
-def _keyed(scene, strip, attrs) -> bool:
-    return any(_fcurve(scene, strip, a) is not None for a in attrs)
+def _full_alpha(scene, strip) -> float:
+    """不透明度のキーフレームのいちばん濃い値（キーが無ければ今の値）。フェードアウトした場面の終わりの値（0）や、
+    フェードインの途中の値で場面転換のキーを打つと、場面転換の間ずっと見えなくなるため。"""
+    fcurve = _fcurve(scene, strip, "blend_alpha")
+    if fcurve is not None and len(fcurve.keyframe_points):
+        return max(k.co[1] for k in fcurve.keyframe_points)
+    return strip.blend_alpha
 
 
-def _copy_look(scene, dst, src, frame: int) -> None:
-    """変形（`frame` での値。動いていた場面は終わりの位置で止める）・切り抜き・左右反転を写す。"""
-    t, b = dst.transform, src.transform
-    for attr in ("offset_x", "offset_y", "scale_x", "scale_y", "rotation"):
-        setattr(t, attr, _value_at(scene, src, f"transform.{attr}", frame, getattr(b, attr)))
-    t.origin = b.origin
-    dst.crop.min_x, dst.crop.max_x, dst.crop.min_y, dst.crop.max_y = (src.crop.min_x, src.crop.max_x, src.crop.min_y,
-                                                                      src.crop.max_y)
-    dst.use_flip_x, dst.use_flip_y = src.use_flip_x, src.use_flip_y
+def _room_after(strip) -> float:
+    """お尻を後ろへ伸ばせる素材の残り（フレーム。画像 1 枚なら無限）。"""
+    if strip.type == "MOVIE" or (strip.type == "IMAGE" and len(strip.elements) > 1):
+        return max(0, int(strip.content_end) - strip.right_handle)
+    return math.inf
+
+
+def transition_scenes(scene, before, after, tr: dict, start: int, end: int, problems: list[str]) -> bool:
+    """場面転換（`tr`: type = fade / push、easing・mode・angle）を [start, end) に付ける。前の場面 `before` のお尻を `end` まで
+    伸ばし、その区間を前の場面自身で動かす（残像を作らず、前の場面も再生したまま。blender-tools の押し出しと同じやり方で、
+    時間の位置は YMM4 と同じく境目から後ろ）。プッシュは前の場面を押し出して新しい場面 `after` を反対側から入れ
+    （角度 0 で左へ、画面 1 つ分）、フェードは上にある方の不透明度を変える。速度の補正などの効果をかけた動画は動かせないので
+    断る（blender-tools と同じ）。伸ばした先に素材が無ければ最後のコマで止まった絵になる（知らせる）。
+    付けられなければ理由を `problems` に足して False。"""
+    sed = scene.sequence_editor
+    label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
+    inputs = {e.input_1 for e in sed.strips_all if getattr(e, "input_1", None) is not None}
+    for s in (before, after):
+        if s is not None and (getattr(s, "input_1", None) is not None or s in inputs):
+            problems.append(f"{label}: 「{s.name}」は速度の補正などの効果をかけてあるので付けませんでした")
+            return False
+    if before.channel >= scene.tachie.channel_base or (after is not None and after.channel >= scene.tachie.channel_base):
+        limit = 129
+    else:  # アドオンのレーンより下の場面なら、新しい場面を移すときもレーンより下に収める（キャラを隠さない）
+        limit = scene.tachie.channel_base
+    # 断るかどうかを全部確かめてから書き換える（途中で断ったときに、新しい場面を移した・前の場面を伸ばしたままにしない）
+    moving = ("offset_x", "offset_y")
+    if tr["type"] == "push" and _keyed_between(scene, before.transform, moving, start, end):
+        problems.append(f"{label}: 前の場面「{before.name}」が動いているので付けませんでした")
+        return False
+    move_to = None
+    if before.right_handle < end:
+        if after is not None and after.channel == before.channel:
+            # 新しい場面をすぐ上のチャンネルへ（元のチャンネルは前の場面が伸びる）。さらに上へ移すと、間のチャンネルで
+            # 重なっているストリップ（上のレイヤーの画像など）を新しい場面の区間ずっと隠すので、すぐ上が空いているときだけ
+            move_to = before.channel + 1
+            if move_to >= limit or _overlaps(sed, move_to, after.left_handle, after.right_handle):
+                problems.append(f"{label}: 新しい場面「{after.name}」のすぐ上のチャンネルが空いていないので付けませんでした")
+                return False
+        if _overlaps(sed, before.channel, before.right_handle, end, ignore=(before, after)):
+            problems.append(f"{label}: 前の場面「{before.name}」を伸ばす先に他のストリップがあるので付けませんでした")
+            return False
+        if move_to is not None:
+            after.channel = move_to
+        if end - before.right_handle > _room_after(before):
+            problems.append(f"{label}: 「{before.name}」は素材が足りないので、最後のコマで止まった絵が入ります")
+        before.right_handle = end
+    last = max(start, end - 1)
+    if tr["type"] == "fade":
+        # 上にある方の不透明度を変える（前の場面が上なら薄くし、新しい場面が上なら濃くする）
+        target, frm, to = ((after, 0.0, None) if after is not None and after.channel > before.channel
+                           else (before, None, 0.0))
+        full = _full_alpha(scene, target)
+        _key(target, "blend_alpha", start, full if frm is None else frm)
+        _key(target, "blend_alpha", last, full if to is None else to)
+        target.blend_alpha = full
+        _ease(scene, target, "blend_alpha", start, tr, out=False)
+        return True
+    render = scene.render
+    angle = math.radians(tr.get("angle") or 0.0)
+    dx, dy = -math.cos(angle) * render.resolution_x, math.sin(angle) * render.resolution_y
+    if after is not None and _keyed_between(scene, after.transform, moving, start, end):
+        problems.append(f"{label}: 新しい場面「{after.name}」が動いているので、押し出しは前の場面だけにしました")
+        after = None
+    for target, (frm, to) in ((before, (0.0, 1.0)), (after, (-1.0, 0.0))):
+        if target is None:
+            continue
+        t = target.transform
+        for attr, d in (("offset_x", dx), ("offset_y", dy)):
+            if abs(d) < 1e-6:
+                continue
+            base = getattr(t, attr)
+            _key(target, f"transform.{attr}", start, base + d * frm)
+            _key(target, f"transform.{attr}", last, base + d * to)
+            _ease(scene, t, attr, start, tr, out=False)
+            setattr(t, attr, base)
+    return True
 
 
 def place_transition(context, tr: dict, start: int, end: int, problems: list[str]) -> bool:
     """テンプレートの場面転換を置く。`start` を前の場面（そこで終わる画像・動画のいちばん上）と新しい場面（そこから
-    始まる画像・動画）の境目として、前の場面の最後のコマで止めた残像をすぐ上に作り、`animate_transition` で動かす
-    （.ymmp の読み込みの場面転換（`ymmp._transitions`）と同じ）。置けなければ理由を `problems` に足して False。"""
+    始まる画像・動画のいちばん上）の境目にして `transition_scenes` で付ける。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor
-    label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
     scenes = _scene_strips(sed) if sed is not None else []
     before = max((s for s in scenes if abs(s.right_handle - start) <= 1), key=lambda s: s.channel, default=None)
     if before is None:
+        label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
         problems.append(f"{label}: 再生位置で終わる画像・動画（前の場面）が無いので置きませんでした")
-        return False
-    source = before.input_1 if before.type == "SPEED" else before
-    if (source.type == "MOVIE" and len(source.retiming_keys)) or (
-            before.type == "SPEED" and before.speed_control != "FRAME_NUMBER"):
-        problems.append(f"{label}: 前の場面の動画「{source.name}」は再生速度を変えてあるので置きませんでした")
         return False
     after = max((s for s in scenes if abs(s.left_handle - start) <= 1 and s != before), key=lambda s: s.channel,
                 default=None)
-    # 残像は前と新しい場面のすぐ上（アドオンのレーンより下の場面なら、レーンより下に収める。キャラを隠さない）
-    need = 1 if before.type == "IMAGE" else 2
-    lowest = max(before.channel, after.channel if after is not None else 0) + 1
-    limit = scene.tachie.channel_base if before.channel < scene.tachie.channel_base else 129
-    channel = next((c for c in range(lowest, limit - need + 1)
-                    if not any(_overlaps(sed, c + k, start, end) for k in range(need))), None)
-    if channel is None:
-        problems.append(f"{label}: 前の場面「{before.name}」のすぐ上に空いているチャンネルが無いので置きませんでした")
-        return False
-    last = before.right_handle - 1
-    name = f"場面転換 {before.name}"
-    if before.type == "IMAGE":
-        elem = before.strip_elem_from_frame(last) or before.elements[-1]
-        path = os.path.join(bpy.path.abspath(before.directory), elem.filename)
-        hold = sed.strips.new_image(name=name, filepath=path, channel=channel, frame_start=start, fit_method="ORIGINAL")
-        hold.right_handle = end
-        top = hold
-    else:
-        # 動画は素材の最後に映っていたコマで止める（速度の補正のフレーム番号を固定。位置は元の動画の変形で動かす）。
-        # 速度の補正をかけた動画は、補正のフレーム番号の最後のコマ
-        movie = before.input_1 if before.type == "SPEED" else before
-        if before.type == "SPEED":
-            frame_number = _value_at(scene, before, "speed_frame_number", last, before.speed_frame_number)
-        else:
-            frame_number = last - movie.content_start
-        hold = sed.strips.new_movie(name=name, filepath=bpy.path.abspath(movie.filepath), channel=channel,
-                                    frame_start=start, fit_method="ORIGINAL")
-        hold.left_handle, hold.right_handle = start, end
-        top = sed.strips.new_effect(name=f"{name} 止め", type="SPEED", channel=channel + 1, frame_start=start,
-                                    input1=hold)
-        top.speed_control = "FRAME_NUMBER"
-        # 画面から追加した動画は素材の fps に合わせて伸び縮みする（24fps のシーンに 30fps の素材なら 0.8 倍の長さ）が、
-        # API で作った動画は素材の 1 コマ = 1 フレーム。フレーム番号は素材の中の位置（長さの比）で写す
-        scale = hold.frame_duration / max(1, movie.frame_duration)
-        top.speed_frame_number = min(max(0, hold.frame_duration - 1), max(0, round(frame_number * scale)))
-    # 見えている場面の変形（速度の補正をかけた動画は補正のストリップが持つ。YMM4 の読み込みと同じ）を残像に写す
-    _copy_look(scene, hold, before, last)
-    top.blend_type = before.blend_type
-    # 不透明度はキーフレームのいちばん濃い値（前の場面のフェードアウトで 0 になった終わりの値を使うと、残像が初めから見えない）
-    alpha_curve = _fcurve(scene, before, "blend_alpha")
-    top.blend_alpha = (max(k.co[1] for k in alpha_curve.keyframe_points)
-                       if alpha_curve is not None and len(alpha_curve.keyframe_points) else before.blend_alpha)
-    for s in {hold, top}:
-        s["tachie_transition"] = tr["type"]
-    if after is not None and tr["type"] == "push" and _keyed(scene, after, ("transform.offset_x", "transform.offset_y")):
-        problems.append(f"{label}: 新しい場面「{after.name}」が動いているので、押し出しは前の場面だけにしました")
-        after = None
-    animate_transition(scene, top, hold, after, tr, start, end)
-    return True
+    return transition_scenes(scene, before, after, tr, start, end, problems)
 
 
 def box_height(font_size: float, text: str, margin: float, line_spacing: float = 1.0) -> float:
@@ -413,7 +408,8 @@ class MediaPlacer:
     def place(self) -> None:
         project = self.project
         sed = self.scene.sequence_editor or self.scene.sequence_editor_create()
-        items = [m for m in project.media if not m.hidden]
+        items = [m for m in project.media if not m.hidden and m.transition is None]
+        transitions = [m for m in project.media if not m.hidden and m.transition is not None]
         visuals = self._visuals([m for m in items if m.kind != "audio"])
         front = front_layer(project)
         back: dict[int, list] = {}
@@ -440,12 +436,19 @@ class MediaPlacer:
                         self._place_visual(sed, m, path, lane_of[layer])
                     except (RuntimeError, ValueError, OSError) as e:
                         self.problems.append(f"{KIND_LABELS[m.kind]} {PureWindowsPath(m.file).name or m.text[:20]}: {e}")
-        for m in items:
-            if m.transition is not None and id(m) in self._strips:
-                try:
-                    self._transition(m, self._strips[id(m)])
-                except (RuntimeError, ValueError) as e:
-                    self.problems.append(f"場面転換 {PureWindowsPath(m.file).name}: {e}")
+        for m in transitions:  # 場面転換は前の場面のストリップ自身を伸ばして動かす
+            tr = m.transition
+            before = self._strips.get(id(tr.get("before")))
+            after = self._strips.get(id(tr["after"])) if tr.get("after") is not None else None
+            if before is None:
+                self.problems.append(f"場面転換: 前の場面 {PureWindowsPath(m.file).name} を置けなかったので付けませんでした")
+                continue
+            start, end = self._span(m)
+            try:
+                if transition_scenes(self.scene, before, after, tr, start, end, self.problems):
+                    self.placed["transition"] += 1
+            except (RuntimeError, ValueError) as e:
+                self.problems.append(f"場面転換 {PureWindowsPath(m.file).name}: {e}")
         for m in items:
             if m.kind == "audio":
                 path = self._path(m)
@@ -505,7 +508,7 @@ class MediaPlacer:
         strip.blend_alpha = max(0.0, min(1.0, m.opacity / 100))
         self._animate(strip, m, start, end)
         self._strips[id(m)] = strip
-        self.placed["transition" if m.transition else m.kind] += 1
+        self.placed[m.kind] += 1
 
     def _mosaic_tree(self, m: Media):
         """範囲（四角いマスク）の中だけピクセル化するコンポジターのノードグループ。"""
@@ -678,16 +681,6 @@ class MediaPlacer:
             strip.location = inside
         else:
             setattr(target, attr, inside)
-
-    def _transition(self, m: Media, strip) -> None:
-        """場面転換の残像を動かす（`animate_transition`）。"""
-        tr = m.transition
-        start, end = self._span(m)
-        after = self._strips.get(id(tr["after"])) if tr["after"] is not None else None
-        if after is not None and (tr["after"].slide is not None or any(k in tr["after"].anim for k in ("x", "y"))):
-            self.problems.append("場面転換の新しい場面が動いているので、押し出しは前の場面だけにしました")
-            after = None
-        animate_transition(self.scene, strip, strip, after, tr, start, end)
 
     def _fade(self, strip, attr: str, full: float, m: Media, start: int, last: int) -> None:
         if m.fade_in > 0:

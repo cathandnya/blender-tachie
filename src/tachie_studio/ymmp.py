@@ -318,8 +318,8 @@ class Media:
     # モザイク（kind == "mosaic"。YMM4 のエフェクトアイテムの四角い範囲のモザイク）。{"size": ブロックの大きさ,
     # "width", "height": 範囲（ピクセル）, "invert": 範囲の外にかける}。X / Y は範囲の中心
     mosaic: dict | None = None
-    # 場面転換（YMM4 のトランジションアイテム）の残像。前の場面の最後のコマを止めて新しい場面の上に置き、動かす。
-    # {"type": fade / push, "easing", "mode", "angle": 度, "after": 新しい場面の Media（無ければ None）}
+    # 場面転換（YMM4 のトランジションアイテム）の印（アドオンは置かずに、前の場面のストリップを伸ばして動かす）。
+    # {"type": fade / push, "easing", "mode", "angle": 度, "before": 前の場面の Media, "after": 新しい場面の Media（無ければ None）}
     transition: dict | None = None
     color: tuple = (0.0, 0.0, 0.0, 1.0)  # カラー（kind == "color"、アドオンのテンプレートだけ）
     anim: dict[str, tuple[float, float, str]] = field(default_factory=dict)  # 属性 → (始め, 終わり, 種類)
@@ -576,7 +576,8 @@ TRANSITION_TYPES = {"FadeTransitionPlugin": "fade", "PushTransitionPlugin": "pus
 
 
 def _transitions(project: Project, hidden_layers: set[int]) -> None:
-    """トランジションアイテムを、前の場面（区間の始まりで終わる下のレイヤーの画像・動画）の残像の Media にする。
+    """トランジションアイテムを、前の場面（区間の始まりで終わる下のレイヤーの画像・動画）と新しい場面を持つ場面転換の印の
+    Media にする（前の場面の値を写した残像の形のまま。アドオンは前の場面のストリップ自身を伸ばして動かす）。
     YMM4 のトランジションは新しい場面の始まりから置かれ、前の場面の最後のコマから新しい場面へ切り替える。"""
     rest = []
     for item in project.others:
@@ -603,7 +604,7 @@ def _transitions(project: Project, hidden_layers: set[int]) -> None:
                        opacity=end.get("opacity", before.opacity),
                        transition={"type": kind, "easing": p.get("EasingType") or "Linear",
                                    "mode": p.get("EasingMode") or "InOut", "angle": value(p.get("Angle")),
-                                   "after": after})
+                                   "before": before, "after": after})
         if before.kind == "video":  # 最後のコマで止める（再生速度 0）
             hold.offset = before.offset + max(0, before.length - 1) / project.fps * before.rate / 100
             hold.rate = 0.0

@@ -84,11 +84,15 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （Pixelate と Box Mask を ShaderNodeMix で混ぜるノードグループ。Box Mask の Size は縦も横も画面の幅に対する割合）。範囲の「サイズとアスペクト比」は AviUtl の図形と同じ
   （正なら幅、負なら高さを縮める。YMM4 の書き出しでは未確認）。行間は LineHeight2 % / 100 → `space_line`（1.0 で文字の約 1.16 倍）、
   キャラの字幕は `line_spacing`（TOML の subtitle の line_spacing）。
-  場面転換（トランジションアイテム、フェード・プッシュ）: YMM4 は新しい場面の始まりから置き、前の場面の最後のコマから切り替える。
-  `ymmp._transitions` が前の場面（区間の始まりで終わる、下のレイヤーの一番上の画像・動画）を止めた残像の Media
-  （`transition`、動画は再生速度 0 で最後のコマ）を前と新しい場面のすぐ上のレイヤー（+0.5）に作り、`MediaPlacer._transition` がフェードは
-  blend_alpha、プッシュは残像と新しい場面の offset にキーを打つ（角度 0 で左へ）。残像は画像だけで、YMM4 のように画面全体
-  （黒い余白・下のテキストなど）ではない。
+  場面転換（トランジションアイテム、フェード・プッシュ）: YMM4 は新しい場面の始まりから置き、前の場面の最後のコマで止めて
+  切り替えるが、アドオンは前の場面も再生したまま切り替える（blender-tools の押し出しと同じやり方。ユーザーの指定）。
+  `ymmp._transitions` が場面転換の印の Media（`transition` に前の場面 `before`・新しい場面 `after` の Media。区間の始まりで
+  終わる・始まる、下のレイヤーの一番上の画像・動画）を作り、`MediaPlacer.place` はそれを置かずに、置いた前の場面のストリップで
+  `ymmp_media.transition_scenes`: 前の場面のお尻を区間の終わりまで伸ばし（素材が足りなければ最後のコマで止まる絵になると知らせる。
+  同じチャンネルなら新しい場面を上の空いたチャンネルへ。伸ばす先が埋まっていれば断る）、プッシュは前の場面と新しい場面の
+  offset に（角度 0 で左へ、画面 1 つ分。前の場面が区間で動いていれば断り、新しい場面が動いていれば前の場面だけ）、フェードは
+  上にある方の blend_alpha にキーを打つ。速度の補正などの効果をかけた動画（効果の元・効果のストリップ）は断る（blender-tools と
+  同じ）。動かすのは画像・動画だけで、YMM4 のように画面全体（黒い余白・下のテキストなど）ではない。
   ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
   （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
   `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
@@ -259,10 +263,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （`_ymm4_look`、.ymmp の読み込みと同じ。プリセットは作らない）。YMM4 のテンプレートのボイスは VoiceLength が 0 なので、余韻はアイテムの `AdditionalTime`（無ければキャラの
   既定値）。中身が空になるテンプレートは登録しない。場面転換（TransitionItem のフェード・プッシュ）は `{"kind": "transition",
   type, easing, mode, angle}` で持ち、置くときは `ymmp_media.place_transition`: 再生位置（テンプレートの頭からのずれ）で終わる
-  画像・動画（`_scene_strip`: アドオンのストリップ・効果の元・残像でないもの）のいちばん上を前の場面、そこから始まるものを
-  新しい場面にして、前の場面の最後のコマの残像（画像は同じファイル、動画は元の動画 + SPEED のフレーム番号を固定。変形・
-  不透明度はキーフレームの終わりの値。`tachie_transition`）をすぐ上（前の場面がレーンより下ならレーンより下）に作り、
-  `animate_transition`（.ymmp の読み込みの `MediaPlacer._transition` と共通）で動かす。retiming キーのある動画は前の場面にしない。
+  画像・動画（`_scene_strips`: アドオンのストリップでないもの。効果をかけた動画は効果のストリップ）のいちばん上を前の場面、
+  そこから始まるものを新しい場面にして `transition_scenes`（.ymmp の読み込みと共通）で付ける。
   AI で表情を割り当てる（#27、`blender_addon/faceassign.py`、LLM 側は `tachie_studio/faceassign.py`。cathandnya/ymm4faceassign を
   移したもの）: 選んだセリフ（プリセットのあるキャラのセリフ）をキャラごとに、シーンのセリフ全部を台本にして
   OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。
