@@ -266,7 +266,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   既定値）。中身が空になるテンプレートは登録しない。場面転換（TransitionItem のフェード・プッシュ）は `{"kind": "transition",
   type, easing, mode, angle}` で持ち、置くときは `ymmp_media.place_transition`: 再生位置（テンプレートの頭からのずれ）で終わる
   画像・動画（`_scene_strips`: アドオンのストリップでないもの。効果をかけた動画は効果のストリップ）のいちばん上を前の場面、
-  そこから始まるものを新しい場面にして `transition_scenes`（.ymmp の読み込みと共通）で付ける。
+  そこから始まるものを新しい場面にして `transition_scenes`（.ymmp の読み込みと共通）で付ける。そこで終わるものが無ければ、
+  新しい場面より下のチャンネルで続いているもののいちばん上を前の場面にする（新しい場面を上に重ねた並べ方。場面転換の
+  途中で終わるときだけ終わりまで伸ばす）。
   AI で表情を割り当てる（#27、`blender_addon/faceassign.py`、LLM 側は `tachie_studio/faceassign.py`。cathandnya/ymm4faceassign を
   移したもの）: 選んだセリフ（プリセットのあるキャラのセリフ）をキャラごとに、シーンのセリフ全部を台本にして
   OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。

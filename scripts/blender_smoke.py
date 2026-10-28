@@ -1500,6 +1500,31 @@ assert movie_s.right_handle == sp_at
 # 前の場面が無ければ置かない（理由を知らせる）
 scene.frame_current = sp_at + 300
 assert bpy.ops.tachie.insert_template(index=list(templates).index(tr_tpl)) == {"CANCELLED"}
+# 新しい場面を上に重ねて置き、前の場面がその下で続いているときは、続いている方を前の場面にする（伸ばさない）。
+# 上で続いているもの（重ねた画像など）は前の場面にしない
+ov_at = sp_at + 600
+scene_e = sed.strips.new_image("場面E", str(pngs[0]), 2, ov_at - 30, fit_method="FIT")
+scene_e.right_handle = ov_at + 300
+scene_f = sed.strips.new_image("場面F", str(pngs[1]), 3, ov_at, fit_method="FIT")
+scene_f.right_handle = ov_at + 400
+overlay = sed.strips.new_image("重ねた画像", str(pngs[0]), 4, ov_at - 30, fit_method="FIT")
+overlay.right_handle = ov_at + 300
+scene.frame_current = ov_at
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+assert scene_e.right_handle == ov_at + 300 and scene_f.channel == 3
+assert keys_of(scene_f, "blend_alpha") == [(ov_at, 0.0), (ov_at + 199, 1.0)]  # 上にある新しい場面を濃くする
+assert not keys_of(overlay, "blend_alpha") and not keys_of(scene_e, "blend_alpha")
+# プッシュなら、押し出した前の場面は場面転換の終わりで元の位置に戻す（新しい場面が先に終わっても映る）
+tr_tpl.data = json.dumps({"version": 1, "fps": 30.0, "items": [
+    {"kind": "transition", "frame": 0, "length": 20, "layer": 2, "type": "push", "easing": "Linear", "mode": "InOut",
+     "angle": 0.0}]})
+scene.frame_current = ov_at + 50
+sed.strips.remove(scene_f)
+scene_g = sed.strips.new_image("場面G", str(pngs[1]), 3, ov_at + 50, fit_method="FIT")
+scene_g.right_handle = ov_at + 100
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+assert keys_of(scene_e.transform, "offset_x") == [(ov_at + 50, 0.0), (ov_at + 69, -w_res), (ov_at + 70, 0.0)]
+assert scene_e.right_handle == ov_at + 300
 # .ymmp の読み込みの場面転換も同じ（前の場面のストリップを伸ばして動かす。残像は作らない）
 from bl_ext.user_default.blender_tachie.tachie_studio.ymmp import Media as YMedia, Project as YProject, _transitions  # noqa: E402
 from bl_ext.user_default.blender_tachie.ymmp_import import find_font  # noqa: E402

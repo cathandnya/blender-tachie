@@ -317,6 +317,10 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
             base = getattr(t, attr)
             _key(target, f"transform.{attr}", start, base + d * frm)
             _key(target, f"transform.{attr}", last, base + d * to)
+            if target is before and before.right_handle > end:
+                # 新しい場面の下で続いている前の場面は、押し出したあと元の位置に戻す（新しい場面が先に終わったときに
+                # 押し出したままだと何も映らない）
+                _key(target, f"transform.{attr}", end, base)
             _ease(scene, t, attr, start, tr, out=False)
             setattr(t, attr, base)
     return True
@@ -324,17 +328,23 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
 
 def place_transition(context, tr: dict, start: int, end: int, problems: list[str]) -> bool:
     """テンプレートの場面転換を置く。`start` を前の場面（そこで終わる画像・動画のいちばん上）と新しい場面（そこから
-    始まる画像・動画のいちばん上）の境目にして `transition_scenes` で付ける。"""
+    始まる画像・動画のいちばん上）の境目にして `transition_scenes` で付ける。そこで終わるものが無ければ、新しい場面の
+    下で続いている画像・動画のいちばん上を前の場面にする（新しい場面を上に重ねて置いたとき。上のものは重ねた画像など。場面転換の途中で
+    終わるときだけ終わりまで伸ばす）。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor
     scenes = _scene_strips(sed) if sed is not None else []
     before = max((s for s in scenes if abs(s.right_handle - start) <= 1), key=lambda s: s.channel, default=None)
-    if before is None:
-        label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
-        problems.append(f"{label}: 再生位置で終わる画像・動画（前の場面）が無いので置きませんでした")
-        return False
     after = max((s for s in scenes if abs(s.left_handle - start) <= 1 and s != before), key=lambda s: s.channel,
                 default=None)
+    if before is None and after is not None:
+        before = max((s for s in scenes if s.left_handle < start - 1 and s.right_handle > start + 1
+                      and s.channel < after.channel), key=lambda s: s.channel, default=None)
+    if before is None:
+        label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
+        problems.append(f"{label}: 再生位置で終わる、または新しい場面の下で続いている画像・動画（前の場面）が無いので"
+                        "置きませんでした")
+        return False
     return transition_scenes(scene, before, after, tr, start, end, problems)
 
 
