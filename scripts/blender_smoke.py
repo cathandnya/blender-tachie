@@ -1504,6 +1504,73 @@ run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
 sed.strips.remove(marks()[0])
 assert tr_mod.remove_orphans(scene) == [] and scene_a.right_handle == tr_at and scene_b.channel == 2
 assert not keys_of(scene_a.transform, "offset_x")
+
+
+def pick(*strips):
+    for x in sed.strips_all:
+        x.select = x in strips
+
+
+# 「付け直す」: 新しい場面だけ動かして（キーも一緒に動いて崩れる）付け直すと、新しい場面の頭で同じ長さに付け直す
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+scene_b.content_start += 10
+pick(scene_b)
+run(bpy.ops.tachie.reapply_transition)
+assert scene_a.right_handle == tr_at + 30 and scene_b.channel == 3
+assert keys_of(scene_a.transform, "offset_x") == [(tr_at + 10, 0.0), (tr_at + 29, -w_res)]
+assert keys_of(scene_b.transform, "offset_x") == [(tr_at + 10, w_res), (tr_at + 29, 0.0)]
+tr_marker, = marks()
+assert (tr_marker.left_handle, tr_marker.right_handle) == (tr_at + 10, tr_at + 30) and len(scene[tr_mod.REGISTRY]) == 1
+# 2 本とも動かしてから外すと、動かした分ずらした位置に戻す（お尻・チャンネルは付け直す前の記録を引き継ぐ）
+scene_b.content_start += 5
+scene_a.content_start += 5
+pick(tr_marker)
+run(bpy.ops.tachie.remove_transition)
+assert scene_a.right_handle == tr_at + 5 and scene_b.channel == 2 and not marks() and not scene.get(tr_mod.REGISTRY)
+assert not keys_of(scene_a.transform, "offset_x") and not keys_of(scene_b.transform, "offset_x")
+scene_a.content_start -= 5
+scene_b.content_start -= 15
+assert (scene_a.right_handle, scene_b.left_handle, scene_b.right_handle) == (tr_at, tr_at, tr_at + 60)
+# 続けて付けた（A → B → C）真ん中を動かして付け直す。B には 2 つの場面転換のキーがある
+scene_c = sed.strips.new_image("場面C2", str(pngs[0]), 4, tr_at + 60, fit_method="FIT")
+scene_c.right_handle = tr_at + 120
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+scene.frame_current = tr_at + 60
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+assert scene_b.right_handle == tr_at + 80 and len(marks()) == 2
+scene_b.content_start += 5
+pick(scene_b)
+run(bpy.ops.tachie.reapply_transition)
+assert scene_a.right_handle == tr_at + 25 and scene_b.right_handle == tr_at + 80
+assert keys_of(scene_a.transform, "offset_x") == [(tr_at + 5, 0.0), (tr_at + 24, -w_res)]
+assert keys_of(scene_b.transform, "offset_x") == [(tr_at + 5, w_res), (tr_at + 24, 0.0), (tr_at + 60, 0.0),
+                                                  (tr_at + 79, -w_res)], keys_of(scene_b.transform, "offset_x")
+assert keys_of(scene_c.transform, "offset_x") == [(tr_at + 60, w_res), (tr_at + 79, 0.0)]
+assert sorted((x.left_handle, x.right_handle) for x in marks()) == [(tr_at + 5, tr_at + 25), (tr_at + 60, tr_at + 80)]
+# 付け直せないとき（前の場面を伸ばす先が埋まっている）は外したものを元に戻して断る
+blocker = sed.strips.new_effect("ふさぐ", "COLOR", 2, tr_at + 28, length=12)
+scene_b.content_start += 10
+pick(scene_a)
+b_keys = keys_of(scene_b.transform, "offset_x")
+try:
+    bpy.ops.tachie.reapply_transition()
+    raise AssertionError("付け直せないはず")
+except RuntimeError as e:
+    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
+assert scene_a.right_handle == tr_at + 25 and keys_of(scene_a.transform, "offset_x") == [(tr_at + 5, 0.0),
+                                                                                         (tr_at + 24, -w_res)]
+assert keys_of(scene_b.transform, "offset_x") == b_keys and len(scene[tr_mod.REGISTRY]) == 2
+assert sorted((x.left_handle, x.right_handle) for x in marks()) == [(tr_at + 5, tr_at + 25), (tr_at + 60, tr_at + 80)]
+sed.strips.remove(blocker)
+scene_b.content_start -= 10
+pick(scene_b)
+run(bpy.ops.tachie.remove_transition)
+assert scene_a.right_handle == tr_at and scene_b.channel == 2 and not marks() and not scene.get(tr_mod.REGISTRY)
+assert not keys_of(scene_b.transform, "offset_x") and not keys_of(scene_c.transform, "offset_x")
+sed.strips.remove(scene_c)
+scene_b.content_start -= 5
+assert (scene_b.left_handle, scene_b.right_handle) == (tr_at, tr_at + 60)
+scene.frame_current = tr_at
 run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))  # 後のテストのために付け直す
 # 動画の前の場面も伸ばして再生したまま。素材が足りない分は最後のコマで止まる（知らせる）。フェードは上にある方の不透明度
 mv_at = tr_at + 100

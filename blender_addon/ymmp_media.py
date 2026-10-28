@@ -243,6 +243,10 @@ def _with_input(strip) -> list:
     return [strip] + ([strip.input_1] if strip.type == "SPEED" else [])
 
 
+def transition_label(kind: str) -> str:
+    return "場面転換（フェード）" if kind == "fade" else "場面転換（プッシュ）"
+
+
 def transition_scenes(scene, before, after, tr: dict, start: int, end: int, problems: list[str]) -> bool:
     """場面転換（`tr`: type = fade / push、easing・mode・angle）を [start, end) に付ける。前の場面 `before` のお尻を `end` まで
     伸ばし、その区間を前の場面自身で動かす（残像を作らず、前の場面も再生したまま。blender-tools の押し出しと同じやり方で、
@@ -254,7 +258,7 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
     from . import transitions
 
     sed = scene.sequence_editor
-    label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
+    label = transition_label(tr["type"])
     if transitions.overlapping(scene, {before.name} | ({after.name} if after is not None else set()), start, end):
         problems.append(f"{label}: 「{before.name}」にはもう場面転換が付いているので付けませんでした（先に外してください）")
         return False
@@ -362,7 +366,7 @@ def place_transition(context, tr: dict, start: int, end: int, problems: list[str
         before = max((s for s in scenes if s.left_handle < start - 1 and s.right_handle > start + 1
                       and s.channel < after.channel), key=lambda s: s.channel, default=None)
     if before is None:
-        label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
+        label = transition_label(tr["type"])
         problems.append(f"{label}: 再生位置で終わる、または新しい場面の下で続いている画像・動画（前の場面）が無いので"
                         "置きませんでした")
         return False

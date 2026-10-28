@@ -6,6 +6,8 @@
 目印を消しても外す: `depsgraph_update_post` で「記録はあるのに目印が無い」を見つけ、タイマー（`_sync`）で外す（ハンドラーの
 中では書き換えない。画面の無いとき・再生中・書き出し中・リンクしたシーンでは外さない。smoke は `remove_orphans` を直接呼ぶ）。
 前の場面・新しい場面が両方とも無い記録（切り取って貼り付ける途中など）は残す。外せなかったものは `_failed` に入れて繰り返さない。
+付けたあとに場面を動かすと（Blender はキーも一緒に動かす）、片方だけなら場面転換が崩れ、目印は元の位置に残る。
+「場面転換を付け直す」（`tachie.reapply_transition`、`reapply`）は外してから新しい場面の頭で同じ長さに付け直す。
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from bpy.app.handlers import persistent
 from . import prefetch
 from .motion import _channelbag
 from .operators import _overlaps, seq_scene
-from .ymmp_media import _fcurve
+from .ymmp_media import _fcurve, transition_label
 
 MARK = "tachie_transition"  # 目印のストリップに持つ {"token": 記録の番号}
 REGISTRY = "tachie_transitions"  # シーンに持つ場面転換の記録 {番号: 付ける前の状態}（目印を消しても残る）
@@ -87,18 +89,22 @@ class Record:
     def mark(self, start: int, end: int, label: str, avoid: list) -> None:
         """目印を置いて記録をシーンに入れる。"""
         scene = self.scene
-        sed = scene.sequence_editor
         channel = _free_channel(scene, start, end, [s.channel for s in avoid])
-        marker = sed.strips.new_effect(label, "COLOR", channel, start, length=max(1, end - start))
-        marker.color = (0.3, 0.5, 0.9)
-        marker.blend_alpha = 0.0
-        marker.color_tag = "COLOR_05"
         token = uuid.uuid4().hex[:12]
+        marker = _new_marker(scene.sequence_editor, label, channel, start, end, token)
         if REGISTRY not in scene:
             scene[REGISTRY] = {}
         self.state.update(start=start, end=end, marker=marker.name)
         scene[REGISTRY][token] = self.state
-        marker[MARK] = {"token": token}
+
+
+def _new_marker(sed, name: str, channel: int, start: int, end: int, token: str):
+    marker = sed.strips.new_effect(name, "COLOR", channel, start, length=max(1, end - start))
+    marker.color = (0.3, 0.5, 0.9)
+    marker.blend_alpha = 0.0
+    marker.color_tag = "COLOR_05"
+    marker[MARK] = {"token": token}
+    return marker
 
 
 def _free_channel(scene, start: int, end: int, used: list[int]) -> int:
@@ -156,9 +162,9 @@ def selected(scene, sed) -> tuple[list[str], list[str]]:
     return sorted(tokens, key=lambda t: registry[t].get("start", 0), reverse=True), ghosts
 
 
-def remove(scene, token: str) -> list[str]:
+def remove(scene, token: str, keep_channels: bool = False) -> list[str]:
     """場面転換を外して付ける前に戻す（打ったフレームのキーだけ消す・伸ばしたお尻・移したチャンネル）。目印が残っていれば
-    消し、記録も消す。知らせることを返す。"""
+    消し、記録も消す。`keep_channels` なら移したチャンネルは戻さない（付け直すとき）。知らせることを返す。"""
     sed = scene.sequence_editor
     registry = scene[REGISTRY]
     state = registry[token]
@@ -204,7 +210,7 @@ def remove(scene, token: str) -> list[str]:
         else:
             notes.append(f"「{name}」のお尻を元の位置まで戻せませんでした（他のストリップがあります）")
     # 上へ移したチャンネルを戻す（下へ動かすので下のものから。戻す先が埋まっていれば戻さない）
-    moves = [(sed.strips_all.get(n), c) for n, c in state.get("channels", {}).items()]
+    moves = [] if keep_channels else [(sed.strips_all.get(n), c) for n, c in state.get("channels", {}).items()]
     for strip, channel in sorted(((s, c) for s, c in moves if s is not None and s.channel != c), key=lambda p: p[1]):
         if _overlaps(sed, channel, strip.left_handle, strip.right_handle, ignore=[strip]):
             notes.append(f"「{strip.name}」を元のチャンネル {channel} に戻せませんでした（他のストリップがあります）")
@@ -216,6 +222,109 @@ def remove(scene, token: str) -> list[str]:
         (meta.strips if meta is not None else sed.strips).remove(marker)
     del registry[token]
     return notes
+
+
+ANIMATED = ("blend_alpha", "transform.offset_x", "transform.offset_y", "speed_frame_number")  # 場面転換がキーを打つもの
+
+
+def _moved(strip, state) -> float:
+    """付けたあとに `strip` を動かした量。"""
+    for key in state.get("keys", []):
+        if key["strip"] == strip.name:
+            return _delta(strip, key)
+    return _delta(strip, {"origin": state.get("origins", {}).get(strip.name)})
+
+
+def _snapshot(scene, state) -> dict:
+    """付け直しに失敗したときに戻すための、外す前の場面（fps 合わせの補正は元の動画も）のお尻とキーと、目印。"""
+    sed = scene.sequence_editor
+    strips = {}
+    for name in (state.get("before"), state.get("after")):
+        strip = sed.strips_all.get(name or "")
+        for s in ([strip] + ([strip.input_1] if strip.type == "SPEED" else [])) if strip is not None else ():
+            curves = {}
+            for attr in ANIMATED:
+                if attr == "speed_frame_number" and s.type != "SPEED":
+                    continue
+                fcurve = _fcurve(scene, s, attr)
+                curves[attr] = (_get(s, attr), [_point(p) for p in fcurve.keyframe_points] if fcurve else None)
+            strips[s.name] = {"right": s.right_handle, "curves": curves}
+    marker = sed.strips_all.get(state.get("marker", ""))
+    return {"strips": strips, "marker": None if marker is None else
+            {"name": marker.name, "channel": marker.channel, "start": marker.left_handle, "end": marker.right_handle}}
+
+
+def _rollback(scene, token: str, state: dict, snap: dict) -> None:
+    """`remove(keep_channels=True)` で外した場面転換を `_snapshot` の状態に戻す（付け直しを断ったとき）。"""
+    sed = scene.sequence_editor
+    bag = _channelbag(scene, create=True)
+    for name, saved in snap["strips"].items():
+        strip = sed.strips_all.get(name)
+        if strip is None:
+            continue
+        if strip.type != "SPEED":  # 補正の長さは元の動画に従う
+            strip.right_handle = saved["right"]
+        for attr, (value, points) in saved["curves"].items():
+            fcurve = _fcurve(scene, strip, attr)
+            if points is None:
+                if fcurve is not None:
+                    bag.fcurves.remove(fcurve)
+                _set(strip, attr, value)
+                continue
+            if fcurve is None:
+                fcurve = bag.fcurves.new(f"{strip.path_from_id()}.{attr}")
+            fcurve.keyframe_points.clear()
+            fcurve.keyframe_points.add(len(points))
+            for point, p in zip(fcurve.keyframe_points, points):
+                _restore_point(point, p, 0.0)
+            fcurve.update()
+    m = snap["marker"]
+    if m is not None:
+        marker = _new_marker(sed, m["name"], m["channel"], m["start"], m["end"], token)
+        state["marker"] = marker.name
+    scene[REGISTRY][token] = state
+
+
+def reapply(scene, token: str) -> list[str]:
+    """場面を動かしたあとの場面転換を付け直す: 外してから、新しい場面の頭（新しい場面が無ければ前の場面を動かした分ずらした
+    位置）で同じ長さ・同じ設定で付け直し、目印も置き直す。移したチャンネルは戻さずに、記録の元のチャンネルを引き継ぐ。
+    付けられなければ何も変えずに理由を投げる（`ValueError`）。知らせることを返す。"""
+    from .ymmp_media import transition_scenes
+
+    sed = scene.sequence_editor
+    registry = scene[REGISTRY]
+    state = registry[token].to_dict()
+    label = transition_label(state.get("type"))
+    before = sed.strips_all.get(state.get("before", ""))
+    after = sed.strips_all.get(state["after"]) if state.get("after") else None
+    if before is None or (state.get("after") and after is None):
+        raise ValueError(f"{label}: 前の場面か新しい場面が見つからないので付け直せませんでした")
+    start = after.left_handle if after is not None else round(state["start"] + _moved(before, state))
+    if start <= before.left_handle:
+        where = f"新しい場面「{after.name}」" if after is not None else "場面転換の位置"
+        raise ValueError(f"{label}: {where}が前の場面「{before.name}」より前から始まっているので付け直せませんでした")
+    snap = _snapshot(scene, state)
+    tokens = set(registry.keys())
+    notes = remove(scene, token, keep_channels=True)
+    problems = []
+    tr = {"type": state["type"], **state.get("tr", {})}
+    try:
+        ok = transition_scenes(scene, before, after, tr, start, start + state["end"] - state["start"], problems)
+    except Exception as e:  # 外したまま残さない
+        problems.append(f"{label}: 付け直せませんでした: {e}")
+        ok = False
+    if not ok:
+        for t in set(registry.keys()) - tokens:  # 途中で入った記録と目印は捨てる
+            if _is_marker(sed, t, registry[t]):
+                sed.strips.remove(sed.strips_all[registry[t]["marker"]])
+            del registry[t]
+        _rollback(scene, token, state, snap)
+        raise ValueError("\n".join(problems) or f"{label}: 付け直せませんでした")
+    new, = set(registry.keys()) - tokens
+    # 移したチャンネルは付ける前のもの（今回移したものより前の記録を優先）
+    registry[new]["channels"] = {**registry[new]["channels"].to_dict(),
+                                 **{n: c for n, c in state.get("channels", {}).items() if n in sed.strips_all}}
+    return notes + problems
 
 
 def _orphans(scene) -> list[str]:
@@ -313,7 +422,37 @@ class TACHIE_OT_remove_transition(bpy.types.Operator):
         return {"FINISHED"}
 
 
-_classes = (TACHIE_OT_remove_transition,)
+class TACHIE_OT_reapply_transition(bpy.types.Operator):
+    """場面を動かしたあとの場面転換を、新しい場面の頭で付け直す（目印か、前の場面・新しい場面を選んで）"""
+    bl_idname = "tachie.reapply_transition"
+    bl_label = "付け直す"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        scene = seq_scene(context)
+        sed = scene.sequence_editor
+        tokens, _ghosts = selected(scene, sed) if sed is not None else ([], [])
+        if not tokens:
+            self.report({"ERROR"}, "場面転換の目印か、場面転換を付けた画像・動画を選んでください")
+            return {"CANCELLED"}
+        done = 0
+        for token in reversed(tokens):  # 前から順に
+            try:
+                notes = reapply(scene, token)
+            except ValueError as e:
+                self.report({"WARNING"}, str(e))
+                continue
+            done += 1
+            for note in notes:
+                self.report({"WARNING"}, note)
+        if not done:
+            self.report({"ERROR"}, "場面転換を付け直せませんでした")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"{done} か所の場面転換を付け直しました")
+        return {"FINISHED"}
+
+
+_classes = (TACHIE_OT_remove_transition, TACHIE_OT_reapply_transition)
 
 
 def register():
