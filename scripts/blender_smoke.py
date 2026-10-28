@@ -1841,14 +1841,7 @@ assert ops._unsent.pop((ops.EDIT_AUDIO_KEY, first_zunda))  # 次に開くと「�
 activate(sound(first_zunda))
 fails(bpy.ops.tachie.edit_kana, text="カキナオシタノダ'")
 assert ops._unsent.pop(("edit_kana", first_zunda)) == "カキナオシタノダ'"
-# ダイアログの外を押して閉じても、入力するたびに覚えた入力が次に開いたときに戻る（欄の update）
-activate(sound(first_zunda))
-ops._keep_draft("edit_kana", ops.active_line_id, ops.TACHIE_OT_edit_kana.initial_kana)(
-    type("P", (), {"text": "トジタノダ'"})(), bpy.context)
-assert ops._unsent.pop(("edit_kana", first_zunda)) == "トジタノダ'"
-ops._keep_draft("edit_kana", ops.active_line_id, ops.TACHIE_OT_edit_kana.initial_kana)(
-    type("P", (), {"text": ops.TACHIE_OT_edit_kana.initial_kana(bpy.context)})(), bpy.context)
-assert ("edit_kana", first_zunda) not in ops._unsent  # 最初の値に戻したら覚えない
+assert not ops._unsent  # キャンセルして閉じた入力は覚えない（欄の update は無い）
 zunda.engine = "DEFAULT"
 assert scene.frame_end == max(r for _, r, _ in lines().values()) - 1, scene.frame_end
 
