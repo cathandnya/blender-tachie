@@ -253,7 +253,8 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
     時間の位置は YMM4 と同じく境目から後ろ）。プッシュは前の場面を押し出して新しい場面 `after` を反対側から入れ
     （角度 0 で左へ、画面 1 つ分）、フェードは上にある方の不透明度を変える。速度の補正などの効果をかけた動画は動かせないので
     断る（blender-tools と同じ）。伸ばした先に素材が無ければ最後のコマで止まった絵になる（知らせる）。
-    範囲に目印のストリップを置き、付ける前の状態を記録する（`transitions`。「場面転換を外す」・目印を消すと戻る）。
+    範囲に目印のストリップを置き、付ける前の状態を記録する（`transitions`。blender-tools の押し出しと同じ形で、
+    付け直す・外すのは blender-tools）。
     付けられなければ理由を `problems` に足して False。"""
     from . import transitions
 
@@ -302,12 +303,9 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
             for strip, channel in sorted(move_to, key=lambda p: -p[1]):
                 record.channel(strip)
                 strip.channel = channel
-        for strip in own:
-            if strip.type != "SPEED":  # 補正の長さは元の動画に従う
-                record.end(strip)
         if before.type == "SPEED":
-            record.speed_key(before, max(_fcurve(scene, before, "speed_frame_number").keyframe_points,
-                                         key=lambda k: k.co[0]))
+            record.speed(before.input_1, max(_fcurve(scene, before, "speed_frame_number").keyframe_points,
+                                             key=lambda k: k.co[0]))
         if _extend(scene, before, end):
             problems.append(f"{label}: 「{before.name}」は素材が足りないので、最後のコマで止まった絵が入ります")
     last = max(start, end - 1)
@@ -316,7 +314,7 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
         target, frm, to = ((after, 0.0, None) if after is not None and after.channel > before.channel
                            else (before, None, 0.0))
         full = _full_alpha(scene, target)
-        record.keys(target, "blend_alpha", (start, last))
+        record.keys(target, "blend_alpha", full)
         _key(target, "blend_alpha", start, full if frm is None else frm)
         _key(target, "blend_alpha", last, full if to is None else to)
         target.blend_alpha = full
@@ -338,7 +336,7 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
                 continue
             base = getattr(t, attr)
             back = target is before and before.right_handle > end
-            record.keys(target, f"transform.{attr}", (start, last, end) if back else (start, last))
+            record.keys(target, f"transform.{attr}", base, back)
             _key(target, f"transform.{attr}", start, base + d * frm)
             _key(target, f"transform.{attr}", last, base + d * to)
             if back:

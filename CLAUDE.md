@@ -95,17 +95,13 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   同じ）。ただしアドオンが付けた fps 合わせの補正（`MediaPlacer._movie` の SPEED、印 `FPS_SPEED`。フレーム番号の直線の 2 つの
   キー、元はリタイミングしていない動画、`_fps_speed`）は扱い、`_extend` が元の動画を伸ばして終わりのキーを同じ傾きで延ばす
   （素材の終わりを超えたら最後のコマで止まる）。動かすのは画像・動画だけで、YMM4 のように画面全体（黒い余白・下のテキストなど）ではない。
-  目印と外す（`blender_addon/transitions.py`、blender-tools の押し出しと同じやり方）: `transition_scenes` は書き換える前に
-  `transitions.Record` に元の状態（打ったキーのフレームと元の値・伸ばしたお尻・fps 合わせの補正の終わりのキー・移したチャンネル）を
-  覚え、範囲に不透明度 0 の COLOR ストリップ（目印、`MARK` = {token}）を置いて、記録はシーンの `REGISTRY`[token]。
-  `tachie.remove_transition`（テンプレートのパネル。目印か前の場面・新しい場面を選んで）と、目印を消したとき（`depsgraph_update_post`
-  → タイマー `_sync` → `remove_orphans`。画面の無いとき・再生中・書き出し中は外さない、外せなかったものは `_failed`）に戻す。
-  同じ場面に重なる場面転換は断る（`overlapping`）。テンプレートの登録（`template_from_strips`）は目印を場面転換のアイテムにする。
-  Blender はストリップを動かすとキーも一緒に動かす（`content_start` を書いても）ので、記録はキー・お尻ごとに付けたときの
-  `content_start`（`origin`）を持ち、外すときは動かした分（`_delta`）ずらす。片方だけ動かすと場面転換が崩れるので
-  「付け直す」（`tachie.reapply_transition`、`reapply`。前から順に）: `remove(keep_channels=True)` で外し、新しい場面の頭で同じ長さ・
-  同じ設定の `transition_scenes`（目印も置き直す）。移したチャンネルは付ける前の記録を引き継ぐ。断られたら `_snapshot` の
-  お尻・キー・目印・記録に戻す（`_rollback`）。
+  目印と記録（`blender_addon/transitions.py`）は blender-tools の押し出しと同じ形（目印 `vtools_push` = {token}、
+  シーンの `vtools_pushes`[token]）で書き、外す・付け直す・目印を消したときに外すのは blender-tools が行う（このアドオンには
+  置かない。ユーザーの指定）。`transition_scenes` は書き換える前に `transitions.Record` に元の状態を覚え、範囲に不透明度 0 の
+  COLOR ストリップを置く。tools の押し出しに無い場合の欄（kind = fade・target・full、斜めの axes、b_keys = False、
+  前の場面を範囲の終わりで戻す a_return、fps 合わせの補正の speed_a、b_channels）は blender-tools と決めたもの（欄の一覧は
+  transitions.py の冒頭）。同じ場面に重なる場面転換（tools の押し出しも）は断る（`overlapping`）。テンプレートの登録
+  （`template_from_strips`）は目印を場面転換のアイテムにする（記録の `tr`。tools で付けた押し出しは持たないので飛ばす）。
   ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
   （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
   `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。

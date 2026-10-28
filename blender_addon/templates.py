@@ -192,8 +192,8 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
             skipped.append(f"前の版の待機の立ち絵（{s.name}）")
         elif s.get(MARK) is not None:  # 場面転換の目印 → 場面転換（付けた前の場面・新しい場面のキーは入れない）
             state = record_of(scene, s)
-            if state is None:
-                skipped.append(f"{s.name}（記録の無い場面転換の目印）")
+            if state is None or "tr" not in state:  # blender-tools で付けた押し出しは設定を持たない
+                skipped.append(f"{s.name}（記録の無い場面転換の目印）" if state is None else f"{s.name}（blender-tools の押し出し）")
                 continue
             items.append({**state["tr"].to_dict(), "kind": "transition", "frame": s.left_handle - t0,
                           "length": s.right_handle - s.left_handle, "layer": s.channel})

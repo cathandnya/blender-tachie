@@ -1490,88 +1490,14 @@ assert bpy.ops.tachie.insert_template(index=list(templates).index(tr_tpl)) == {"
 tr_data, _behind, _skipped = tpl_mod.template_from_strips(bpy.context, [tr_marker])
 assert tr_data["items"] == [{"type": "push", "easing": "Expo", "mode": "InOut", "angle": 0.0, "kind": "transition",
                              "frame": 0, "length": 20, "layer": tr_marker.channel}], tr_data["items"]
-# 「場面転換を外す」（新しい場面を選んで）: キー・伸ばしたお尻・移したチャンネルを戻し、目印を消す
-for x in sed.strips:
-    x.select = False
-scene_b.select = True
-run(bpy.ops.tachie.remove_transition)
-assert scene_a.right_handle == tr_at and scene_b.channel == 2 and not marks() and not scene.get(tr_mod.REGISTRY)
-assert not keys_of(scene_a.transform, "offset_x") and not keys_of(scene_b.transform, "offset_x")
-assert scene_a.transform.offset_x == 0.0 and scene_b.transform.offset_x == 0.0
-# 目印を消しても外れる（画面があればタイマーで。ここでは直接呼ぶ）
-scene.frame_current = tr_at
-run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
-sed.strips.remove(marks()[0])
-assert tr_mod.remove_orphans(scene) == [] and scene_a.right_handle == tr_at and scene_b.channel == 2
-assert not keys_of(scene_a.transform, "offset_x")
-
-
-def pick(*strips):
-    for x in sed.strips_all:
-        x.select = x in strips
-
-
-# 「付け直す」: 新しい場面だけ動かして（キーも一緒に動いて崩れる）付け直すと、新しい場面の頭で同じ長さに付け直す
-run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
-scene_b.content_start += 10
-pick(scene_b)
-run(bpy.ops.tachie.reapply_transition)
-assert scene_a.right_handle == tr_at + 30 and scene_b.channel == 3
-assert keys_of(scene_a.transform, "offset_x") == [(tr_at + 10, 0.0), (tr_at + 29, -w_res)]
-assert keys_of(scene_b.transform, "offset_x") == [(tr_at + 10, w_res), (tr_at + 29, 0.0)]
-tr_marker, = marks()
-assert (tr_marker.left_handle, tr_marker.right_handle) == (tr_at + 10, tr_at + 30) and len(scene[tr_mod.REGISTRY]) == 1
-# 2 本とも動かしてから外すと、動かした分ずらした位置に戻す（お尻・チャンネルは付け直す前の記録を引き継ぐ）
-scene_b.content_start += 5
-scene_a.content_start += 5
-pick(tr_marker)
-run(bpy.ops.tachie.remove_transition)
-assert scene_a.right_handle == tr_at + 5 and scene_b.channel == 2 and not marks() and not scene.get(tr_mod.REGISTRY)
-assert not keys_of(scene_a.transform, "offset_x") and not keys_of(scene_b.transform, "offset_x")
-scene_a.content_start -= 5
-scene_b.content_start -= 15
-assert (scene_a.right_handle, scene_b.left_handle, scene_b.right_handle) == (tr_at, tr_at, tr_at + 60)
-# 続けて付けた（A → B → C）真ん中を動かして付け直す。B には 2 つの場面転換のキーがある
-scene_c = sed.strips.new_image("場面C2", str(pngs[0]), 4, tr_at + 60, fit_method="FIT")
-scene_c.right_handle = tr_at + 120
-run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
-scene.frame_current = tr_at + 60
-run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
-assert scene_b.right_handle == tr_at + 80 and len(marks()) == 2
-scene_b.content_start += 5
-pick(scene_b)
-run(bpy.ops.tachie.reapply_transition)
-assert scene_a.right_handle == tr_at + 25 and scene_b.right_handle == tr_at + 80
-assert keys_of(scene_a.transform, "offset_x") == [(tr_at + 5, 0.0), (tr_at + 24, -w_res)]
-assert keys_of(scene_b.transform, "offset_x") == [(tr_at + 5, w_res), (tr_at + 24, 0.0), (tr_at + 60, 0.0),
-                                                  (tr_at + 79, -w_res)], keys_of(scene_b.transform, "offset_x")
-assert keys_of(scene_c.transform, "offset_x") == [(tr_at + 60, w_res), (tr_at + 79, 0.0)]
-assert sorted((x.left_handle, x.right_handle) for x in marks()) == [(tr_at + 5, tr_at + 25), (tr_at + 60, tr_at + 80)]
-# 付け直せないとき（前の場面を伸ばす先が埋まっている）は外したものを元に戻して断る
-blocker = sed.strips.new_effect("ふさぐ", "COLOR", 2, tr_at + 28, length=12)
-scene_b.content_start += 10
-pick(scene_a)
-b_keys = keys_of(scene_b.transform, "offset_x")
-try:
-    bpy.ops.tachie.reapply_transition()
-    raise AssertionError("付け直せないはず")
-except RuntimeError as e:
-    print("期待どおり失敗:", str(e).strip().splitlines()[-1])
-assert scene_a.right_handle == tr_at + 25 and keys_of(scene_a.transform, "offset_x") == [(tr_at + 5, 0.0),
-                                                                                         (tr_at + 24, -w_res)]
-assert keys_of(scene_b.transform, "offset_x") == b_keys and len(scene[tr_mod.REGISTRY]) == 2
-assert sorted((x.left_handle, x.right_handle) for x in marks()) == [(tr_at + 5, tr_at + 25), (tr_at + 60, tr_at + 80)]
-sed.strips.remove(blocker)
-scene_b.content_start -= 10
-pick(scene_b)
-run(bpy.ops.tachie.remove_transition)
-assert scene_a.right_handle == tr_at and scene_b.channel == 2 and not marks() and not scene.get(tr_mod.REGISTRY)
-assert not keys_of(scene_b.transform, "offset_x") and not keys_of(scene_c.transform, "offset_x")
-sed.strips.remove(scene_c)
-scene_b.content_start -= 5
-assert (scene_b.left_handle, scene_b.right_handle) == (tr_at, tr_at + 60)
-scene.frame_current = tr_at
-run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))  # 後のテストのために付け直す
+# 記録は blender-tools の押し出しと同じ形（付け直す・外すは blender-tools が行う）
+token = tr_marker[tr_mod.MARK]["token"]
+tr_state = scene[tr_mod.REGISTRY][token].to_dict()
+assert {k: tr_state[k] for k in ("kind", "a", "b", "left", "right", "a_right", "b_left", "b_channel", "attr",
+                                 "base_a", "base_b", "marker")} == {
+    "kind": "push", "a": "場面A", "b": "場面B", "left": tr_at, "right": tr_at + 20, "a_right": tr_at, "b_left": tr_at,
+    "b_channel": 2, "attr": "offset_x", "base_a": 0.0, "base_b": 0.0, "marker": tr_marker.name}, tr_state
+assert tr_state["b_channels"] == {"場面B": 2} and tr_state["crops"] == {} and "a_return" not in tr_state
 # 動画の前の場面も伸ばして再生したまま。素材が足りない分は最後のコマで止まる（知らせる）。フェードは上にある方の不透明度
 mv_at = tr_at + 100
 movie_a = sed.strips.new_movie("場面C", str(out / "clip.mp4"), 2, mv_at - 40, fit_method="FIT")
@@ -1615,12 +1541,16 @@ tr_tpl.data = json.dumps({"version": 1, "fps": 30.0, "items": [
 scene.frame_current = ov_at + 50
 sed.strips.remove(scene_f)
 fade_marker, = [x for x in marks() if x.left_handle == ov_at]
-sed.strips.remove(fade_marker)  # 先にフェードを外す（場面E に重ねては付けない）。場面F は消したので残った方だけ戻す
-assert len(tr_mod.remove_orphans(scene)) == 1
+fade_state = tr_mod.record_of(scene, fade_marker).to_dict()
+assert (fade_state["kind"], fade_state["target"], fade_state["full"], fade_state["a"]) == ("fade", "b", 1.0, "場面E")
+del scene[tr_mod.REGISTRY][fade_marker[tr_mod.MARK]["token"]]  # 先にフェードを外す（場面E に重ねては付けない）
+sed.strips.remove(fade_marker)
 scene_g = sed.strips.new_image("場面G", str(pngs[1]), 3, ov_at + 50, fit_method="FIT")
 scene_g.right_handle = ov_at + 100
 run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
 assert keys_of(scene_e.transform, "offset_x") == [(ov_at + 50, 0.0), (ov_at + 69, -w_res), (ov_at + 70, 0.0)]
+push_state = tr_mod.record_of(scene, [x for x in marks() if x.left_handle == ov_at + 50][0])
+assert push_state["a_return"] and push_state["a_right"] == ov_at + 300
 assert scene_e.right_handle == ov_at + 300
 # .ymmp の読み込みの場面転換も同じ（前の場面のストリップを伸ばして動かす。残像は作らない）
 from bl_ext.user_default.blender_tachie.tachie_studio.ymmp import Media as YMedia, Project as YProject, _transitions  # noqa: E402
