@@ -31,6 +31,7 @@ from .tachie_studio.pipeline.config import merge_parts
 from .tachie_studio.ymmp import Media, Project
 from . import channels as lanes
 from .ymmp_media import MediaFinder, MediaPlacer, box_height, media_root, place_transition
+from .transitions import MARK, record_of
 
 REPORT_TEXT = "YMM4 のテンプレートの読み込み結果"
 
@@ -189,6 +190,13 @@ def template_from_strips(context, strips) -> tuple[dict, bool, list[str]]:
                           **({"look": strip_parts(s, still_ch)} if still_ch is not None else {})})
         elif s.get("tachie_idle"):
             skipped.append(f"前の版の待機の立ち絵（{s.name}）")
+        elif s.get(MARK) is not None:  # 場面転換の目印 → 場面転換（付けた前の場面・新しい場面のキーは入れない）
+            state = record_of(scene, s)
+            if state is None:
+                skipped.append(f"{s.name}（記録の無い場面転換の目印）")
+                continue
+            items.append({**state["tr"].to_dict(), "kind": "transition", "frame": s.left_handle - t0,
+                          "length": s.right_handle - s.left_handle, "layer": s.channel})
         else:
             m = _media_of(scene, s, t0, fps, speed_of)
             if m is None:

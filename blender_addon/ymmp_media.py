@@ -249,9 +249,15 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
     時間の位置は YMM4 と同じく境目から後ろ）。プッシュは前の場面を押し出して新しい場面 `after` を反対側から入れ
     （角度 0 で左へ、画面 1 つ分）、フェードは上にある方の不透明度を変える。速度の補正などの効果をかけた動画は動かせないので
     断る（blender-tools と同じ）。伸ばした先に素材が無ければ最後のコマで止まった絵になる（知らせる）。
+    範囲に目印のストリップを置き、付ける前の状態を記録する（`transitions`。「場面転換を外す」・目印を消すと戻る）。
     付けられなければ理由を `problems` に足して False。"""
+    from . import transitions
+
     sed = scene.sequence_editor
     label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
+    if transitions.overlapping(scene, {before.name} | ({after.name} if after is not None else set()), start, end):
+        problems.append(f"{label}: 「{before.name}」にはもう場面転換が付いているので付けませんでした（先に外してください）")
+        return False
     # 速度の補正などの効果をかけた動画は断る（blender-tools と同じ）。アドオンが付けた fps 合わせの補正だけは扱う
     inputs = {e.input_1 for e in sed.strips_all if getattr(e, "input_1", None) is not None}
     for s in (before, after):
@@ -285,9 +291,19 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
         if any(_overlaps(sed, s.channel, before.right_handle, end, ignore=(*own, *after_own)) for s in own):
             problems.append(f"{label}: 前の場面「{before.name}」を伸ばす先に他のストリップがあるので付けませんでした")
             return False
+    record = transitions.Record(scene, tr, before, after)
+    scenes = [*own, *after_own]  # 目印はこれらと重ならないチャンネルに置く
+    if before.right_handle < end:
         if move_to is not None:  # 重ねずに動かす（上へ動かすので上のものから。Blender は重なる位置へ動かすと逃がす）
             for strip, channel in sorted(move_to, key=lambda p: -p[1]):
+                record.channel(strip)
                 strip.channel = channel
+        for strip in own:
+            if strip.type != "SPEED":  # 補正の長さは元の動画に従う
+                record.end(strip)
+        if before.type == "SPEED":
+            record.speed_key(before, max(_fcurve(scene, before, "speed_frame_number").keyframe_points,
+                                         key=lambda k: k.co[0]))
         if _extend(scene, before, end):
             problems.append(f"{label}: 「{before.name}」は素材が足りないので、最後のコマで止まった絵が入ります")
     last = max(start, end - 1)
@@ -296,10 +312,12 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
         target, frm, to = ((after, 0.0, None) if after is not None and after.channel > before.channel
                            else (before, None, 0.0))
         full = _full_alpha(scene, target)
+        record.keys(target, "blend_alpha", (start, last))
         _key(target, "blend_alpha", start, full if frm is None else frm)
         _key(target, "blend_alpha", last, full if to is None else to)
         target.blend_alpha = full
         _ease(scene, target, "blend_alpha", start, tr, out=False)
+        record.mark(start, end, label, scenes)
         return True
     render = scene.render
     angle = math.radians(tr.get("angle") or 0.0)
@@ -315,14 +333,17 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
             if abs(d) < 1e-6:
                 continue
             base = getattr(t, attr)
+            back = target is before and before.right_handle > end
+            record.keys(target, f"transform.{attr}", (start, last, end) if back else (start, last))
             _key(target, f"transform.{attr}", start, base + d * frm)
             _key(target, f"transform.{attr}", last, base + d * to)
-            if target is before and before.right_handle > end:
+            if back:
                 # 新しい場面の下で続いている前の場面は、押し出したあと元の位置に戻す（新しい場面が先に終わったときに
                 # 押し出したままだと何も映らない）
                 _key(target, f"transform.{attr}", end, base)
             _ease(scene, t, attr, start, tr, out=False)
             setattr(t, attr, base)
+    record.mark(start, end, label, scenes)
     return True
 
 

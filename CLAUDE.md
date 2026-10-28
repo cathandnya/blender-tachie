@@ -95,6 +95,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   同じ）。ただしアドオンが付けた fps 合わせの補正（`MediaPlacer._movie` の SPEED、印 `FPS_SPEED`。フレーム番号の直線の 2 つの
   キー、元はリタイミングしていない動画、`_fps_speed`）は扱い、`_extend` が元の動画を伸ばして終わりのキーを同じ傾きで延ばす
   （素材の終わりを超えたら最後のコマで止まる）。動かすのは画像・動画だけで、YMM4 のように画面全体（黒い余白・下のテキストなど）ではない。
+  目印と外す（`blender_addon/transitions.py`、blender-tools の押し出しと同じやり方）: `transition_scenes` は書き換える前に
+  `transitions.Record` に元の状態（打ったキーのフレームと元の値・伸ばしたお尻・fps 合わせの補正の終わりのキー・移したチャンネル）を
+  覚え、範囲に不透明度 0 の COLOR ストリップ（目印、`MARK` = {token}）を置いて、記録はシーンの `REGISTRY`[token]。
+  `tachie.remove_transition`（テンプレートのパネル。目印か前の場面・新しい場面を選んで）と、目印を消したとき（`depsgraph_update_post`
+  → タイマー `_sync` → `remove_orphans`。画面の無いとき・再生中・書き出し中は外さない、外せなかったものは `_failed`）に戻す。
+  同じ場面に重なる場面転換は断る（`overlapping`）。テンプレートの登録（`template_from_strips`）は目印を場面転換のアイテムにする。
   ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
   （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
   `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。

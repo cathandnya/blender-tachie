@@ -850,6 +850,7 @@ class TACHIE_PT_templates(_Panel, bpy.types.Panel):
             layout.prop(prefs(context), "media_root")
         layout.operator("tachie.register_template", icon="ADD")
         layout.operator("tachie.import_ymm4_templates", icon="IMPORT")
+        layout.operator("tachie.remove_transition", icon="X")
 
 
 class TACHIE_PT_channels(_Panel, bpy.types.Panel):
