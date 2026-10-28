@@ -415,7 +415,8 @@ class TACHIE_OT_register_template(bpy.types.Operator):
     bl_label = "選択中のストリップを登録"
     bl_options = {"REGISTER"}
 
-    name: bpy.props.StringProperty(name="名前", default="")
+    # 前に登録した名前を入れて開かない（そのまま確定すると前のテンプレートを上書きする）
+    name: bpy.props.StringProperty(name="名前", default="", options={"SKIP_SAVE"})
 
     @classmethod
     def poll(cls, context):

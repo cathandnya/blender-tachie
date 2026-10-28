@@ -3292,7 +3292,8 @@ class TACHIE_OT_character_add_voice(bpy.types.Operator):
     bl_label = "立ち絵なしのキャラクターを追加"
     bl_options = {"REGISTER", "UNDO"}
 
-    name: bpy.props.StringProperty(name="名前", default="ナレーション", search=_voice_default_names,
+    # 前に追加した名前を入れて開かない（追加するたびに既定の名前から）
+    name: bpy.props.StringProperty(name="名前", default="ナレーション", search=_voice_default_names, options={"SKIP_SAVE"},
                                    description="アドオン設定に初期値を保存した名前なら、その設定で始める")
 
     def invoke(self, context, event):
