@@ -857,9 +857,10 @@ class TachieAccentEdit(bpy.types.PropertyGroup):
     character: StringProperty()  # エンジン（キャラごと）を選ぶ
     changed: BoolProperty(default=False)  # アクセントの位置・句の区切りを変えた（発音を句から作り直す）
     width: IntProperty(default=600)  # ダイアログの幅（句を何モーラずつ並べるか）
-    # 確定せずに閉じたときの続き: 開いたセリフ [id, テキスト, 発音, スタイル] と、開いたときの抑揚（JSON）
+    # 合成できなかったときの続き: 開いたセリフ [id, テキスト, 発音, スタイル] と、開いたときの抑揚（JSON）
     key: StringProperty()
     base: StringProperty()
+    failed: BoolProperty(default=False)  # 確定したが作り直せなかった（キャンセルして閉じたときは続きにしない）
     resumed: BoolProperty(default=False)  # 続きから開いた
     pitch_lo: FloatProperty(default=3.0)
     pitch_hi: FloatProperty(default=6.5)

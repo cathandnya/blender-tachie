@@ -2290,10 +2290,12 @@ def load_accent_edit(edit, phrases: list) -> None:
 
 
 def start_accent_edit(edit, clip_id: str, text: str, kana: str, speaker: int, character: str, phrases: list) -> None:
-    """抑揚の編集ダイアログの中身をセリフの抑揚にする。確定せずに閉じた（ダイアログの外を押した・Esc）同じセリフの
-    編集があり、セリフがそのとき（`edit.base`）のままなら続きにする（`edit.resumed`）。"""
+    """抑揚の編集ダイアログの中身をセリフの抑揚にする。確定したが作り直せなかった（VOICEVOX に接続できないなど、
+    `edit.failed`）同じセリフの編集があり、セリフがそのとき（`edit.base`）のままなら続きにする（`edit.resumed`）。
+    キャンセルして閉じた（ダイアログの外を押した・Esc）編集は続きにしない（他のダイアログと同じ。ユーザーの指定）。"""
     key = json.dumps([clip_id, text, kana, speaker], ensure_ascii=False)
-    draft = (accent_from_edit(edit), edit.changed) if edit.key == key and edit.base else None
+    draft = (accent_from_edit(edit), edit.changed) if edit.failed and edit.key == key and edit.base else None
+    edit.failed = False
     edit.clip_id, edit.text, edit.kana, edit.speaker = clip_id, text, kana, speaker
     edit.character, edit.changed = character, False
     load_accent_edit(edit, phrases)
@@ -2461,7 +2463,7 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         row.operator("tachie.preview_accent", text="", icon="PLAY")
         row.operator("tachie.reload_accent", text="", icon="FILE_REFRESH")
         if edit.resumed:
-            layout.label(text="確定せずに閉じたときの編集の続きです（右上のボタンで自動の抑揚に戻せます）", icon="INFO")
+            layout.label(text="作り直せなかったときの編集の続きです（右上のボタンで自動の抑揚に戻せます）", icon="INFO")
         pitch = edit.tab == "PITCH"
         attr, level = ("pitch", "pitch_level") if pitch else ("vowel_length", "length_level")
         # ダイアログの幅も UI の単位も画面の倍率で大きくなるので、倍率で割らない
@@ -2511,6 +2513,8 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
 
     def execute(self, context):
         edit = context.window_manager.tachie_accent
+        # 確定した編集は、作り直せたときだけ捨てる（途中で例外が出ても、次に開いたときに続きにする）
+        edit.failed = True
         if active_line_id(context) != edit.clip_id:
             self.report({"ERROR"}, "編集中に選択中のセリフが変わりました")
             return {"CANCELLED"}
@@ -2518,8 +2522,7 @@ class TACHIE_OT_edit_accent(bpy.types.Operator):
         # アクセントの位置・句の区切りを変えたら、発音も句から作り直す（パネルの発音の欄に出る）
         kana = kana_from_phrases(accent) if edit.changed else (edit.kana or None)
         result = _regenerate_active(self, context, kana=kana, accent=accent)
-        if result == {"FINISHED"}:
-            edit.base = ""  # 反映したので、次に開くときは続きにしない
+        edit.failed = result != {"FINISHED"}  # 反映したら続きにしない
         return result
 
 

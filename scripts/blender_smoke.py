@@ -332,7 +332,8 @@ run(bpy.ops.tachie.preview_line)
 run(bpy.ops.tachie.clear_accent)
 first_id = sed.active_strip["tachie_id"]
 assert not sound(first_id).get("tachie_accent") and lines()[first_id][1] == r0
-# 確定せずに閉じた抑揚の編集は、同じセリフをもう一度開くと続きから（セリフが変わっていれば捨てる）
+# 作り直せなかった抑揚の編集は、同じセリフをもう一度開くと続きから（セリフが変わっていれば捨てる）。
+# キャンセルして閉じた編集は続きにしない
 activate(sound(first_id))
 strips_, text_, ch_, speaker_, kana_ = ops._line_context(bpy.context)
 fresh_ = ops._fresh_accent(bpy.context, text_, speaker_, kana_)
@@ -340,7 +341,11 @@ ops.start_accent_edit(edit, first_id, text_, kana_ or "", speaker_, ch_.name, fr
 assert not edit.resumed
 edit.phrases[0].moras[0].vowel_length += 0.2
 ops.start_accent_edit(edit, first_id, text_, kana_ or "", speaker_, ch_.name, fresh_)
-assert edit.resumed and abs(edit.phrases[0].moras[0].vowel_length - fresh_[0]["moras"][0]["vowel_length"] - 0.2) < 1e-4
+assert not edit.resumed  # キャンセルして閉じた
+edit.phrases[0].moras[0].vowel_length += 0.2
+edit.failed = True  # 確定したが作り直せなかった
+ops.start_accent_edit(edit, first_id, text_, kana_ or "", speaker_, ch_.name, fresh_)
+assert not edit.failed and edit.resumed and abs(edit.phrases[0].moras[0].vowel_length - fresh_[0]["moras"][0]["vowel_length"] - 0.2) < 1e-4
 ops.start_accent_edit(edit, first_id, text_ + "よ", kana_ or "", speaker_, ch_.name, fresh_)
 assert not edit.resumed
 # 抑揚の編集の棒・アクセントの位置・句の結合と分割（YMM4 の「抑揚を編集」に近い形）

@@ -131,8 +131,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   合成できなかった（VOICEVOX に接続できないなど）ときは、ダイアログ（セリフを追加・セリフを編集・発音を編集）の入力を
   `operators._unsent`（(ダイアログ, セリフの id) → 入力。追加はキャラ名）に覚え、次に同じダイアログを開いたときに戻す（報告に
   `UNSENT_NOTE`。置けた・作り直せたあとの失敗では覚えず、作り直せたらそのセリフの分は捨てる）。
-  キャンセルして閉じた（ダイアログの外を押す・Esc）入力は戻さない（ユーザーの指定。前は欄の update で入力するたびに覚えていた）。抑揚の編集は WindowManager の `tachie_accent` に残り、同じセリフを開いたときに
-  セリフの抑揚が開いたとき（`base`）のままなら続きにする（`start_accent_edit`、`resumed`。反映したら `base` を空にする）。
+  キャンセルして閉じた（ダイアログの外を押す・Esc）入力は戻さない（ユーザーの指定。前は欄の update で入力するたびに覚えていた）。抑揚の編集も同じで、作り直せなかったとき（`failed`）だけ、
+  同じセリフを開いたときにセリフの抑揚が開いたとき（`base`）のままなら続きにする（`start_accent_edit`、`resumed`。中身は WindowManager の `tachie_accent`）。
   新しいセリフは「〇〇のセリフを追加」で開くダイアログ（`tachie.add_line` の invoke、`text`）で入力する（パネルに入力欄は無い。
   スクリプトから text を渡さずに呼ぶとシーンの `settings.text`。追加したとき・ダイアログを開くとき・.blend を開いたとき
   （`load_post` の `_clear_input_on_load`、前の版の残り）に空にする `clear_text_input`）。選択中のセリフの
