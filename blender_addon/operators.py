@@ -50,6 +50,7 @@ _expression_current = ""
 _character_items = []
 _dict_words = None  # ユーザー辞書の一覧 [(uuid, 表記, 読み, アクセント)]。None は未取得
 _preview = None  # 試聴中の aud のハンドル
+_preview_device = None  # 試聴を鳴らす音声デバイス ((設定の種類, サンプルレート), aud.Device)。Blender の再生とは別に開いたもの
 
 NONE = "__none__"
 ERRORS = (VoicevoxError, ValueError, FileNotFoundError, KeyError)
@@ -2249,11 +2250,46 @@ def play_preview(wav: bytes) -> str | None:
         _preview = None
         return f"画面の無い Blender では試聴を鳴らしません。合成した音声は {path} にあります"
     try:
-        _preview = aud.Device().play(aud.Sound(str(path)).cache())
+        _preview = _open_preview_device().play(aud.Sound(str(path)).cache())
     except aud.error as e:
         _preview = None
         return f"音声デバイスを開けないので試聴できません（{e}）。合成した音声は {path} にあります"
     return None
+
+
+def _open_preview_device():
+    """試聴用の音声デバイス。Blender の再生と同じデバイス（`aud.Device()`）で鳴らすと、試聴の途中でシーンを
+    再生する（Blender がデバイスを開き直す）と止まるので、設定と同じ種類のデバイスを別に開く（設定を変えたら
+    開き直す）。開けなければ・設定が「なし」なら Blender のデバイス（覚えない。Blender が開き直すと古くなるため）。"""
+    global _preview_device
+    import aud
+
+    system = bpy.context.preferences.system
+    key = (system.audio_device, system.audio_sample_rate)
+    if _preview_device is not None and _preview_device[0] == key:
+        return _preview_device[1]
+    _preview_device = None
+    if key[0] != "None":
+        try:
+            device = aud.Device(key[0], float(key[1].removeprefix("RATE_")), name="blender_tachie preview")
+        except (aud.error, ValueError, TypeError):
+            pass
+        else:
+            _preview_device = (key, device)
+            return device
+    return aud.Device()
+
+
+def _close_preview() -> None:
+    """試聴を止めて、別に開いた音声デバイスを手放す（アドオンを外す・入れ直すときに開いたまま残さない）。"""
+    global _preview, _preview_device
+    if _preview is not None:
+        try:
+            _preview.stop()
+        except Exception:  # noqa: BLE001 デバイスが先に閉じている
+            pass
+        _preview = None
+    _preview_device = None
 
 
 # ---- 抑揚の編集 ----
@@ -4725,6 +4761,7 @@ def register():
 
 def unregister():
     global _part_previews
+    _close_preview()
     if _part_previews is not None:
         from bpy.utils import previews
 
