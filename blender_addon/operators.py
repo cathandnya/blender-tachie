@@ -1191,12 +1191,20 @@ def _same_dir(a: str, b: Path) -> bool:
     return os.path.normpath(bpy.path.abspath(a)) == os.path.normpath(str(b))
 
 
+def held_elements(frames: int) -> int:
+    """`frames` フレームの立ち絵のコマの数。最後の 1 コマは前のコマを止めた絵にする（お尻が素材の終わりにあると、Blender は
+    ハンドルを素材の終わりより先へドラッグさせない。素材の先にあれば伸ばせて、伸ばしたら自動の反映で作り直す）。"""
+    return frames - 1 if frames > 1 else frames
+
+
 def _image_strip(sed, ch, name: str, start: int, paths: list, channel: int | None = None, reuse=None):
-    """立ち絵のコマの画像を並べたストリップ（既定は立ち絵のレーン）。`reuse`（作り直す前の立ち絵）が同じ位置・長さなら
-    消さずに、変わったコマのファイル名だけ書き換えて返す（チャンネル・選択・キーフレームもそのまま）。"""
+    """立ち絵のコマの画像を並べたストリップ（既定は立ち絵のレーン。最後のコマは `held_elements`）。`reuse`（作り直す前の
+    立ち絵）が同じ位置・長さなら消さずに、変わったコマのファイル名だけ書き換えて返す（チャンネル・選択・キーフレームもそのまま）。"""
     directory, files = _still_elements(paths)
+    frames = len(files)
+    files = files[:held_elements(frames)]
     if (reuse is not None and int(reuse.frame_start) == start == reuse.left_handle
-            and len(reuse.elements) == len(files) == reuse.right_handle - start):
+            and len(reuse.elements) == len(files) and reuse.right_handle - start == frames):
         if not _same_dir(reuse.directory, directory):
             reuse.directory = os.path.join(str(directory), "")  # 共有キャッシュは絶対パス
             for e, f in zip(reuse.elements, files):
@@ -1218,6 +1226,7 @@ def _image_strip(sed, ch, name: str, start: int, paths: list, channel: int | Non
         strip.elements[0].filename = files[0]
     for f in files[1:]:
         strip.elements.append(f)
+    strip.right_handle = start + frames
     strip.blend_type = "ALPHA_OVER"
     apply_placement(strip, ch)
     return strip
@@ -1247,7 +1256,7 @@ def apply_faces(context, strips=None, problems: list | None = None) -> int:
         if ch is None or not ch.folder:
             continue
         start, end = strip.left_handle, strip.right_handle
-        stretched = int(strip.content_start) != start or len(strip.elements) != end - start
+        stretched = int(strip.content_start) != start or len(strip.elements) != held_elements(end - start)
         missing = missing_images(strip)
         # 前の版のプロジェクトごとのキャッシュ（//tachie/cache・faces）を指している立ち絵は共有キャッシュへ移す
         moved = _under(Path(bpy.path.abspath(strip.directory)), shared) is None

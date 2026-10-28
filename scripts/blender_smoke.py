@@ -78,13 +78,13 @@ def check_stills():
     for st in sed.strips:
         if st.get("tachie_still"):
             ch = next(c for c in s.characters if c.name == st["tachie_still"])
-            assert len(st.elements) == st.right_handle - st.left_handle, st.name
+            assert len(st.elements) == ops.held_elements(st.right_handle - st.left_handle), st.name
             assert st["tachie_faced"] == ops.still_key(bpy.context, sed, ch, st), st.name
 
 
 def frame_inode(strip, frame):
     """立ち絵の `frame`（シーンのフレーム）の画像の inode。"""
-    i = frame - int(strip.content_start)
+    i = min(frame - int(strip.content_start), len(strip.elements) - 1)  # 最後のコマは前のコマを止めた絵
     return os.stat(Path(bpy.path.abspath(strip.directory)) / strip.elements[i].filename).st_ino
 
 
@@ -143,7 +143,7 @@ for index in (0, 1):
     scene.frame_current = 1
     run(bpy.ops.tachie.add_still)
 assert still("ずんだもん").channel == zunda.channel and still("四国めたん").channel == metan.channel
-assert len(still("ずんだもん").elements) == 900
+assert len(still("ずんだもん").elements) == 899  # 最後の 1 コマは止めた絵（お尻を伸ばせるように）
 
 scene.frame_current = 1
 for index, text in [(0, "こんにちは、ずんだもんなのだ。"), (1, "四国めたんよ。"), (0, "今日は Blender で動画を作るのだ。")]:
@@ -175,7 +175,7 @@ after = list(lines().values())
 delta = after[1][1] - before[1][1]
 assert delta > 0 and after[2][0] == before[2][0] + delta, (delta, after[2][0], before[2][0])
 assert after[1][0] == before[1][0]
-assert still("ずんだもん").left_handle == 1 and len(still("ずんだもん").elements) == 900
+assert still("ずんだもん").left_handle == 1 and len(still("ずんだもん").elements) == 899
 # 選択を外したアクティブなストリップ（Blender は覚えている）には、再生成などが効かない
 for x in sed.strips_all:
     x.select = False
@@ -764,10 +764,10 @@ assert moved.channel == home
 # 立ち絵を縮めて伸ばすと作り直す（今の長さの連番になる）
 moved.duration = 599
 run(bpy.ops.tachie.apply_faces)
-assert len(still("ずんだもん").elements) == 599
+assert len(still("ずんだもん").elements) == 598
 still("ずんだもん").duration = 900
 run(bpy.ops.tachie.apply_faces)
-assert len(still("ずんだもん").elements) == 900
+assert len(still("ずんだもん").elements) == 899  # 最後の 1 コマは止めた絵（お尻を伸ばせるように）
 check_stills()
 # 立ち絵ごとの大きさ（足元が中心）。セリフを再生成して立ち絵を作り直しても残る
 zimg = still("ずんだもん")
@@ -1902,7 +1902,7 @@ tail_still["tachie_expression"] = ""
 activate(tail_still)
 run(bpy.ops.tachie.remake_still)
 (tail_still,) = tail()
-assert tail_still.right_handle - tail_still.left_handle == 90 and len(tail_still.elements) == 90, len(tail_still.elements)
+assert tail_still.right_handle - tail_still.left_handle == 90 and len(tail_still.elements) == 89, len(tail_still.elements)
 assert tail_still["tachie_expression"] == ""
 run(bpy.ops.tachie.regenerate_all, character_only=False)
 assert [(x.left_handle, x.right_handle) for x in tail()] == [(last_end, last_end + 90)]

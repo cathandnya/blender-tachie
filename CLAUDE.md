@@ -166,7 +166,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   並べ直す（`config.merge_layers`。`*` は並びの後のものが選ばれる）。目はセリフの間も立ち絵のまばたき
   （seed は (キャラ名, 立ち絵の始まり)）。セリフの動きの頭は音声ストリップの `content_start`、長さは `tachie_frames`。
   json が無い・長さが違うセリフ（前の版）は閉じた口で、`problems` に出す。コマは合成キャッシュの画像を `elements` で直接並べる
-  （`_image_strip`、directory は絶対パス。同じファイル名を何度並べてもよい。いくつもの表情にまたがれば directory を素材のフォルダ、ファイル名を
+  （`_image_strip`、directory は絶対パス。最後の 1 コマは前のコマを止めた絵（`held_elements`。お尻が素材の終わりにあると
+  Blender 5.2.3 はハンドルを素材の先へドラッグさせないが、素材の先にあれば伸ばせる）。同じファイル名を何度並べてもよい。いくつもの表情にまたがれば directory を素材のフォルダ、ファイル名を
   `<表情>/e1_l0.png` にする。Blender はファイル名のサブフォルダを読める（`_still_elements`）。前は `faces/<hash>/` にコマごとの
   ハードリンクを作っていて、9000 フレームの立ち絵で 2.5 秒かかった）。作り直す（`remake_still`）とき位置・長さが同じなら
   ストリップを消さずに変わったコマのファイル名だけ書き換える（`place_still` の `reuse`。消して作ると `elements.append` が
