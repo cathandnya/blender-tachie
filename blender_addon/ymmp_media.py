@@ -206,6 +206,43 @@ def _room_after(strip) -> float:
     return math.inf
 
 
+FPS_SPEED = "tachie_fps_speed"  # アドオンが付けた fps 合わせの速度の補正（`MediaPlacer._movie`）
+
+
+def _fps_speed(scene, strip) -> bool:
+    """アドオンが付けた fps 合わせの速度の補正か（フレーム番号の 2 つの直線のキー、元はリタイミングしていない動画）。"""
+    if strip.type != "SPEED" or not strip.get(FPS_SPEED) or strip.speed_control != "FRAME_NUMBER":
+        return False
+    movie = strip.input_1
+    curve = _fcurve(scene, strip, "speed_frame_number")
+    return (movie is not None and movie.type == "MOVIE" and not len(movie.retiming_keys) and curve is not None
+            and len(curve.keyframe_points) == 2)
+
+
+def _extend(scene, strip, end: int) -> bool:
+    """お尻を `end` まで伸ばす。fps 合わせの速度の補正は元の動画を伸ばし、終わりのフレーム番号を同じ傾きで延ばす。
+    伸ばした先に素材が無い（最後のコマで止まった絵になる）なら True。"""
+    if strip.type != "SPEED":
+        frozen = end - strip.right_handle > _room_after(strip)
+        strip.right_handle = end
+        return frozen
+    movie = strip.input_1
+    curve = _fcurve(scene, strip, "speed_frame_number")
+    k0, k1 = sorted(curve.keyframe_points, key=lambda k: k.co[0])
+    slope = (k1.co[1] - k0.co[1]) / (k1.co[0] - k0.co[0]) if k1.co[0] != k0.co[0] else 0.0
+    value = k0.co[1] + slope * (end - k0.co[0])
+    movie.right_handle = end
+    for point in (k1.co, k1.handle_left, k1.handle_right):
+        point.x, point.y = end, value
+    curve.update()
+    return value > movie.frame_duration - 1
+
+
+def _with_input(strip) -> list:
+    """場面のストリップと、fps 合わせの補正なら元の動画（どちらもチャンネルを使う）。"""
+    return [strip] + ([strip.input_1] if strip.type == "SPEED" else [])
+
+
 def transition_scenes(scene, before, after, tr: dict, start: int, end: int, problems: list[str]) -> bool:
     """場面転換（`tr`: type = fade / push、easing・mode・angle）を [start, end) に付ける。前の場面 `before` のお尻を `end` まで
     伸ばし、その区間を前の場面自身で動かす（残像を作らず、前の場面も再生したまま。blender-tools の押し出しと同じやり方で、
@@ -215,11 +252,15 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
     付けられなければ理由を `problems` に足して False。"""
     sed = scene.sequence_editor
     label = "場面転換（フェード）" if tr["type"] == "fade" else "場面転換（プッシュ）"
+    # 速度の補正などの効果をかけた動画は断る（blender-tools と同じ）。アドオンが付けた fps 合わせの補正だけは扱う
     inputs = {e.input_1 for e in sed.strips_all if getattr(e, "input_1", None) is not None}
     for s in (before, after):
-        if s is not None and (getattr(s, "input_1", None) is not None or s in inputs):
+        if s is not None and (s in inputs or (getattr(s, "input_1", None) is not None and not _fps_speed(scene, s))):
             problems.append(f"{label}: 「{s.name}」は速度の補正などの効果をかけてあるので付けませんでした")
             return False
+    # 前の場面が使うチャンネル（fps 合わせの補正は元の動画と補正の 2 本）
+    own = _with_input(before)
+    after_own = _with_input(after) if after is not None else []
     if before.channel >= scene.tachie.channel_base or (after is not None and after.channel >= scene.tachie.channel_base):
         limit = 129
     else:  # アドオンのレーンより下の場面なら、新しい場面を移すときもレーンより下に収める（キャラを隠さない）
@@ -231,21 +272,24 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
         return False
     move_to = None
     if before.right_handle < end:
-        if after is not None and after.channel == before.channel:
-            # 新しい場面をすぐ上のチャンネルへ（元のチャンネルは前の場面が伸びる）。さらに上へ移すと、間のチャンネルで
-            # 重なっているストリップ（上のレイヤーの画像など）を新しい場面の区間ずっと隠すので、すぐ上が空いているときだけ
-            move_to = before.channel + 1
-            if move_to >= limit or _overlaps(sed, move_to, after.left_handle, after.right_handle):
+        if after is not None and {s.channel for s in after_own} & {s.channel for s in own}:
+            # 新しい場面を前の場面のすぐ上のチャンネルへ（元のチャンネルは前の場面が伸びる。fps 合わせの補正は元の動画と
+            # 補正の 2 本を並べたまま）。さらに上へ移すと、間のチャンネルで重なっているストリップ（上のレイヤーの画像など）を
+            # 新しい場面の区間ずっと隠すので、すぐ上が空いているときだけ
+            low = before.channel + 1
+            move_to = [(s, low + k) for k, s in enumerate(sorted(after_own, key=lambda s: s.channel))]
+            if low + len(after_own) - 1 >= limit or any(
+                    _overlaps(sed, c, after.left_handle, after.right_handle, ignore=after_own) for _, c in move_to):
                 problems.append(f"{label}: 新しい場面「{after.name}」のすぐ上のチャンネルが空いていないので付けませんでした")
                 return False
-        if _overlaps(sed, before.channel, before.right_handle, end, ignore=(before, after)):
+        if any(_overlaps(sed, s.channel, before.right_handle, end, ignore=(*own, *after_own)) for s in own):
             problems.append(f"{label}: 前の場面「{before.name}」を伸ばす先に他のストリップがあるので付けませんでした")
             return False
-        if move_to is not None:
-            after.channel = move_to
-        if end - before.right_handle > _room_after(before):
+        if move_to is not None:  # 重ねずに動かす（上へ動かすので上のものから。Blender は重なる位置へ動かすと逃がす）
+            for strip, channel in sorted(move_to, key=lambda p: -p[1]):
+                strip.channel = channel
+        if _extend(scene, before, end):
             problems.append(f"{label}: 「{before.name}」は素材が足りないので、最後のコマで止まった絵が入ります")
-        before.right_handle = end
     last = max(start, end - 1)
     if tr["type"] == "fade":
         # 上にある方の不透明度を変える（前の場面が上なら薄くし、新しい場面が上なら濃くする）
@@ -561,6 +605,7 @@ class MediaPlacer:
         speed = sed.strips.new_effect(name=f"YMM4 速度 {path.name}", type="SPEED", channel=channel + 1,
                                       frame_start=start, input1=movie)
         speed.speed_control = "FRAME_NUMBER"
+        speed[FPS_SPEED] = True  # 場面転換で伸ばせる（フレーム番号の直線の 2 つのキー）
         first = m.offset * src_fps
         _key(speed, "speed_frame_number", start, first)
         _key(speed, "speed_frame_number", end, first + (end - start) / self.fps * rate * src_fps)

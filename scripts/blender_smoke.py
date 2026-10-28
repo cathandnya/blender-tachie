@@ -1519,6 +1519,38 @@ assert ya.right_handle == ym_at + 50 and placer.placed["transition"] == 1, (ya.r
 assert keys_of(ya.transform, "offset_x")[-1] == (ym_at + 49, -w_res) and keys_of(yb.transform, "offset_x")[0][1] == w_res
 for x in (ya, yb):
     sed.strips.remove(x)
+# fps 合わせの速度の補正（アドオンが付けたもの）の動画も、元の動画を伸ばしてフレーム番号を同じ傾きで延ばす
+ym2 = ym_at + 300
+mv, mb2 = (YMedia(kind="video", frame=0, length=30, layer=1, file=str(out / "clip.mp4"), rate=50.0),
+           YMedia(kind="image", frame=30, length=60, layer=1, file=str(pngs[1])))
+proj = YProject(path=out / "x.ymmp", fps=30.0, length=90, media=[mv, mb2], others=[
+    {"$type": "YukkuriMovieMaker.Project.Items.TransitionItem, Y", "Frame": 30, "Layer": 2, "Length": 20,
+     "TransitionType": "YukkuriMovieMaker.Transition.PushTransitionPlugin, Y", "TransitionParameter": {}}])
+_transitions(proj, set())
+placer = ymmp_media.MediaPlacer(bpy.context, proj, ymmp_media.MediaFinder(out / "x.ymmp"), lambda f: ym2 + f, find_font)
+placer.place()
+ysp = next(x for x in sed.strips if x.type == "SPEED" and x.get("tachie_fps_speed") and x.left_handle == ym2)
+assert placer.placed["transition"] == 1 and ysp.input_1.right_handle == ym2 + 50 and ysp.right_handle == ym2 + 50
+assert keys_of(ysp, "speed_frame_number") == [(ym2, 0.0), (ym2 + 50, 25.0)]  # 半分の速さのまま延ばす
+assert keys_of(ysp.transform, "offset_x")[-1] == (ym2 + 49, -w_res)
+# 新しい場面が fps 合わせの補正の動画で前の場面と同じチャンネルなら、元の動画と補正の 2 本を並べたまま上へ移す
+ym3 = ym2 + 300
+mi, mv2 = (YMedia(kind="image", frame=0, length=30, layer=1, file=str(pngs[0])),
+           YMedia(kind="video", frame=30, length=60, layer=1, file=str(out / "clip.mp4"), rate=50.0))
+proj = YProject(path=out / "x.ymmp", fps=30.0, length=90, media=[mi, mv2], others=[
+    {"$type": "YukkuriMovieMaker.Project.Items.TransitionItem, Y", "Frame": 30, "Layer": 2, "Length": 20,
+     "TransitionType": "YukkuriMovieMaker.Transition.PushTransitionPlugin, Y", "TransitionParameter": {}}])
+_transitions(proj, set())
+placer = ymmp_media.MediaPlacer(bpy.context, proj, ymmp_media.MediaFinder(out / "x.ymmp"), lambda f: ym3 + f, find_font)
+placer.place()
+yi = next(x for x in sed.strips if x.type == "IMAGE" and x.get("tachie_ymmp") and x.left_handle == ym3)
+ysp2 = next(x for x in sed.strips if x.type == "SPEED" and x.get("tachie_fps_speed") and x.left_handle == ym3 + 30)
+assert placer.placed["transition"] == 1 and yi.right_handle == ym3 + 50, (placer.problems, yi.right_handle)
+assert ysp2.input_1.channel == yi.channel + 1 and ysp2.channel == yi.channel + 2
+for x in [x for x in sed.strips if x.left_handle >= ym2 and x.get("tachie_ymmp") is not None and x.type == "SPEED"]:
+    sed.strips.remove(x)
+for x in [x for x in sed.strips if x.left_handle >= ym2 and x.get("tachie_ymmp") is not None]:
+    sed.strips.remove(x)
 for x in [x for x in sed.strips if x.type == "SPEED" and x.name == "場面D 速度"]:
     sed.strips.remove(x)
 for x in [x for x in sed.strips if x.name in ("場面A", "場面B", "場面C", "場面D")]:
