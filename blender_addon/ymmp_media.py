@@ -324,6 +324,8 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
     render = scene.render
     angle = math.radians(tr.get("angle") or 0.0)
     dx, dy = -math.cos(angle) * render.resolution_x, math.sin(angle) * render.resolution_y
+    # 前の場面が新しい場面の上で続くときは、押し出したあと戻さない（戻すと新しい場面を隠す）
+    covers = after is not None and before.channel > after.channel
     if after is not None and _keyed_between(scene, after.transform, moving, start, end):
         problems.append(f"{label}: 新しい場面「{after.name}」が動いているので、押し出しは前の場面だけにしました")
         after = None
@@ -335,7 +337,7 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
             if abs(d) < 1e-6:
                 continue
             base = getattr(t, attr)
-            back = target is before and before.right_handle > end
+            back = target is before and before.right_handle > end and not covers
             record.keys(target, f"transform.{attr}", base, back)
             _key(target, f"transform.{attr}", start, base + d * frm)
             _key(target, f"transform.{attr}", last, base + d * to)
@@ -349,17 +351,30 @@ def transition_scenes(scene, before, after, tr: dict, start: int, end: int, prob
     return True
 
 
+def _selected_scenes(scenes: list, start: int) -> tuple:
+    """選んである場面のストリップから (前の場面, 新しい場面)。`start` から始まるものが新しい場面、`start` で終わる・
+    `start` をまたいで続くものが前の場面で、両方 1 本ずつ選んであるときだけ（Blender は選択を覚えたままなので、前に選んだ
+    背景などが残っていても拾わないように）。決まらなければ (None, None)。"""
+    chosen = [s for s in scenes if s.select]
+    afters = [s for s in chosen if abs(s.left_handle - start) <= 1]
+    befores = [s for s in chosen if s not in afters and s.left_handle < start - 1 and s.right_handle >= start - 1]
+    return (befores[0], afters[0]) if len(befores) == 1 and len(afters) == 1 else (None, None)
+
+
 def place_transition(context, tr: dict, start: int, end: int, problems: list[str]) -> bool:
     """テンプレートの場面転換を置く。`start` を前の場面（そこで終わる画像・動画のいちばん上）と新しい場面（そこから
-    始まる画像・動画のいちばん上）の境目にして `transition_scenes` で付ける。そこで終わるものが無ければ、新しい場面の
+    始まる画像・動画のいちばん上）の境目にして `transition_scenes` で付ける。画像・動画を選んであれば、それを前の場面・
+    新しい場面にする（`_selected_scenes`。境目で終わる重ねた画像などが選ばれないように）。そこで終わるものが無ければ、新しい場面の
     下で続いている画像・動画のいちばん上を前の場面にする（新しい場面を上に重ねて置いたとき。上のものは重ねた画像など。場面転換の途中で
     終わるときだけ終わりまで伸ばす）。"""
     scene = seq_scene(context)
     sed = scene.sequence_editor
     scenes = _scene_strips(sed) if sed is not None else []
-    before = max((s for s in scenes if abs(s.right_handle - start) <= 1), key=lambda s: s.channel, default=None)
-    after = max((s for s in scenes if abs(s.left_handle - start) <= 1 and s != before), key=lambda s: s.channel,
-                default=None)
+    before, after = _selected_scenes(scenes, start)
+    if before is None:
+        before = max((s for s in scenes if abs(s.right_handle - start) <= 1), key=lambda s: s.channel, default=None)
+        after = max((s for s in scenes if abs(s.left_handle - start) <= 1 and s != before), key=lambda s: s.channel,
+                    default=None)
     if before is None and after is not None:
         before = max((s for s in scenes if s.left_handle < start - 1 and s.right_handle > start + 1
                       and s.channel < after.channel), key=lambda s: s.channel, default=None)

@@ -1557,6 +1557,23 @@ assert keys_of(scene_e.transform, "offset_x") == [(ov_at + 50, 0.0), (ov_at + 69
 push_state = tr_mod.record_of(scene, [x for x in marks() if x.left_handle == ov_at + 50][0])
 assert push_state["a_return"] and push_state["a_right"] == ov_at + 300
 assert scene_e.right_handle == ov_at + 300
+# 画像・動画を選んであれば、それを前の場面・新しい場面にする（境目で終わる重ねた画像は選ばない）。前の場面が新しい場面の
+# 上で続くときは、押し出したあと元の位置に戻さない（戻すと新しい場面を隠す）
+sl_at = ov_at + 1000
+scene_h = sed.strips.new_image("場面H", str(pngs[0]), 3, sl_at - 30, fit_method="FIT")
+scene_h.right_handle = sl_at + 60
+scene_i = sed.strips.new_image("場面I", str(pngs[1]), 2, sl_at, fit_method="FIT")
+scene_i.right_handle = sl_at + 200
+shot = sed.strips.new_image("境目で終わる画像", str(pngs[0]), 5, sl_at - 30, fit_method="FIT")
+shot.right_handle = sl_at
+for x in sed.strips:
+    x.select = x in (scene_h, scene_i)
+scene.frame_current = sl_at
+run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
+assert not keys_of(shot.transform, "offset_x")
+assert keys_of(scene_h.transform, "offset_x") == [(sl_at, 0.0), (sl_at + 19, -w_res)]  # 戻さない
+assert keys_of(scene_i.transform, "offset_x") == [(sl_at, w_res), (sl_at + 19, 0.0)]
+assert "a_return" not in tr_mod.record_of(scene, [x for x in marks() if x.left_handle == sl_at][0])
 # .ymmp の読み込みの場面転換も同じ（前の場面のストリップを伸ばして動かす。残像は作らない）
 from bl_ext.user_default.blender_tachie.tachie_studio.ymmp import Media as YMedia, Project as YProject, _transitions  # noqa: E402
 from bl_ext.user_default.blender_tachie.ymmp_import import find_font  # noqa: E402
