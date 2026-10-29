@@ -298,7 +298,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （`panels.draw_item_expression`、`tachie.pick_part` の `item` = STILL / LINE / FACE、`_set_item_part`。セリフは全ストリップに
   書く `set_line_parts`）。プリセットの名前は残すので欄は「名前*」。`tachie.clear_item_parts` は選んだプリセットのパーツに
   戻す（プリセットが無ければ {}）。立ち絵のプリセットを選び直すと変えたパーツは捨てる（`remake_still(preset=…)`）。
-  PSD 立ち絵はパーツの欄なし（プリセットを選ぶだけ）。
+  PSD 立ち絵はパーツの欄なし（プリセットを選ぶだけ）。選択中のアイテムの表情は「表情プリセットに登録」（`tachie.save_item_expression`、
+  パーツの欄の見出しのボタン。同じ名前は上書き）でプリセットにできる。登録するのは見えている表情（`item_look`: 立ち絵はそのパーツ、
+  セリフ・表情ストリップは頭で重なる立ち絵のパーツに自分のパーツを重ねたもの）。パーツが同じアイテムは表情の欄がその名前になる。
   パーツを選ぶ一覧（`tachie.pick_part` の invoke、`invoke_popup`）は YMM4 と同じく、パーツ単体を写っている範囲で切り抜いた
   見本（`compose.part_thumbnail`、アドオンのユーザーフォルダの thumbs/ に残し `bpy.utils.previews` で読む、`part_icon`）を
   名前の左に並べ、押すと `tachie.set_part` で当てる（`apply_part`。スクリプトからは pick_part の execute でも当てられる）。

@@ -4624,6 +4624,81 @@ class TACHIE_OT_expression_add(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def item_look(context, strip, ch) -> dict:
+    """アイテムの見えている表情（キャラの基本との差分。表情プリセットに登録するとき使う）: 立ち絵はそのパーツ、セリフ・
+    表情ストリップは頭の位置で重なるそのキャラの立ち絵（ミュートは除く。重なればチャンネルが上のもの）のパーツに、
+    自分のパーツを重ねたもの（描くときと同じ）。"""
+    sed = seq_scene(context).sequence_editor
+    if strip.get("tachie_still"):
+        return strip_parts(strip, ch)
+    if strip.get("tachie_id"):
+        strips = line_strips(sed, strip["tachie_id"])
+        strip = line_sound(strips) or strips[0]
+    head = int(strip.content_start) if strip.type == "SOUND" else strip.left_handle
+    still = max((s for s in sed.strips if s.type == "IMAGE" and s.get("tachie_still") == ch.name and not s.mute
+                 and s.left_handle <= head < s.right_handle), key=lambda s: s.channel, default=None)
+    return merge_parts(strip_parts(still, ch) if still is not None else {}, strip_parts(strip, ch))
+
+
+def set_preset_parts(item, parts: dict) -> None:
+    """表情プリセットのパーツを `parts`（`_parts_dict` と同じ形）にする（無いパーツは空 = 基本のまま）。"""
+    for category, props in PART_PROPS.items():
+        value = parts.get(category) or ""
+        values = value if isinstance(value, list) else [value]
+        for i, prop in enumerate(props):
+            setattr(item, prop, values[i] if i < len(values) else "")
+    set_item_layers(item, parts.get(LAYERS_KEY) or {})
+
+
+class TACHIE_OT_save_item_expression(bpy.types.Operator):
+    """選択中の立ち絵・セリフ・表情ストリップの表情を、キャラクターの表情プリセットに登録する
+    （セリフ・表情ストリップは重なる立ち絵の表情に重ねた、見えている表情）"""
+
+    bl_idname = "tachie.save_item_expression"
+    bl_label = "表情プリセットに登録"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: bpy.props.StringProperty(name="名前", options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        strip = active_selected(context)
+        return strip is not None and item_strip(strip)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, confirm_text="登録")
+
+    def execute(self, context):
+        name = self.name.strip()
+        if not name:
+            self.report({"ERROR"}, "名前を入れてください")
+            return {"CANCELLED"}
+        strip = active_selected(context)
+        try:
+            ch = find_character(seq_scene(context).tachie, item_character(strip))
+            if not ch.folder:
+                raise ValueError(f"{ch.name} は立ち絵が無いので表情を登録できません")
+            parts = clean_parts(item_look(context, strip, ch), ch)
+        except ERRORS as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        item = next((e for e in ch.expressions if e.name == name), None)
+        replaced = item is not None
+        if item is None:
+            item = ch.expressions.add()
+            item.name = name
+        set_preset_parts(item, parts)
+        ch.active_expression = list(ch.expressions).index(item)
+        # 表情の欄にプリセットの名前を出す（パーツが同じものだけ。立ち絵に重ねたセリフは「名前*」にしない）
+        sed = seq_scene(context).sequence_editor
+        targets = line_strips(sed, strip["tachie_id"]) if strip.get("tachie_id") else [strip]
+        if strip_parts(line_sound(targets) or targets[0], ch) == preset_parts(ch, name):
+            for s in targets:
+                s["tachie_expression"] = name
+        self.report({"INFO"}, f"{ch.name} の表情プリセット「{name}」を{'上書き' if replaced else '登録'}しました")
+        return {"FINISHED"}
+
+
 class TACHIE_OT_expression_select(bpy.types.Operator):
     """この表情プリセットを編集する"""
 
@@ -4676,6 +4751,7 @@ _classes = (
     TACHIE_OT_expression_add,
     TACHIE_OT_expression_select,
     TACHIE_OT_expression_remove,
+    TACHIE_OT_save_item_expression,
     TACHIE_OT_regenerate,
     TACHIE_OT_regenerate_all,
     TACHIE_OT_character_add,

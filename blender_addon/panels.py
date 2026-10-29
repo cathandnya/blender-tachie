@@ -552,6 +552,8 @@ def draw_item_expression(layout, context, strip, item: str) -> None:
              icon="TRIA_DOWN" if settings.show_still_parts else "TRIA_RIGHT", emboss=False)
     if changed:
         row.operator("tachie.clear_item_parts", text="", icon="LOOP_BACK")
+    if ch is not None:
+        row.operator("tachie.save_item_expression", text="", icon="PRESET_NEW")
     if not settings.show_still_parts or ch is None:
         return
     rows = part_rows(ch)

@@ -604,6 +604,26 @@ both = ops.character_cache(bpy.context, zunda, {"眉": "怒り眉"}, {"目": "�
 assert expression_dir(zs, l) == both and expression_dir(zs, r) == custom  # セリフの外は立ち絵のまま
 assert len({mouth(zs, f) for f in range(l, r)}) > 1
 check_stills()
+# 選択中のセリフ・立ち絵の表情を表情プリセットに登録できる（セリフは重なる立ち絵の表情に重ねた、見えている表情）
+n_presets, still_label, active_preset = len(zunda.expressions), zs.get("tachie_expression", ""), zunda.active_expression
+activate(sound(zunda_id))
+run(bpy.ops.tachie.save_item_expression, name="セリフの表情")
+assert ops.preset_parts(zunda, "セリフの表情") == {"眉": "怒り眉", "目": "なごみ目"}
+assert sound(zunda_id).get("tachie_expression", "") != "セリフの表情"  # パーツが違う（立ち絵の分も入っている）
+activate(zs)
+run(bpy.ops.tachie.save_item_expression, name="立ち絵の表情")
+assert ops.preset_parts(zunda, "立ち絵の表情") == {"眉": "怒り眉"}
+assert ops.expression_label(zunda, zs, "（基本）") == "立ち絵の表情"
+run(bpy.ops.tachie.save_item_expression, name="セリフの表情")  # 同じ名前は上書き
+assert ops.preset_parts(zunda, "セリフの表情") == {"眉": "怒り眉"} and len(zunda.expressions) == n_presets + 2
+try:
+    bpy.ops.tachie.save_item_expression(name=" ")
+    raise AssertionError("名前が空でも登録できた")
+except RuntimeError as e:
+    assert "名前を入れてください" in str(e), e
+for name in ("セリフの表情", "立ち絵の表情"):
+    zunda.expressions.remove(list(zunda.expressions).index(zunda.expressions[name]))
+zs["tachie_expression"], zunda.active_expression = still_label, active_preset
 # セリフの「基本の表情」は立ち絵で変えたパーツも打ち消し、「立ち絵のまま」は何も重ねない
 activate(sound(zunda_id))
 ops._expression_items = [(ops.BASE, "基本の表情", "")]
