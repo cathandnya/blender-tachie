@@ -77,7 +77,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   テンプレートのパネルの欄は、シーンの `ymmp_media_root` があればそれ（優先されるため）。
   写せる映像エフェクト（写したものは `Media.effects` から外し、残りは「写せなかった設定」に出す）:
   背景塗りつぶし（テキスト、単色）→ テキストストリップの box（余白は上下左右の平均、`box_height` で角の丸みの割合）。
-  画面外から移動して登場・退場 → `Media.slide`、location / offset に画面 1 つ分ずらしたキーフレーム（`_slide`、イージングは
+  画面外から移動して登場・退場 → `Media.slide`、location / offset に、写る範囲（`_text_box` / `_image_box` の見積もり）がちょうど画面の外に出るまでずらしたキーフレーム（大きさが分からなければ画面 1 つ分。画面 1 つ分だと端に置いたものの動きがほとんど見えなかった）（`_slide`、イージングは
   `EASING_TYPES` / `EASING_MODES`、退場は逆向き）。登場・退場（画面外から移動・フェード）を付けたパスはストリップの
   `tachie_edges` に覚え、置いたあとに長さを変えたら自動の反映（`motion_signature` に `edges_signature`、`refresh_motion` の頭の
   `sync_edges`）が、前に合わせたとき（`tachie_edges_span`）から頭・お尻が動いた分だけ登場・退場の 2 つのキーを動かす

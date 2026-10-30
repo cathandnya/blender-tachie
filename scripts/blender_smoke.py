@@ -1490,6 +1490,10 @@ from bl_ext.user_default.blender_tachie import ymmp_media  # noqa: E402
 
 frames_of = lambda attr: sorted({round(k.co[0]) for k in ymmp_media._keyframes(scene, header, attr)})
 assert frames_of("location")[-1] == header.right_handle - 1
+# 画面の左端に置いたテキストは、ちょうど画面の外に出るところから入る（画面 1 つ分ずらすと動きがほとんど見えない）
+first_x = min(ymmp_media._keyframes(scene, header, "location"), key=lambda k: (k.co[0], k.co[1])).co[1]
+x0, x1, _, _ = ymmp_media._text_box(header, header.text, scene)
+assert -0.5 < first_x < 0 and x1 / scene.render.resolution_x + first_x - header.location[0] < 0, first_x
 header.right_handle = hd_at + 100
 ops._apply_faces_later()  # 自動の反映（動きの作り直し）
 n_slide = frames_of("location")[1] - hd_at

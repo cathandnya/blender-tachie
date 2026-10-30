@@ -29,6 +29,7 @@ from . import channels as lanes
 from .motion import _channelbag, _key
 from .operators import _overlaps, _path_for_blend, _sound_error, output_dir, seq_scene
 from .tachie_studio.media_effects import outline_image
+from .tachie_studio.subtitle import char_width
 from .properties import LINE_PITCH, default_font, load_font
 from .tachie_studio.ymmp import Media, Project, find_by_tail, front_layer
 
@@ -360,6 +361,52 @@ def _selected_scenes(scenes: list, start: int) -> tuple:
     afters = [s for s in chosen if abs(s.left_handle - start) <= 1]
     befores = [s for s in chosen if s not in afters and s.left_handle < start - 1 and s.right_handle >= start - 1]
     return (befores[0], afters[0]) if len(befores) == 1 and len(afters) == 1 else (None, None)
+
+
+def _text_box(strip, text: str, scene) -> tuple[float, float, float, float]:
+    """テキストストリップの写る範囲の見積もり (左, 右, 下, 上)（出力のピクセル、上が正）。文字の幅は全角 = 文字の大きさ、
+    半角は広めに 0.7（W・M などの英字は全角の半分より広く、狭く見積もると最初のコマで画面に残る）。"""
+    render = scene.render
+    size = strip.font_size
+    margin = strip.box_margin * render.resolution_x if strip.use_box else 0.0
+    w = max(sum(max(char_width(c), 0.7) for c in line) for line in text.split("\n")) * size * 1.05 + 2 * margin
+    h = box_height(size, text, margin, strip.space_line)
+    x, y = strip.location[0] * render.resolution_x, strip.location[1] * render.resolution_y
+    left = {"LEFT": x, "CENTER": x - w / 2, "RIGHT": x - w}.get(strip.anchor_x, x)
+    top = {"TOP": y, "CENTER": y + h / 2, "BOTTOM": y + h}.get(strip.anchor_y, y)
+    return left, left + w, top - h, top
+
+
+def _image_box(strip, scene, scale: float | None = None) -> tuple[float, float, float, float] | None:
+    """画像・動画ストリップの写る範囲 (左, 右, 下, 上)（出力のピクセル、上が正。回転したものはそれを囲む四角）。
+    `scale` は拡大率（拡大率のアニメーションでは大きい方）、無ければ今の値。大きさが分からなければ None。"""
+    source = strip.input_1 if strip.type == "SPEED" else strip  # fps 合わせの補正は元の動画の大きさ
+    element = source.elements[0] if getattr(source, "elements", None) else None
+    if element is None or not element.orig_width or not element.orig_height:
+        return None
+    render, t = scene.render, strip.transform
+    sx, sy = (abs(scale), abs(scale)) if scale is not None else (abs(t.scale_x), abs(t.scale_y))
+    w0, h0 = element.orig_width * sx, element.orig_height * sy
+    c, s = abs(math.cos(t.rotation)), abs(math.sin(t.rotation))
+    w, h = w0 * c + h0 * s, w0 * s + h0 * c
+    cx, cy = render.resolution_x / 2 + t.offset_x, render.resolution_y / 2 + t.offset_y
+    return cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2
+
+
+def _offscreen_shift(box, scene, dx: float, dy: float) -> tuple[float, float]:
+    """範囲 `box` が (dx, dy) の向きにちょうど画面の外に出るまでずらす量（ピクセル）。分からなければ画面 1 つ分。"""
+    w, h = scene.render.resolution_x, scene.render.resolution_y
+    if box is None:
+        return dx * w, dy * h
+    left, right, bottom, top = box
+    pad = 0.01 * w  # 縁取り・見積もりの誤差の分
+    if dx < 0:
+        return -max(0.0, right) - pad, 0.0
+    if dx > 0:
+        return max(0.0, w - left) + pad, 0.0
+    if dy > 0:
+        return 0.0, max(0.0, h - bottom) + pad
+    return 0.0, -max(0.0, top) - pad
 
 
 EDGES = "tachie_edges"  # 登場・退場の動き（画面外から移動・フェード）を付けたパス [{"path", "in", "out"}]
@@ -817,7 +864,8 @@ class MediaPlacer:
             self._fade(strip, "blend_alpha", strip.blend_alpha, m, start, last)
 
     def _slide(self, strip, m: Media, start: int, last: int) -> None:
-        """画面外から移動して登場・退場（画面 1 つ分ずらした位置から、YMM4 のイージングで動かす）。"""
+        """画面外から移動して登場・退場（ちょうど画面の外に出る位置から、YMM4 のイージングで動かす。画面 1 つ分ずらすと、
+        画面の端に置いたものは動く時間のほとんどが画面の外になって、出入りの動きが見えなかった）。"""
         anim, slide = m.anim, m.slide
         dx, dy = SLIDE_DIRECTIONS.get(slide["direction"], (-1.0, 0.0))
         n = max(1, round(slide["seconds"] * self.fps))
@@ -827,17 +875,19 @@ class MediaPlacer:
                 return
             target, attr = strip, "location"
             x, y = strip.location
-            outside, inside = (x + dx, y + dy), (x, y)
+            sx, sy = _offscreen_shift(_text_box(strip, m.text, self.scene), self.scene, dx, dy)
+            outside, inside = (x + sx / self.scene.render.resolution_x, y + sy / self.scene.render.resolution_y), (x, y)
             keys = lambda pos, frame: (setattr(strip, "location", pos), strip.keyframe_insert("location", frame=frame))
         else:
             if ("x" if dx else "y") in anim:  # 動かす向きの軸だけがぶつかる
                 self.problems.append(f"{KIND_LABELS[m.kind]}は移動のアニメーションがあるので、画面外からの登場は写していません")
                 return
-            render = self.scene.render
             target, attr = strip.transform, "offset_x" if dx else "offset_y"
             base = getattr(target, attr)
-            shift = dx * render.resolution_x if dx else dy * render.resolution_y
-            outside, inside = base + shift, base
+            zoom = anim.get("zoom")  # 拡大率のアニメーションは大きい方で見積もる（今の値は終わりの値）
+            scale = max(abs(zoom[0]), abs(zoom[1])) / 100 * self.sy if zoom else None
+            sx, sy = _offscreen_shift(_image_box(strip, self.scene, scale), self.scene, dx, dy)
+            outside, inside = base + (sx if dx else sy), base
             keys = lambda v, frame: _key(strip, f"transform.{attr}", frame, v)
         if slide["in"]:
             keys(outside, start)
