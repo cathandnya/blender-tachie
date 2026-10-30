@@ -604,6 +604,17 @@ both = ops.character_cache(bpy.context, zunda, {"眉": "怒り眉"}, {"目": "�
 assert expression_dir(zs, l) == both and expression_dir(zs, r) == custom  # セリフの外は立ち絵のまま
 assert len({mouth(zs, f) for f in range(l, r)}) > 1
 check_stills()
+# 字幕を伸ばすと、伸ばした間もセリフの表情（口は閉じる）
+zsub = ops.line_subtitle(ops.line_strips(sed, zunda_id))
+zsub_end = zsub.right_handle
+zsub.right_handle = zsub_end + 3
+ops._apply_faces_later()
+assert expression_dir(still("ずんだもん"), zsub_end + 2) == both and mouth(still("ずんだもん"), zsub_end + 2) == "l0"
+assert expression_dir(still("ずんだもん"), zsub_end + 3) == custom
+zsub.right_handle = zsub_end
+ops._apply_faces_later()
+assert expression_dir(still("ずんだもん"), zsub_end) == custom
+zs = still("ずんだもん")
 # 選択中のセリフ・立ち絵の表情を表情プリセットに登録できる（セリフは重なる立ち絵の表情に重ねた、見えている表情）
 n_presets, still_label, active_preset = len(zunda.expressions), zs.get("tachie_expression", ""), zunda.active_expression
 activate(sound(zunda_id))

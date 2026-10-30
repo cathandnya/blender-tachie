@@ -295,7 +295,8 @@ def still_frames(base: FrameCache, faces: list[tuple[int, int, FrameCache]],
     """立ち絵（`frames` コマ）を、重なるセリフの間だけ口パクさせて並べる。
 
     `faces` は表情ストリップの [(開始, 終わり, キャッシュ)]、`lines` は重なるセリフの [(ずれ, 動き, キャッシュ)]
-    （どちらも立ち絵の頭が 0。セリフのキャッシュはセリフの表情）。表情は 立ち絵 < セリフ < 表情ストリップ
+    か [(ずれ, 動き, キャッシュ, 表情の長さ)]（どちらも立ち絵の頭が 0。セリフのキャッシュはセリフの表情。表情の長さは
+    字幕を伸ばしたときなど、口の動きより長くセリフの表情にするコマ数。口は動きの長さまで）。表情は 立ち絵 < セリフ < 表情ストリップ
     （後ろほど優先）、口は重なるセリフのうち後から始まるものの口の動き（それ以外は閉じ）、目は立ち絵自身の
     まばたき（`blink_segment_frames` と同じ seed で、セリフの間も続ける）。セリフが無ければ `blink_segment_frames` と同じ。
     """
@@ -303,10 +304,14 @@ def still_frames(base: FrameCache, faces: list[tuple[int, int, FrameCache]],
     talker: list[int | None] = [None] * frames  # そのコマの口を持つセリフ（lines の番号）
     order = sorted(range(len(lines)), key=lambda k: lines[k][0])  # 後から始まるセリフほど優先
     for k in order:
-        offset, motion, cache = lines[k]
-        for j in range(max(0, offset), min(frames, offset + motion.frames)):
-            owner[j] = cache
-            talker[j] = k
+        offset, motion, cache = lines[k][:3]
+        span = max(motion.frames, lines[k][3]) if len(lines[k]) > 3 else motion.frames
+        for j in range(max(0, offset), min(frames, offset + span)):
+            if j < offset + motion.frames:
+                owner[j] = cache
+                talker[j] = k
+            elif talker[j] is None:  # 伸ばした表情の区間は、先に始まって喋っているセリフを上書きしない
+                owner[j] = cache
     for start, end, cache in faces:
         for j in range(max(0, start), min(frames, end)):
             owner[j] = cache
@@ -320,7 +325,7 @@ def still_frames(base: FrameCache, faces: list[tuple[int, int, FrameCache]],
         mouth: MouthState = ("level", 0)
         k = talker[j]
         if k is not None:
-            offset, motion, _ = lines[k]
+            offset, motion = lines[k][:2]
             if (k, id(cache)) not in states_by:  # セリフ全体で計算する（音量の正規化を保つ）。口のパーツはそのコマの表情
                 states_by[(k, id(cache))] = mouth_states(motion, cache.character, cache.expression)[1]
             mouth = states_by[(k, id(cache))][j - offset]

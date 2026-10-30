@@ -1291,19 +1291,35 @@ def line_sounds(sed, name: str) -> list:
                    and s.get("tachie_character") == name and not s.mute), key=lambda s: s.left_handle)
 
 
-def _talking_lines(sed, ch, start: int, end: int) -> list[tuple]:
-    """[start, end) に重なるそのキャラのセリフ [(id, 動きの頭のずれ, パーツ, 長さ)]（ずれは start から）。
+def line_ends(sed) -> dict[str, int]:
+    """セリフの id → いちばん後ろで終わるストリップのお尻（字幕を伸ばしたセリフは字幕のお尻。ミュートしたものは除く）。"""
+    ends: dict[str, int] = {}
+    for s in sed.strips:
+        cid = s.get("tachie_id")
+        if cid and not s.mute:
+            ends[cid] = max(ends.get(cid, s.right_handle), s.right_handle)
+    return ends
 
-    動きの頭は音声ストリップの中身の頭（content_start）、長さは余韻を含む `tachie_frames`。パーツが {} のセリフは
-    立ち絵の表情のまま。
+
+def line_span(sound, ends: dict[str, int]) -> tuple[int, int, int]:
+    """(動きの頭, 口の動きの長さ, 表情の長さ)。動きの頭は音声ストリップの中身の頭（content_start）、口の動きの長さは
+    余韻を含む `tachie_frames`、表情の長さはセリフのストリップ（字幕など）のいちばん後ろのお尻まで（短くはしない）。"""
+    head = int(sound.content_start)
+    frames = int(sound.get("tachie_frames", 0)) or (sound.right_handle - head)
+    return head, frames, max(frames, ends.get(sound.get("tachie_id"), 0) - head)
+
+
+def _talking_lines(sed, ch, start: int, end: int) -> list[tuple]:
+    """[start, end) に重なるそのキャラのセリフ [(id, 動きの頭のずれ, パーツ, 口の動きの長さ, 表情の長さ)]
+    （ずれは start から。`line_span`）。パーツが {} のセリフは立ち絵の表情のまま。
     """
     out = []
+    ends = line_ends(sed)
     for sound in line_sounds(sed, ch.name):
-        head = int(sound.content_start)
-        frames = int(sound.get("tachie_frames", 0)) or (sound.right_handle - head)
-        if head + frames <= start or end <= head:
+        head, frames, span = line_span(sound, ends)
+        if head + span <= start or end <= head:
             continue
-        out.append((sound["tachie_id"], head - start, strip_parts(sound, ch), frames))
+        out.append((sound["tachie_id"], head - start, strip_parts(sound, ch), frames, span))
     return out
 
 
@@ -1326,6 +1342,8 @@ def still_key(context, sed, ch, strip) -> str:
 
 
 def _still_key(ch, look: dict, segments, talking) -> str:
+    # 表情の長さは口の動きより長いときだけ入れる（前の版の鍵と同じにして、開いた .blend の立ち絵を全部作り直さない）
+    talking = [t[:4] if t[4] == t[3] else t for t in talking]
     return json.dumps([appearance_key(ch), look, segments, talking], ensure_ascii=False)
 
 
@@ -1398,6 +1416,8 @@ def faces_signature(scene) -> str:
         elif s.type == "SOUND" and s.get("tachie_id"):
             items.append(("line", s.name, s.get("tachie_character", ""), int(s.content_start),
                           int(s.get("tachie_frames", 0)), s.get(LOOK, s.get("tachie_expression", "")), s.mute))
+        elif s.type == "TEXT" and s.get("tachie_id"):  # 字幕を伸ばすとセリフの表情の区間も伸びる
+            items.append(("text", s.name, s.right_handle))
         elif s.type == "IMAGE" and s.get("tachie_still"):
             stills = True
             still_chars.add(s["tachie_still"])
@@ -1558,14 +1578,14 @@ def place_still(context, ch, preset: str, start: int, frames: int, pose: dict | 
     from .motion import motion_paths
 
     motion_path = motion_paths(sed, lines_dir)
-    for clip_id, offset, line_parts, length in talking:
+    for clip_id, offset, line_parts, length, span in talking:
         path = motion_path(clip_id)
         motion = LineMotion.load(path) if path.is_file() else None
         if motion is None or motion.frames != length:
             if problems is not None:
                 problems.append(f"{ch.name}のセリフ {clip_id} の口の動きがありません（再生成すると口パクします）")
             continue
-        lines.append((offset, motion, cache_of(line_parts)))
+        lines.append((offset, motion, cache_of(line_parts), span))
     key = _still_key(ch, look, segments, talking)
     if segments or lines:
         paths = still_frames(cache, [(a, b, cache_of(p)) for a, b, p in segments], lines, frames,
@@ -2746,6 +2766,7 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
         settings = scene.tachie
         placed, overlapped = 0, 0
         made = []
+        ends = line_ends(sed)
         for cid in selected_targets(sed)[0]:
             strips = line_strips(sed, cid)
             ch = settings.characters.get(strips[0].get("tachie_character", ""))
@@ -2756,9 +2777,9 @@ class TACHIE_OT_line_faces(bpy.types.Operator):
             parts = strip_parts(sound, ch)
             if not parts:
                 continue
-            # 立ち絵がセリフの表情になる区間（`_talking_lines` と同じ: 音声の中身の頭から余韻を含む長さ）
-            start = int(sound.content_start)
-            end = start + (int(sound.get("tachie_frames", 0)) or (sound.right_handle - start))
+            # 立ち絵がセリフの表情になる区間（`_talking_lines` と同じ: 音声の中身の頭から字幕などのお尻まで）
+            start, _, span = line_span(sound, ends)
+            end = start + span
             others = [t for t in _talking_lines(sed, ch, start, end) if t[0] != cid]
             if face_segments(sed, ch, start, end) or others:
                 # 重なる表情ストリップの区間はそちらが見えている。重なる同じキャラのセリフは後から始まるものの表情に

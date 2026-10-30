@@ -639,6 +639,8 @@ def test_render_line_uses_given_wav(tmp_path: Path, char_dir: Path):
 
 def test_still_frames(tmp_path: Path, char_dir: Path):
     """立ち絵は重なるセリフの間だけ口パクし、表情は 立ち絵 < セリフ < 表情ストリップ。"""
+    import dataclasses
+
     from tachie_studio.pipeline.render import (FrameCache, LineMotion, blink_segment_frames, mouth_states,
                                                render_line, still_frames)
     from tachie_studio.pipeline.script import Line
@@ -674,6 +676,18 @@ def test_still_frames(tmp_path: Path, char_dir: Path):
     assert frames[7].parent == talk.directory and frames[8].parent == base.directory
     first = mouth_states(motion, character, base.expression)[1][0]
     assert frames[8].name.split("_", 1)[1] == f"{first[0][0]}{first[1]}.png"
+    # 表情の長さ（字幕を伸ばしたセリフ）が口の動きより長ければ、その間もセリフの表情で口は閉じる
+    frames = still_frames(base, [], [(5, motion, talk, motion.frames + 4)], n, 10, seed="s")
+    tail = range(5 + motion.frames, 5 + motion.frames + 4)
+    closed = still_frames(talk, [], [], n, 10, seed="s")
+    assert all(frames[j].parent == talk.directory and frames[j].name == closed[j].name for j in tail)
+    assert frames[5 + motion.frames + 4].parent == base.directory
+    # 後から始まったセリフの伸ばした表情の区間は、先に始まってまだ喋っているセリフを上書きしない
+    long = dataclasses.replace(motion, frames=motion.frames + 5)  # 余韻の長いセリフ
+    frames = still_frames(base, [], [(0, long, talk), (1, motion, face, long.frames + 4)], long.frames + 10, 10,
+                          seed="s")
+    assert frames[motion.frames + 1].parent == talk.directory  # face の口の動きは終わり、talk はまだ喋っている
+    assert frames[long.frames].parent == face.directory  # talk も終わったので face の伸ばした表情
     # 立ち絵の外にはみ出したセリフは立ち絵の区間で切る
     frames = still_frames(base, [], [(-2, motion, talk)], 4, 10, seed="s")
     states = mouth_states(motion, character, talk.expression)[1]
