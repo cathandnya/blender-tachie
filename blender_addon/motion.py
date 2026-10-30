@@ -260,10 +260,14 @@ def _jump(strip, jump: dict, fps: float, width: int, height: int, appearing: boo
 
 
 def refresh_motion(scene, lines_dir: Path) -> int:
-    """立ち絵の動きのキーフレームを作り直す。動きを付けたストリップの数を返す。"""
+    """立ち絵の動きのキーフレームを作り直す（テンプレートなどの登場・退場の動きはストリップの端に合わせる）。
+    動きを付けたストリップの数を返す。"""
+    from .ymmp_media import sync_edges
+
     sed = scene.sequence_editor
     if sed is None:
         return 0
+    sync_edges(scene)
     characters = {c.name: c for c in scene.tachie.characters}
     # 消した（名前を変えた）キャラの立ち絵に付けた動きも消す（作り直さないので残ったままになる）
     # 字幕とキャラ名のうち、フェードするものと前にフェードを打ったもの（tachie_fade_keyed）だけを触る
@@ -440,6 +444,9 @@ def motion_signature(scene) -> str:
                 round(s.get("tachie_scale", 1.0), 4), s.get("tachie_flip"), s.get("tachie_jump", ""), look)
         active = active or pose != (0.0, 0.0, 1.0, None, "", (1.0, 0.0, 0.0, 0.0, 0.0))
         items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, pose))
-    if not active:
+    from .ymmp_media import edges_signature
+
+    edges = edges_signature(sed)  # テンプレートなどの登場・退場の動きは、ストリップの長さに合わせる
+    if not active and not edges:
         return ""
-    return repr((settings, sorted(items)))
+    return repr((settings, sorted(items), sorted(edges)))

@@ -15,6 +15,7 @@ Blender の画像・動画は `fit_method="ORIGINAL"` で置き、transform の 
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import unicodedata
@@ -359,6 +360,85 @@ def _selected_scenes(scenes: list, start: int) -> tuple:
     afters = [s for s in chosen if abs(s.left_handle - start) <= 1]
     befores = [s for s in chosen if s not in afters and s.left_handle < start - 1 and s.right_handle >= start - 1]
     return (befores[0], afters[0]) if len(befores) == 1 and len(afters) == 1 else (None, None)
+
+
+EDGES = "tachie_edges"  # 登場・退場の動き（画面外から移動・フェード）を付けたパス [{"path", "in", "out"}]
+EDGES_SPAN = "tachie_edges_span"  # 登場・退場のキーを最後に合わせたときのストリップの [頭, お尻]
+
+
+def record_edges(strip, path: str, enter: bool, leave: bool) -> None:
+    """`strip` の `path` に登場（頭の 2 つのキー）・退場（お尻の 2 つのキー）の動きを付けたことを覚える
+    （ストリップの長さを変えたら `sync_edges` がキーを動かす）。"""
+    if not (enter or leave):
+        return
+    edges = [e for e in json.loads(strip.get(EDGES) or "[]") if e.get("path") != path]
+    edges.append({"path": path, "in": bool(enter), "out": bool(leave)})
+    strip[EDGES] = json.dumps(edges)
+    strip[EDGES_SPAN] = [strip.left_handle, strip.right_handle]
+
+
+def edges_signature(sed) -> list:
+    """登場・退場の動きを付けたストリップの位置（`motion_signature` に入れる）。"""
+    return [(s.name, s.left_handle, s.right_handle) for s in sed.strips_all if s.get(EDGES)]
+
+
+def sync_edges(scene) -> int:
+    """ストリップの長さを変えたら、登場・退場の動きのキーを端と一緒に動かす（テンプレートを置いたあとに縮めると、
+    退場のキーが元のお尻に残って動きが見えない）。前に合わせたとき（`EDGES_SPAN`）から頭が動いた分だけ登場の 2 つの
+    キーを、お尻が動いた分だけ退場の 2 つのキーを動かす（手で動かしたキーの位置は保つ）。頭とお尻が同じだけ動いたのは
+    ストリップごと動かしたもので、キーは Blender が一緒に動かしている。キーの数が付けたときと違う（手で足した・消した）
+    パスは触らない。キーを動かしたストリップの数を返す。"""
+    bag = _channelbag(scene)
+    sed = scene.sequence_editor
+    if bag is None or sed is None:
+        return 0
+    strips = [s for s in sed.strips_all if s.get(EDGES)]
+    if not strips:
+        return 0
+    curves: dict[str, list] = {}  # F カーブを 1 回だけ見て、パスごとに引く（ストリップ × F カーブで回さない）
+    for f in bag.fcurves:
+        curves.setdefault(f.data_path, []).append(f)
+    count = 0
+    for strip in strips:
+        span = list(strip.get(EDGES_SPAN) or ())
+        strip[EDGES_SPAN] = [strip.left_handle, strip.right_handle]
+        if len(span) != 2:
+            continue
+        dl, dr = strip.left_handle - span[0], strip.right_handle - span[1]
+        if dl == dr:
+            continue
+        try:
+            edges = json.loads(strip[EDGES])
+        except ValueError:
+            continue
+        moved = False
+        for edge in edges:
+            path = f"{strip.path_from_id()}.{edge.get('path', '')}"
+            want = 2 * bool(edge.get("in")) + 2 * bool(edge.get("out"))
+            for fcurve in curves.get(path, ()):
+                keys = sorted(fcurve.keyframe_points, key=lambda k: k.co[0])
+                if len(keys) != want:
+                    continue
+                shifts = []
+                if edge.get("in"):
+                    shifts.append((keys[:2], dl))
+                if edge.get("out"):
+                    # 短くしても退場が登場の終わり（登場が無ければストリップの頭）より前に入らないように
+                    floor = keys[1].co[0] + dl if edge.get("in") else strip.left_handle
+                    shifts.append((keys[-2:], max(dr, floor - keys[-2].co[0])))
+                changed = False
+                for pair, d in shifts:
+                    if d:
+                        for k in pair:
+                            k.co[0] += d
+                            k.handle_left[0] += d
+                            k.handle_right[0] += d
+                        changed = True
+                if changed:
+                    fcurve.update()
+                    moved = True
+        count += moved
+    return count
 
 
 def place_transition(context, tr: dict, start: int, end: int, problems: list[str]) -> bool:
@@ -765,6 +845,7 @@ class MediaPlacer:
         if slide["out"]:
             keys(inside, max(start, last - n))
             keys(outside, last)
+        record_edges(strip, "location" if m.kind == "text" else f"transform.{attr}", slide["in"], slide["out"])
         if slide["in"]:
             _ease(self.scene, target, attr, start, slide, out=False)
         if slide["out"]:
@@ -783,6 +864,7 @@ class MediaPlacer:
             _key(strip, attr, max(start, last - max(1, round(m.fade_out * self.fps))), full)
             _key(strip, attr, last, 0.0)
         _linear(self.scene, strip, attr)
+        record_edges(strip, attr, m.fade_in > 0, m.fade_out > 0)
 
     def _place_sound(self, sed, m: Media, path: Path, volume: float, kind: str) -> None:
         error = _sound_error(path)

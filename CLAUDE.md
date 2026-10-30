@@ -78,7 +78,10 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   写せる映像エフェクト（写したものは `Media.effects` から外し、残りは「写せなかった設定」に出す）:
   背景塗りつぶし（テキスト、単色）→ テキストストリップの box（余白は上下左右の平均、`box_height` で角の丸みの割合）。
   画面外から移動して登場・退場 → `Media.slide`、location / offset に画面 1 つ分ずらしたキーフレーム（`_slide`、イージングは
-  `EASING_TYPES` / `EASING_MODES`、退場は逆向き）。縁取り（画像、単色）→ `media_effects.outline_image` で元の画像のピクセルの
+  `EASING_TYPES` / `EASING_MODES`、退場は逆向き）。登場・退場（画面外から移動・フェード）を付けたパスはストリップの
+  `tachie_edges` に覚え、置いたあとに長さを変えたら自動の反映（`motion_signature` に `edges_signature`、`refresh_motion` の頭の
+  `sync_edges`）が、前に合わせたとき（`tachie_edges_span`）から頭・お尻が動いた分だけ登場・退場の 2 つのキーを動かす
+  （頭とお尻が同じだけ動いたのはストリップごとの移動で、キーは Blender が動かしている）。縁取り（画像、単色）→ `media_effects.outline_image` で元の画像のピクセルの
   太さの縁を付けた PNG を出力フォルダの media/ に作って置く（YMM4 の書き出しで、太さ 20・拡大率 60% の縁が 12px だった）。
   モザイク（エフェクトアイテムの四角い範囲・四角いモザイク）→ `Media(kind="mosaic")`、調整レイヤー + COMPOSITOR の補正
   （Pixelate と Box Mask を ShaderNodeMix で混ぜるノードグループ。Box Mask の Size は縦も横も画面の幅に対する割合）。範囲の「サイズとアスペクト比」は AviUtl の図形と同じ

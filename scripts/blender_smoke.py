@@ -1474,9 +1474,30 @@ assert Path(bpy.path.abspath(se_strip.sound.filepath)).name == "ping.wav"
 sed.strips.remove(se_strip)
 templates.remove(list(templates).index(se_tpl))
 prefs.media_root = ""
-# 場面転換: 前の場面（再生位置で終わる画像・動画）のお尻を伸ばし、前の場面自身を動かす（再生したまま。blender-tools と同じ）
+# テンプレートのテキストの登場・退場（画面外から移動）は、置いたあとに長さを変えてもストリップの端に合わせる
+hd_tpl = templates.add()
+hd_tpl.name = "ヘッダテスト"
+hd_tpl.data = json.dumps({"version": 1, "fps": 30.0, "width": 1920, "height": 1080, "items": [{"kind": "media", "media": {
+    "kind": "text", "frame": 0, "length": 300, "layer": 9, "text": "見出し", "x": -900.0, "y": -500.0, "zoom": 100.0,
+    "font_size": 40.0, "base_point": "LeftTop", "fade_out": 0.5,
+    "slide": {"direction": "Left", "in": True, "out": True, "seconds": 0.3, "easing": "Expo", "mode": "Out"}}}]},
+    ensure_ascii=False)
+hd_at = max(x.right_handle for x in sed.strips) + 20
+scene.frame_current = hd_at
+run(bpy.ops.tachie.insert_template, index=list(templates).index(hd_tpl))
+header, = [x for x in sed.strips if x.type == "TEXT" and x.get("tachie_ymmp") and x.left_handle == hd_at]
 from bl_ext.user_default.blender_tachie import ymmp_media  # noqa: E402
 
+frames_of = lambda attr: sorted({round(k.co[0]) for k in ymmp_media._keyframes(scene, header, attr)})
+assert frames_of("location")[-1] == header.right_handle - 1
+header.right_handle = hd_at + 100
+ops._apply_faces_later()  # 自動の反映（動きの作り直し）
+n_slide = frames_of("location")[1] - hd_at
+assert frames_of("location") == [hd_at, hd_at + n_slide, hd_at + 99 - n_slide, hd_at + 99], frames_of("location")
+assert frames_of("blend_alpha")[-1] == hd_at + 99
+sed.strips.remove(header)
+templates.remove(list(templates).index(hd_tpl))
+# 場面転換: 前の場面（再生位置で終わる画像・動画）のお尻を伸ばし、前の場面自身を動かす（再生したまま。blender-tools と同じ）
 keys_of = lambda strip, attr: [tuple(k.co) for k in ymmp_media._keyframes(scene, strip, attr)]
 pngs = []
 for i, color in enumerate(((1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0))):
