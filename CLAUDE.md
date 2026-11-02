@@ -108,9 +108,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
   （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
   `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
-- `src/tachie_studio/subtitle.py` — 字幕の改行（幅で折り返し、句読点はぶら下げ、開き括弧は次行へ、英単語（半角の英数字の並び）は
-  途中で切らずに次の行へ。幅は `width_of`。アドオンは `properties.wrap_subtitle` が字幕のフォントで測った px（`fonts.glyph_width`、
-  Pillow の送り幅。読めなければ全角 = 文字の大きさ）と折り返し幅の px で折り返す）。
+- `src/tachie_studio/subtitle.py` — 字幕の改行。改行してよい所（禁則: 句読点はぶら下げ、開き括弧は次行へ。英単語（半角の英数字の
+  並び）の途中は不可）のうち、`phrases`（`phrase_splitter` = BudouX の日本語の文節。無ければ None）の切れ目と空白のあとを優先し、
+  無ければ切ってよい所、それも無ければ文字の間で切る。幅は `width_of`。アドオンは `properties.wrap_subtitle` が字幕のフォントで
+  測った px（`fonts.glyph_width`、Pillow の送り幅。フォントに無い文字は全角 = 文字の大きさ）と折り返し幅の px で折り返す。
+  BudouX（Apache 2.0、依存なし）は py3-none-any の wheel を 1 つ同梱する（`build_addon.PACKAGES`）。
 - `src/tachie_studio/fonts.py` — 字幕・見出しの既定のフォント（`default_font`）。同じ形のファイルが並ぶときは名前のウェイトで
   Bold → Medium → Regular → 無し・DemiLight → 極端なもの（Black・Thin・Light など）の順。Linux の Noto Sans CJK と
   Noto Sans JP は 1 つの組で比べる（Noto Sans CJK は名前順だと Black になった、#36）。
@@ -381,7 +383,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `add_voice_character` は番号を付ける前の名前で探し、YMM4 の読み込みはその上に YMM4 の設定を重ねる。CLI の `parse_characters` も tachie.toml で補う。
   書き出し（キャラ設定・初期値）は空のパーツも `"目" = ""` / `"他" = []` と明示し、tachie.toml の値で補われないようにする。
   消した表情プリセットは書けないので、tachie.toml にあるプリセットは戻る（仕様）。
-- `scripts/build_addon.py` — Pillow と Brotli の wheel（cp313、macOS arm64 / x64・Windows x64 / arm64・Linux x64。`PACKAGES`。
+- `scripts/build_addon.py` — Pillow と Brotli・BudouX の wheel（cp313、macOS arm64 / x64・Windows x64 / arm64・Linux x64。`PACKAGES`。
   Brotli は macOS は universal2 の 1 つで、Windows arm64 用は無いのでその OS では YMM4 の音声を使わず合成する）を取ってきて
   `blender --command extension build --split-platforms` で OS ごとの `dist/blender_tachie-<ver>-<OS>.zip` を作る
   （zip の manifest には Blender が `[build.generated]` でその OS の platforms / wheels を書き足す）。`--install` でこの OS 用を

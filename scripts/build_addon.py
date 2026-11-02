@@ -3,7 +3,7 @@
     uv run python scripts/build_addon.py            # dist/blender_tachie-<version>-<OS>.zip（OS ごと）
     uv run python scripts/build_addon.py --install  # 作ったうえで、この OS 用を Blender の user_default リポジトリに入れる
 
-blender_addon/ と src/tachie_studio/ を build/blender_tachie/ に集め、Blender 同梱 Python 用の Pillow の wheel を
+blender_addon/ と src/tachie_studio/ を build/blender_tachie/ に集め、Blender 同梱 Python 用の wheel（`PACKAGES`）を
 OS ごとに取ってきて manifest の platforms / wheels に書き、`blender --command extension build --split-platforms` で
 OS ごとの zip に固める。Blender は環境変数 BLENDER、PATH の blender、OS ごとの標準の場所の順で探す。
 """
@@ -40,8 +40,10 @@ PLATFORMS = {
 # Brotli は YMM4 の .ymmp に保存された音声（VoiceCache）を展開するため。macOS は arm64 で取れる universal2 の 1 つで
 # x64 も兼ねる（x86_64 用も取ると x64 の zip に 2 つ入る）。Windows arm64 用は配布されていないので、その OS では
 # YMM4 の音声を使わずに VOICEVOX で合成する
+# BudouX は字幕を文節の切れ目で折り返すため。どの OS でも同じ wheel（py3-none-any）なので 1 つだけ取る
 PACKAGES = {
     "pillow": PLATFORMS,
+    "budoux": {"macos-arm64": "macosx_11_0_arm64"},
     "brotli": {**PLATFORMS, "macos-x64": None, "linux-x64": "manylinux_2_17_x86_64", "windows-arm64": None},
 }
 

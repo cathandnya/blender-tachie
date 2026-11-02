@@ -58,7 +58,7 @@ Video Sequencer に並べます。YMM4 の「動く立ち絵」「シンプル�
 
 ### 口パク・字幕
 - 口パクはあいうえお式（音素の母音）と音量式
-- 字幕のフォント・大きさ・折り返し幅（px。フォントで文字の幅を測って折り返し、英単語は途中で切らない。0 なら画面の幅の 80%）・色・縁取り・行間・位置（X / Y。YMM4 と同じく画面の中央からの px で、Y は字幕の下端）・背景の帯（色・余白・角の丸み）は
+- 字幕のフォント・大きさ・折り返し幅（px。フォントで文字の幅を測り、文節の切れ目で折り返す（BudouX）。英単語は途中で切らない。0 なら画面の幅の 80%）・色・縁取り・行間・位置（X / Y。YMM4 と同じく画面の中央からの px で、Y は字幕の下端）・背景の帯（色・余白・角の丸み）は
   キャラクターごと。変えると置いてある字幕にすぐ反映する
 - 字幕の上にキャラ名（縁取りの色の帯）を出す、字幕の出し方（フェードイン・下から浮き上がる・小さい大きさから拡大。組み合わせられる。
   浮き上がる量は画面の高さに対する割合、拡大は字幕の下端の中央が中心）
@@ -294,7 +294,7 @@ GitHub のリリースから、使う OS 用の zip（`blender_tachie-<version>-
 uv run python scripts/build_addon.py --install
 ```
 
-OS ごとの zip（`dist/blender_tachie-<version>-<OS>.zip`、その OS 用の Pillow と Brotli を同梱）を作り、`--install` ではこの OS 用を Blender に入れます。
+OS ごとの zip（`dist/blender_tachie-<version>-<OS>.zip`、その OS 用の Pillow と Brotli、字幕を文節で折り返す BudouX を同梱）を作り、`--install` ではこの OS 用を Blender に入れます。
 他の OS では、その OS 用の zip を Blender の「Install from Disk」で入れてください。
 Blender は環境変数 `BLENDER`、PATH の `blender`、標準のインストール先の順で探します。
 

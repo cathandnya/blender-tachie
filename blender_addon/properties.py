@@ -16,7 +16,7 @@ from bpy.props import (
 
 from . import prefetch
 from .tachie_studio.fonts import default_font, glyph_width
-from .tachie_studio.subtitle import WRAP_MARGIN, breaks, char_width, wrap
+from .tachie_studio.subtitle import WRAP_MARGIN, breaks, char_width, phrase_splitter, wrap
 from .tachie_studio.pipeline.config import VOICE_DEFAULTS
 from .tachie_studio.voicevox import DEFAULT_URL
 
@@ -326,9 +326,9 @@ def subtitle_metrics(strip, ch) -> tuple[float, float, Callable[[str], float]]:
 
 
 def wrap_subtitle(strip, ch, text: str) -> tuple[float, str]:
-    """(文字の大きさ, 字幕のテキスト（\\n の書き方）をその字幕の折り返し幅で改行したもの)。"""
+    """(文字の大きさ, 字幕のテキスト（\\n の書き方）をその字幕の折り返し幅で、文節の切れ目で改行したもの)。"""
     size, width, measure = subtitle_metrics(strip, ch)
-    return size, wrap(breaks(text), width, width_of=measure)
+    return size, wrap(breaks(text), width, width_of=measure, phrases=phrase_splitter())
 
 
 def text_offset(strip) -> tuple[float, float]:

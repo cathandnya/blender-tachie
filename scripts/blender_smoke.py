@@ -904,6 +904,12 @@ ops.refresh_motion_now(scene)
 assert abs(zsub.blend_alpha - 0.5) < 1e-6 and not any(x.get("tachie_fade_keyed") for x in sed.strips)
 zsub.blend_alpha = 1.0
 
+# 字幕は文節の切れ目で折り返す（同梱した BudouX が Blender の中で読める）
+from bl_ext.user_default.blender_tachie.tachie_studio.subtitle import phrase_splitter, wrap  # noqa: E402
+
+assert phrase_splitter() is not None, "BudouX が読めない"
+assert wrap("今日は良い天気です。", 6, phrases=phrase_splitter()) == "今日は良い\n天気です。"
+
 # BGM のダッキング: セリフの音声が鳴っている間だけ BGM の音量を下げる
 import wave  # noqa: E402
 

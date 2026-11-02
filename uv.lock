@@ -8,6 +8,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },
+    { name = "budoux" },
     { name = "pillow" },
 ]
 
@@ -19,6 +20,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "brotli", specifier = ">=1.2.0" },
+    { name = "budoux", specifier = ">=0.10.2" },
     { name = "pillow" },
 ]
 
@@ -51,6 +53,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/73/3183c9e41ca755713bdf2cc1d0810df742c09484e2e1ddd693bee53877c1/brotli-1.2.0-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:d2d085ded05278d1c7f65560aae97b3160aeb2ea2c0b3e26204856beccb60888", size = 1488164, upload-time = "2025-11-05T18:38:53.079Z" },
     { url = "https://files.pythonhosted.org/packages/64/6a/0c78d8f3a582859236482fd9fa86a65a60328a00983006bcf6d83b7b2253/brotli-1.2.0-cp314-cp314-win32.whl", hash = "sha256:832c115a020e463c2f67664560449a7bea26b0c1fdd690352addad6d0a08714d", size = 339280, upload-time = "2025-11-05T18:38:54.02Z" },
     { url = "https://files.pythonhosted.org/packages/f5/10/56978295c14794b2c12007b07f3e41ba26acda9257457d7085b0bb3bb90c/brotli-1.2.0-cp314-cp314-win_amd64.whl", hash = "sha256:e7c0af964e0b4e3412a0ebf341ea26ec767fa0b4cf81abb5e897c9338b5ad6a3", size = 375639, upload-time = "2025-11-05T18:38:55.67Z" },
+]
+
+[[package]]
+name = "budoux"
+version = "0.10.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/c9/7fd747c6d0a80df424ffd18c4d4c6198e25d3638d14c14e4c355d4ed6cae/budoux-0.10.2.tar.gz", hash = "sha256:d1cdc6a4c41b68ea3de5f388ca534c9d48071ba9c49dd24cbfb6202ddf83d5de", size = 126200, upload-time = "2026-10-29T01:15:20.811Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/71/37327ee5455a94a9e5bc179f75c0acc24ba00ba657f8096ef102b96d09c0/budoux-0.10.2-py3-none-any.whl", hash = "sha256:e9476a446198a09c5370a349ccbbdec8209bac407e93448c21d6e65861e181a7", size = 121143, upload-time = "2026-10-29T01:15:19.49Z" },
 ]
 
 [[package]]

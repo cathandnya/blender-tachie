@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import unicodedata
 from typing import Callable
 
@@ -34,55 +35,80 @@ def _in_word(ch: str) -> bool:
     return ch.isascii() and (ch.isalnum() or ch in "'_")
 
 
+def _can_start(p: str, i: int) -> bool:
+    """`p[i]` から行を始めてよいか（禁則と、英単語の途中でないこと）。"""
+    return not (p[i] in _NO_LINE_START or p[i - 1] in _NO_LINE_END or (_in_word(p[i - 1]) and _in_word(p[i])))
+
+
+def _wrap_paragraph(p: str, max_width: float, width_of: Callable[[str], float],
+                    phrases: Callable[[str], list[str]] | None) -> list[str]:
+    if sum(map(width_of, p)) <= max_width:  # 1 行に入る（文節に分けずに済ませる）
+        return [p]
+    n = len(p)
+    ok = [False] + [_can_start(p, i) for i in range(1, n)]
+    if phrases is None:
+        preferred = ok
+    else:  # 文節の切れ目（と空白のあと）を優先する
+        preferred = [False] * n
+        at = 0
+        for phrase in phrases(p):
+            at += len(phrase)
+            if at < n:
+                preferred[at] = ok[at]
+        for i in range(1, n):
+            preferred[i] = preferred[i] or (ok[i] and p[i - 1] == " ")
+    lines: list[str] = []
+    start, width, i = 0, 0.0, 0
+    while i < n:
+        w = width_of(p[i])
+        if i > start and width + w > max_width and p[i] not in _NO_LINE_START:  # 句読点などはぶら下げる
+            # 前に戻って、優先する切れ目 → 切ってよい所 → 今の文字の前、の順に探す（前の行が空白だけになる所は除く）
+            def last(marks: list[bool]) -> int | None:
+                return next((j for j in range(i, start, -1) if marks[j] and p[start:j].strip(" ")), None)
+
+            cut = last(preferred) or last(ok) or i
+            lines.append(p[start:cut].rstrip(" "))
+            start = cut
+            while start < n and p[start] == " ":  # 折り返した行の頭の空白は捨てる
+                start += 1
+            i = max(i, start)
+            width = sum(map(width_of, p[start:i]))
+            continue
+        width += w
+        i += 1
+    lines.append(p[start:])
+    return lines
+
+
 def wrap(text: str, max_width: float, max_lines: int | None = None,
-         width_of: Callable[[str], float] = char_width) -> str:
+         width_of: Callable[[str], float] = char_width, phrases: Callable[[str], list[str]] | None = None) -> str:
     """1 行の幅が `max_width` を超えないように改行する。幅は `width_of`（1 文字の幅。既定は全角 = 1、半角 = 0.5 の
     文字数。フォントで測った px を渡せば `max_width` も px）。
 
-    禁則: 句読点・閉じ括弧などは行末にぶら下げ、開き括弧が行末に来るときは次の行へ送る。英単語は途中で切らずに
-    単語ごと次の行へ送る（1 行に入らない長さの単語だけは途中で切る）。空白で改行するときは空白を行末・行頭に残さない。
-    元の改行はそのまま残す。`max_lines` を超える分は最後の行に詰める。
+    `phrases`（文を文節に分ける関数、`phrase_splitter`）を渡すと、文節の切れ目で折り返す（1 行に入らない文節は
+    文字の間で切る）。禁則: 句読点・閉じ括弧などは行末にぶら下げ、開き括弧が行末に来るときは次の行へ送る。
+    英単語は途中で切らない（1 行に入らない長さの単語だけは途中で切る）。空白で改行するときは空白を行末・行頭に
+    残さない。元の改行はそのまま残す。`max_lines` を超える分は最後の行に詰める。
     """
     if max_width <= 0:
         return text
     out: list[str] = []
     for paragraph in text.splitlines() or [""]:
-        line, width = "", 0.0
-        word = None  # line の中で今の英単語が始まる位置（単語の途中でなければ None）
-        wrapped = False  # 折り返した直後（行頭の空白を捨てる。元の段落の頭の空白は残す）
-        for ch in paragraph:
-            w = width_of(ch)
-            if line and width + w > max_width and ch not in _NO_LINE_START:
-                if ch == " ":  # 空白で改行するなら空白は捨てる
-                    out.append(line.rstrip(" "))
-                    line, width, word, wrapped = "", 0.0, None, True
-                    continue
-                # 単語ごと次の行へ。直前の開き括弧も一緒に送る（行頭から始まる長い単語は途中で切る）
-                start = word - 1 if word and line[word - 1] in _NO_LINE_END else word
-                if _in_word(ch) and start is not None and line[:start].strip(" "):
-                    carry = line[start:]
-                    out.append(line[:start].rstrip(" "))
-                    word -= start
-                else:
-                    carry = line[-1] if line[-1] in _NO_LINE_END and len(line) > 1 else ""
-                    out.append(line[:-1] if carry else line.rstrip(" "))
-                    word = None
-                line, width = carry, sum(map(width_of, carry))
-                wrapped = True
-            if wrapped and not line and ch == " ":
-                continue
-            wrapped = False
-            if _in_word(ch):
-                if word is None:
-                    word = len(line)
-            else:
-                word = None
-            line += ch
-            width += w
-        out.append(line)
+        out += _wrap_paragraph(paragraph, max_width, width_of, phrases)
     if max_lines is not None and len(out) > max_lines > 0:
         out = out[:max_lines - 1] + ["".join(out[max_lines - 1:])]
     return "\n".join(out)
+
+
+@functools.cache
+def phrase_splitter() -> Callable[[str], list[str]] | None:
+    """日本語の文を文節に分ける関数（BudouX）。BudouX が入っていなければ None（文字の間で折り返す）。
+    結果は覚える（入っていないときも、字幕を折り返すたびに import を試し直さない）。"""
+    try:
+        import budoux
+    except ImportError:
+        return None
+    return functools.lru_cache(maxsize=1024)(budoux.load_default_japanese_parser().parse)  # 同じセリフを分け直さない
 
 
 WRAP_MARGIN = 0.1  # 折り返し幅を決めていないときの、画面の左右の余白（幅に対する割合）

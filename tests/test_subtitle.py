@@ -18,6 +18,20 @@ def test_wrap_keeps_words():
     assert wrap("  Supercalifragilistic", 3) == "  Supe\nrcalif\nragili\nstic"  # 空行を作らない
 
 
+def test_wrap_phrases():
+    """文節に分ける関数を渡すと、文節の切れ目で折り返す。1 行に入らない文節は文字の間で切る。"""
+    from tachie_studio.subtitle import phrase_splitter
+
+    split = phrase_splitter()
+    assert split is not None
+    assert split("今日は良い天気です。") == ["今日は", "良い", "天気です。"]
+    assert wrap("今日は良い天気です。", 6, phrases=split) == "今日は良い\n天気です。"
+    assert wrap("今日は良い天気です。", 6) == "今日は良い天\n気です。"  # 渡さなければ文字の間
+    assert wrap("今日はBlenderで動く立ち絵の動画を作ります。", 9, phrases=split) == \
+        "今日はBlenderで\n動く立ち絵の動画を\n作ります。"
+    assert wrap("あいうえおかきくけこさしすせそ", 5, phrases=lambda t: [t]) == "あいうえお\nかきくけこ\nさしすせそ"
+
+
 def test_wrap_measured_width():
     """幅を測る関数を渡すと、max_width はその単位（px）になる。"""
     widths = {"W": 30.0, "i": 10.0}
