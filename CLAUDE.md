@@ -228,6 +228,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   キャラの字幕の位置は割合で持ち（`subtitle_x`: 画面の中央からの幅に対する割合、`subtitle_y`: 下端の画面の下からの高さに
   対する割合。TOML の subtitle の `x` / `y`）、パネルは YMM4 と同じく画面の中央からの px（`subtitle_pos_x` / `subtitle_pos_y`、
   get / set で割合と換算。Y は下端で下が正）で見せる。YMM4 のキャラの字幕の X / Y もこれに写す。
+  縦長用の配置（#41）: キャラの `use_portrait` を入れると、シーンの解像度が縦長（`is_portrait`）のときは `LAYOUT_PROPS`
+  （立ち位置・上下の位置・高さ・文字サイズ・字幕の X / Y・折り返し幅）の代わりに `portrait_<名前>`（同じ定義を写したもの）を使う。
+  読むところは `properties.lay(ch, 名前)`、パネル・書き込み（YMM4 の読み込み）は `layout_prop` で今使う方の名前を取る。
+  入れたときに今の値を写す（`tachie_portrait_ready`）。TOML は `[キャラ.portrait]`（`operators.PORTRAIT_KEYS`、
+  `CharacterConfig.portrait`。書いてあれば use_portrait を入れる）。解像度を変えると自動反映（動きの署名に解像度）が置き直し、
+  高さは `appearance_key` で立ち絵を作り直す。CLI は縦長用の配置を使わない。
   自動反映（`motion_signature` に含める）で `refresh_motion` が字幕の改行を入れ直し、ずらす量と文字の大きさ・折り返し幅を
   キャラ名にも写して location を当て直す。再生成・YMM4 の読み込み・テンプレートは `operators.set_line_text_pose` で両方に持たせる。
   `subtitle_clashes` で時間も位置も重なる字幕を知らせる。

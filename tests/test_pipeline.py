@@ -442,6 +442,21 @@ def test_expression_for_slots(tmp_path: Path):
     assert again["a"].expression == cfg2.expression and again["a"].expressions == cfg2.expressions
 
 
+def test_portrait_roundtrip(tmp_path: Path):
+    """縦長用の配置（[キャラ.portrait]、#41）を読み書きする。無ければ空。"""
+    import tomllib
+
+    cfg = parse_characters({"a": {"folder": "x", "speaker": 1,
+                                  "portrait": {"position": 0.1, "height": 0.6, "size": 48, "wrap_width": 900}}},
+                           tmp_path, use_material=False)["a"]
+    assert cfg.portrait == {"position": 0.1, "height": 0.6, "size": 48.0, "wrap_width": 900.0}
+    text = dump_characters({"a": cfg})
+    assert '[a.portrait]' in text
+    assert parse_characters(tomllib.loads(text), tmp_path, use_material=False)["a"].portrait == cfg.portrait
+    plain = parse_characters({"a": {"folder": "x", "speaker": 1}}, tmp_path, use_material=False)["a"]
+    assert plain.portrait == {} and "[a.portrait]" not in dump_characters({"a": plain})
+
+
 def test_material_presets_fill(tmp_path: Path, char_dir: Path):
     (char_dir / "preset.ini").write_text("[眠い]\n目=目.png\n\n[困り]\n目=目.png\n", encoding="utf-8")
     (char_dir / "tachie.toml").write_text('speaker = 2\n\n[expressions."困り"]\n"口" = "口"\n', encoding="utf-8")

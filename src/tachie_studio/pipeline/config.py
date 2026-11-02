@@ -57,7 +57,7 @@ from ..tachie import Expression, load_presets
 
 MOUTH_MODES = ("auto", "vowel", "volume")
 MATERIAL_CONFIG = "tachie.toml"  # 素材フォルダに置く初期値
-_NESTED = ("parts", "layout", "subtitle", "audio")  # キー単位で重ねるテーブル
+_NESTED = ("parts", "layout", "subtitle", "audio", "portrait")  # キー単位で重ねるテーブル
 
 # 設定のキー → audio_query のキー
 VOICE_KEYS = {
@@ -107,6 +107,8 @@ class CharacterConfig:
     subtitle: dict[str, Any] = field(default_factory=dict)  # font / size / color / outline_color / outline_width / line_spacing / y
     audio: dict[str, float] = field(default_factory=dict)  # volume / pan / fade_in / fade_out / after
     engine: str = ""  # 声のエンジンの URL（VOICEVOX 互換）。空なら既定のエンジン
+    # 縦長の動画で使う配置（position / position_y / height / size / x / y / wrap_width）。アドオンだけが使う（#41）
+    portrait: dict[str, float] = field(default_factory=dict)
 
     def apply_voice(self, query: dict[str, Any]) -> dict[str, Any]:
         query.update(self.voice)
@@ -276,6 +278,7 @@ def parse_characters(data: dict[str, Any], base: Path, use_material: bool = True
             subtitle=dict(table.get("subtitle", {})),
             audio={str(k): float(v) for k, v in table.get("audio", {}).items()},
             engine=str(table.get("engine", "")),
+            portrait={str(k): float(v) for k, v in table.get("portrait", {}).items()},
         )
     return characters
 
@@ -328,7 +331,7 @@ def _dump_table(c: CharacterConfig, key: str | None, folder: str | None, name: s
     # 立ち絵の無いキャラはパーツが空なら書かない（補う素材が無い）
     sections = [] if c.folder is None and not any(parts.values()) else [("parts", parts)]
     sections += [(f"expressions.{_toml_key(p)}", v) for p, v in c.expressions.items()]
-    sections += [("layout", c.layout), ("subtitle", c.subtitle), ("audio", c.audio)]
+    sections += [("layout", c.layout), ("subtitle", c.subtitle), ("audio", c.audio), ("portrait", c.portrait)]
     for section, values in sections:
         if values or section.startswith("expressions."):
             out.append("")

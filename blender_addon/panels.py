@@ -4,7 +4,7 @@ from .tachie_studio.subtitle import breaks
 
 from .operators import (STILL_SETTINGS, active_selected, item_strip, line_layout_of, line_sound, line_strips,
                         line_subtitle, load_material, output_dir, prefs, selected_targets, seq_scene)
-from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, still_flip
+from .properties import AUDIO_PROPS, BAKED_AUDIO, LINE_LAYOUTS, PART_PROPS, VOICE_PROPS, is_portrait, layout_prop, still_flip
 
 
 class _Panel:
@@ -712,6 +712,15 @@ class TACHIE_PT_script(_Panel, bpy.types.Panel):
             draw_ymmp_pending(layout, s)
 
 
+def draw_portrait(layout, ch) -> None:
+    """縦長用の配置（#41）を使うか と、今の解像度で変える方。配置と字幕のパネルの頭に出す。"""
+    row = layout.row(align=True)
+    row.prop(ch, "use_portrait")
+    if ch.use_portrait:
+        portrait = is_portrait(ch.id_data)
+        row.label(text="縦長用を変えています" if portrait else "横長用を変えています")
+
+
 class TACHIE_PT_placement(_WithTachie, _Panel, bpy.types.Panel):
     bl_label = "配置"
     bl_parent_id = "TACHIE_PT_character"
@@ -720,12 +729,13 @@ class TACHIE_PT_placement(_WithTachie, _Panel, bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         ch = seq_scene(context).tachie.character()
+        draw_portrait(layout, ch)
         col = layout.column(align=True)
         row = col.row(align=True)
-        row.prop(ch, "position_x")
+        row.prop(ch, layout_prop(ch, "position_x"), text="立ち位置")
         row.prop(ch, "flip_x", text="", icon="MOD_MIRROR")
-        col.prop(ch, "position_y")
-        col.prop(ch, "height")
+        col.prop(ch, layout_prop(ch, "position_y"), text="上下の位置")
+        col.prop(ch, layout_prop(ch, "height"), text="高さ")
         draw_char_lanes(self.layout, seq_scene(context), ch.name)
 
 
@@ -744,9 +754,10 @@ class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
         name = (unicodedata.normalize("NFC", os.path.splitext(os.path.basename(ch.font_path))[0])
                 if ch.font_path else "（Blender の既定）")
         row.operator("tachie.pick_font", text=name, icon="FILE_FONT")
+        draw_portrait(layout, ch)
         col = layout.column(align=True)
-        col.prop(ch, "font_size")
-        col.prop(ch, "subtitle_width")
+        col.prop(ch, layout_prop(ch, "font_size"), text="文字サイズ")
+        col.prop(ch, layout_prop(ch, "subtitle_width"), text="折り返し幅")
         col = layout.column(align=True)
         col.prop(ch, "subtitle_pos_x")
         col.prop(ch, "subtitle_pos_y")

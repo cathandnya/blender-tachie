@@ -15,7 +15,7 @@ from pathlib import Path
 
 import bpy
 
-from .properties import apply_placement, apply_text_size, name_height, place_text, text_offset, text_style
+from .properties import apply_placement, apply_text_size, lay, name_height, place_text, text_offset, text_style
 from .tachie_studio.ymmp import jump_keys
 
 # 声が出ているとみなす音量（lipsync.mouth の無音のしきい値と同じ）
@@ -239,7 +239,7 @@ def _edge(strip, ch, effect: str, frame_from: int, frame_to: int, appearing: boo
         base = strip.transform.offset_x
         # 近い方の画面の端から入る（出る）。左右反転したストリップは offset の向きも逆
         visual = -base if strip.use_flip_x else base
-        side = 1 if (visual > 0 or (visual == 0 and ch.position_x >= 0)) else -1
+        side = 1 if (visual > 0 or (visual == 0 and lay(ch, "position_x") >= 0)) else -1
         off_visual = visual + side * width
         off = -off_visual if strip.use_flip_x else off_visual
         _key(strip, "transform.offset_x", frame_from, off if hidden_first else base)
@@ -317,6 +317,9 @@ def refresh_motion(scene, lines_dir: Path) -> int:
         text = t.get("tachie_placed_text", t.get("tachie_text", ""))
         if t.get("tachie_role") == "name":
             (t["tachie_sub_x"], t["tachie_sub_y"]), (t["tachie_sub_size"], t["tachie_sub_width"]) = offsets[t["tachie_id"]]
+            size = lay(ch, "font_size") * 0.6  # キャラ名の大きさ（apply_name と同じ。縦長用の配置で変わる）
+            if abs(t.font_size - size) > 1e-6:
+                t.font_size = size
         else:
             apply_text_size(t, ch, text)  # セリフごとの文字の大きさ・折り返し幅
         place_text(t, ch, text)
@@ -452,8 +455,8 @@ def sync_text_offsets(scene) -> int:
         if s.get("tachie_role") == "name":
             base = name_height(ch, s.get("tachie_placed_text", s.get("tachie_text", "")), s)
         else:
-            base = ch.subtitle_y
-        offset = (s.location[0] - 0.5 - ch.subtitle_x, s.location[1] - base)
+            base = lay(ch, "subtitle_y")
+        offset = (s.location[0] - 0.5 - lay(ch, "subtitle_x"), s.location[1] - base)
         offsets[s["tachie_id"]] = tuple(round(max(-1.0, min(1.0, v)), 5) for v in offset)
     for t in _movable_texts(sed):
         if t["tachie_id"] in offsets and t.get("tachie_character") in characters:
@@ -473,6 +476,8 @@ def motion_signature(scene) -> str:
                  c.enter_effect, c.exit_effect, round(c.effect_seconds, 3), round(c.subtitle_fade, 3),
                  round(c.subtitle_rise, 4), round(c.subtitle_grow, 4), round(c.subtitle_motion_seconds, 3)) for c in chars]
     active = any(s[1] or s[2] or s[4] != "NONE" or s[5] != "NONE" or _appears(*s[7:]) for s in settings)
+    # 縦長用の配置を使うキャラがいれば、解像度を変えたとき（下の resolution）に置き直す
+    active = active or any(c.use_portrait for c in chars)
     items = []
     for s in sed.strips:
         if s.type == "SOUND" and s.get("tachie_id"):  # 立ち絵が跳ねる・揺れる区間

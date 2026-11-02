@@ -18,7 +18,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import channels as lanes
 from . import timeline
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, TachieStripName, apply_placement, apply_subtitle, apply_text_size, clear_text_input, place_text, still_flip, system_fonts, text_offset, text_style
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, TachieStripName, apply_placement, apply_subtitle, apply_text_size, lay, clear_text_input, place_text, still_flip, system_fonts, text_offset, text_style
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, still_frames
@@ -318,7 +318,34 @@ def config_of(ch) -> CharacterConfig:
                   "motion_seconds": round(ch.subtitle_motion_seconds, 3), **({"wrap_width": ch.subtitle_width} if ch.subtitle_width else {})},
         audio=character_audio(ch),
         engine="" if ch.engine == "DEFAULT" else engine_url(bpy.context, ch),
+        portrait=portrait_table(ch),
     )
+
+
+# 縦長用の配置（#41）の TOML のキー（[キャラ.portrait]）。書くのは use_portrait のときだけ
+PORTRAIT_KEYS = {"position_x": "position", "position_y": "position_y", "height": "height", "font_size": "size",
+                 "subtitle_x": "x", "subtitle_y": "y", "subtitle_width": "wrap_width"}
+
+
+def portrait_table(ch) -> dict:
+    if not ch.use_portrait:
+        return {}
+    return {key: round(getattr(ch, f"portrait_{prop}"), 6) for prop, key in PORTRAIT_KEYS.items()}
+
+
+def apply_portrait(ch, table: dict) -> None:
+    """[キャラ.portrait] を縦長用の配置にする（無い項目は横長用の値）。無ければ縦長用の配置を使わない。"""
+    if not table:
+        if ch.use_portrait:  # update で置いてあるものを置き直すので、変わるときだけ書く
+            ch.use_portrait = False
+        return
+    for prop, key in PORTRAIT_KEYS.items():
+        # ID プロパティに直接書くので、パネルで編集できる範囲に収める
+        rna = ch.bl_rna.properties[f"portrait_{prop}"]
+        value = float(table.get(key, getattr(ch, prop)))
+        ch[f"portrait_{prop}"] = min(rna.hard_max, max(rna.hard_min, value))
+    ch["tachie_portrait_ready"] = True
+    ch.use_portrait = True
 
 
 # 立ち絵の動きの設定（キャラ設定の layout に書く。既定値のものは書かない）
@@ -417,6 +444,7 @@ def apply_config(ch, config: CharacterConfig) -> None:
             setattr(ch, prop, sub[key])
     ch.subtitle_width = sub.get("wrap_width", 0.0)  # 書き出しで 0（既定値）は省くので、書いていなければ 0
     ch.subtitle_x = sub.get("x", 0.0)
+    apply_portrait(ch, config.portrait)
 
 
 # ---- キャラクター追加の初期値 ----
@@ -477,7 +505,9 @@ def voice_defaults_config(ch) -> CharacterConfig:
     """立ち絵の無いキャラの初期値として保存する設定（立ち絵に関係する位置・大きさ・表情・動きは持たない）。"""
     config = config_of(ch)
     layout = {k: v for k, v in config.layout.items() if k == "lines"}
-    return dataclasses.replace(config, folder=None, expression=Expression(), expressions={}, layout=layout)
+    portrait = {k: v for k, v in config.portrait.items() if k not in ("position", "position_y", "height")}
+    return dataclasses.replace(config, folder=None, expression=Expression(), expressions={}, layout=layout,
+                               portrait=portrait)
 
 
 def material_key(folder: str) -> str:
@@ -528,7 +558,7 @@ def character_cache(context, ch, *layers: dict | None) -> FrameCache:
     """キャラクターの基本の表情にパーツの差分（立ち絵・セリフ・表情ストリップのパーツ、`tachie_look`）を順に重ねた表情の、
     今の大きさでの「目 × 口」合成キャッシュ。"""
     character = load_material(ch.folder)
-    scale = seq_scene(context).render.resolution_y * ch.height / character.height
+    scale = seq_scene(context).render.resolution_y * lay(ch, "height") / character.height
     expression = config_of(ch).expression
     for parts in layers:
         if parts:
@@ -1331,7 +1361,7 @@ def appearance_key(ch) -> list:
     表情プリセットは含めない（選んだときにアイテムへパーツを写すので、後で編集しても置いたものは変わらない）。
     口パクの方式（`ch.mouth`）はセリフの動きの json に入っているので含めない。
     """
-    return [ch.folder, round(ch.height, 6),
+    return [ch.folder, round(lay(ch, "height"), 6),
             [getattr(ch, prop) for props in PART_PROPS.values() for prop in props] + [ch.psd_layers]]
 
 
@@ -1618,8 +1648,8 @@ def item_still_pose(ch, x: float, y: float, zoom: float, width: float, height: f
     """YMM4 の立ち絵アイテムの X / Y（画面中央からのピクセル、下が正）と Zoom（素材の高さに対する %）を、キャラの立ち位置・
     高さとの差（立ち絵ごとの位置・大きさ）にする（.ymmp の読み込みでキャラに写すのと同じ換算）。"""
     material = load_material(ch.folder)
-    pose = {"tachie_pos_x": x / width - ch.position_x, "tachie_pos_y": -y / height - ch.position_y,
-            "tachie_scale": material.height * zoom / 100 / height / ch.height}
+    pose = {"tachie_pos_x": x / width - lay(ch, "position_x"), "tachie_pos_y": -y / height - lay(ch, "position_y"),
+            "tachie_scale": material.height * zoom / 100 / height / lay(ch, "height")}
     for key, (_, lo, hi, default, _) in POSE_PROPS.items():
         # 丸めの誤差（キャラの設定と同じ位置・大きさ）は既定値に。範囲（パネルで編集できる値）に収める
         value = default if abs(pose[key] - default) < 1e-3 else pose[key]

@@ -264,6 +264,24 @@ def still_flip(strip, ch) -> bool:
     return ch.flip_x if flip is None else bool(flip)
 
 
+# 縦長の動画（9:16 など）で使う配置（#41）。キャラの use_portrait を入れると、シーンの解像度が縦長のときは
+# portrait_<名前> を使う。読むときは `lay`、パネル・書き込みは `layout_prop` で今使う方の名前を取る
+LAYOUT_PROPS = ("position_x", "position_y", "height", "font_size", "subtitle_x", "subtitle_y", "subtitle_width")
+
+
+def is_portrait(scene) -> bool:
+    return scene.render.resolution_y > scene.render.resolution_x
+
+
+def layout_prop(ch, name: str) -> str:
+    """配置の値 `name`（`LAYOUT_PROPS`）のうち、今のシーンの解像度で使う方のプロパティの名前。"""
+    return f"portrait_{name}" if ch.use_portrait and is_portrait(ch.id_data) else name
+
+
+def lay(ch, name: str):
+    return getattr(ch, layout_prop(ch, name))
+
+
 def apply_placement(strip, ch) -> None:
     """立ち位置・左右反転（`still_flip`）と、立ち絵ごとの位置・大きさ（tachie_pos_x / tachie_pos_y / tachie_scale）を設定する。
 
@@ -273,9 +291,9 @@ def apply_placement(strip, ch) -> None:
     render = ch.id_data.render
     flip = still_flip(strip, ch)
     strip.use_flip_x = flip
-    offset = (ch.position_x + strip.get("tachie_pos_x", 0.0)) * render.resolution_x
+    offset = (lay(ch, "position_x") + strip.get("tachie_pos_x", 0.0)) * render.resolution_x
     strip.transform.offset_x = -offset if flip else offset
-    strip.transform.offset_y = (ch.position_y + strip.get("tachie_pos_y", 0.0)) * render.resolution_y
+    strip.transform.offset_y = (lay(ch, "position_y") + strip.get("tachie_pos_y", 0.0)) * render.resolution_y
     scale = strip.get("tachie_scale", 1.0)
     strip.transform.scale_x = strip.transform.scale_y = scale
     strip.transform.origin = (0.5, 0.0)
@@ -299,8 +317,8 @@ def text_style(strip) -> tuple[float, float]:
 def subtitle_metrics(strip, ch) -> tuple[float, float]:
     """字幕の (文字の大きさ, 1 行の全角文字数の目安)。セリフごとの値 > キャラの設定。折り返し幅が 0 なら画面の幅の 80%。"""
     size, width = text_style(strip) if strip is not None else (0.0, 0.0)
-    size = size or ch.font_size
-    width = width or ch.subtitle_width
+    size = size or lay(ch, "font_size")
+    width = width or lay(ch, "subtitle_width")
     return size, width / size if width else chars_per_line(ch.id_data.render.resolution_x, size)
 
 
@@ -322,7 +340,7 @@ def name_height(ch, text: str, strip=None) -> float:
     margin = ch.box_margin if ch.subtitle_box else 0.0
     # 1 行目の高さ + 2 行目からの行の間隔
     text_height = size * (1.25 + (lines - 1) * LINE_PITCH * ch.line_spacing)
-    return ch.subtitle_y + (text_height + ch.font_size * 0.6 * 0.3) / render.resolution_y + margin * 2
+    return lay(ch, "subtitle_y") + (text_height + lay(ch, "font_size") * 0.6 * 0.3) / render.resolution_y + margin * 2
 
 
 def place_text(strip, ch, text: str) -> None:
@@ -332,9 +350,9 @@ def place_text(strip, ch, text: str) -> None:
     """
     dx, dy = text_offset(strip)
     if strip.get("tachie_role") == "name":
-        strip.location = (0.5 + ch.subtitle_x + dx, min(0.98, name_height(ch, text, strip) + dy))
+        strip.location = (0.5 + lay(ch, "subtitle_x") + dx, min(0.98, name_height(ch, text, strip) + dy))
     else:
-        strip.location = (0.5 + ch.subtitle_x + dx, ch.subtitle_y + dy)
+        strip.location = (0.5 + lay(ch, "subtitle_x") + dx, lay(ch, "subtitle_y") + dy)
     strip["tachie_placed_loc"] = list(strip.location)
 
 
@@ -371,7 +389,7 @@ def apply_name(strip, ch, text: str) -> None:
     """キャラ名のストリップ: 字幕の上（行数から高さを見積もる）に、キャラの縁取りの色の帯で名前を出す。"""
     strip["tachie_role"] = "name"
     strip.text = ch.name
-    strip.font_size = ch.font_size * 0.6
+    strip.font_size = lay(ch, "font_size") * 0.6
     font = load_font(ch.font_path)
     if font is not None:
         strip.font = font
@@ -418,6 +436,16 @@ def _update_ducking(self, context):
 
     with prefetch.paused():
         refresh_ducking(self.id_data)
+
+
+def _update_use_portrait(self, context):
+    """縦長用の配置を入れたら、今の（横長用の）配置を写して始める。置いてあるものにもすぐ反映する。"""
+    if self.use_portrait and not self.get("tachie_portrait_ready"):
+        for name in LAYOUT_PROPS:
+            self[f"portrait_{name}"] = getattr(self, name)
+        self["tachie_portrait_ready"] = True
+    _update_placement(self, context)
+    _update_subtitle(self, context)
 
 
 def _update_placement(self, context):
@@ -536,12 +564,13 @@ class TachieCharacter(bpy.types.PropertyGroup):
     subtitle_y: FloatProperty(name="字幕の縦の位置（割合）", default=0.12, min=0.0, max=1.0, subtype="FACTOR",
                               update=_update_subtitle, description="字幕の下端の高さ（画面の下からの、画面の高さに対する割合）")
     subtitle_pos_x: FloatProperty(name="X", subtype="PIXEL", step=1000, precision=1,
-                                  get=lambda self: self.subtitle_x * self.id_data.render.resolution_x,
-                                  set=lambda self, v: setattr(self, "subtitle_x", v / max(1, self.id_data.render.resolution_x)),
+                                  get=lambda self: lay(self, "subtitle_x") * self.id_data.render.resolution_x,
+                                  set=lambda self, v: setattr(self, layout_prop(self, "subtitle_x"),
+                                                              v / max(1, self.id_data.render.resolution_x)),
                                   description="字幕の横の位置（px、YMM4 と同じく画面の中央が 0、右が正）")
     subtitle_pos_y: FloatProperty(name="Y", subtype="PIXEL", step=1000, precision=1,
-                                  get=lambda self: (0.5 - self.subtitle_y) * self.id_data.render.resolution_y,
-                                  set=lambda self, v: setattr(self, "subtitle_y",
+                                  get=lambda self: (0.5 - lay(self, "subtitle_y")) * self.id_data.render.resolution_y,
+                                  set=lambda self, v: setattr(self, layout_prop(self, "subtitle_y"),
                                                               0.5 - v / max(1, self.id_data.render.resolution_y)),
                                   description="字幕の下端の縦の位置（px、YMM4 と同じく画面の中央が 0、下が正。"
                                               "1080px の画面なら 540 が画面の下端）")
@@ -549,11 +578,23 @@ class TachieCharacter(bpy.types.PropertyGroup):
                                   step=1000, precision=0, update=_update_subtitle,  # 矢印で 10px ずつ
                                   description="字幕を折り返す幅（px、YMM4 の折り返し幅）。0 なら画面の幅の 80%")
 
+    use_portrait: BoolProperty(name="縦長用の配置", default=False, update=_update_use_portrait,
+                               description="解像度が縦長（9:16 など）のときは、縦長用の立ち絵の位置・高さと字幕の大きさ・"
+                                           "位置・折り返し幅を使う。入れると今の配置を写して始める。"
+                                           "縦長用の値は解像度が縦長のときにパネルで変えられる")
+
     def expression(self):
         if 0 <= self.active_expression < len(self.expressions):
             return self.expressions[self.active_expression]
         return None
 
+
+# 縦長用の配置（横長用と同じ範囲・反映のしかた）
+for _name in LAYOUT_PROPS:
+    _deferred = TachieCharacter.__annotations__[_name]
+    TachieCharacter.__annotations__[f"portrait_{_name}"] = _deferred.function(**{
+        **_deferred.keywords, "description": "縦長用: " + _deferred.keywords.get("description", _deferred.keywords["name"])})
+del _name, _deferred
 
 _add_part_props(TachieCharacter, "空なら素材の既定のパーツ", "空なら使わない")
 for _prop, (_key, _label, _min, _max, _desc) in VOICE_PROPS.items():
@@ -637,8 +678,8 @@ def _line_pos_get(axis: int):
             return 0.0
         render = self.id_data.render
         if axis == 0:
-            return (ch.subtitle_x + float(subtitle["tachie_sub_x"])) * render.resolution_x
-        return (0.5 - ch.subtitle_y - float(subtitle["tachie_sub_y"])) * render.resolution_y
+            return (lay(ch, "subtitle_x") + float(subtitle["tachie_sub_x"])) * render.resolution_x
+        return (0.5 - lay(ch, "subtitle_y") - float(subtitle["tachie_sub_y"])) * render.resolution_y
     return get
 
 
@@ -649,9 +690,9 @@ def _line_pos_set(axis: int):
             return
         render = self.id_data.render
         if axis == 0:
-            key, offset = "tachie_sub_x", value / max(1, render.resolution_x) - ch.subtitle_x
+            key, offset = "tachie_sub_x", value / max(1, render.resolution_x) - lay(ch, "subtitle_x")
         else:
-            key, offset = "tachie_sub_y", 0.5 - value / max(1, render.resolution_y) - ch.subtitle_y
+            key, offset = "tachie_sub_y", 0.5 - value / max(1, render.resolution_y) - lay(ch, "subtitle_y")
         offset = max(-1.0, min(1.0, offset))
         for t in texts:  # キャラ名にも写して、すぐ置き直す
             t[key] = offset

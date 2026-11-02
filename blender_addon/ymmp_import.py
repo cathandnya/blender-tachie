@@ -27,7 +27,7 @@ from .operators import (
 )
 from .tachie_studio.lipsync.timing import frame_count
 from .tachie_studio.voicevox.client import VoicevoxError
-from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, system_fonts
+from .properties import PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, lay, layout_prop, system_fonts
 from .tachie_studio.tachie.loader import CATEGORIES, _is_placeholder
 from .ymmp_media import KIND_LABELS, MediaFinder, MediaPlacer, media_root
 from .tachie_studio.ymmp import (Project, difference, find_by_tail, load_project, other_items_summary,
@@ -283,8 +283,9 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
     ch.audio_pan = c.pan / 100
     ch.audio_after = c.after
     ch.audio_fade_in, ch.audio_fade_out = c.fade_in, c.fade_out
+    # 配置（位置・大きさ）は今の解像度で使う方（縦長用の配置を使う縦長のシーンなら縦長用）に書く
     if c.font_size:
-        ch.font_size = c.font_size
+        setattr(ch, layout_prop(ch, "font_size"), c.font_size)
     font = find_font(c.font)
     if font:
         ch.font_path = font
@@ -296,8 +297,8 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
     if not c.outline:
         ch.outline_width = 0.0
     # YMM4 の字幕の Y は画面中央からの下向きのピクセル（下揃え）。このアドオンは画面の下からの割合
-    ch.subtitle_y = min(1.0, max(0.0, 0.5 - c.subtitle_y / project.height))
-    ch.subtitle_x = min(1.0, max(-1.0, c.subtitle_x / project.width))
+    setattr(ch, layout_prop(ch, "subtitle_y"), min(1.0, max(0.0, 0.5 - c.subtitle_y / project.height)))
+    setattr(ch, layout_prop(ch, "subtitle_x"), min(1.0, max(-1.0, c.subtitle_x / project.width)))
     base = tachie.parts if tachie is not None and any(tachie.parts.values()) else c.parts  # 立ち絵アイテムの見た目を優先
     if base:
         _set_parts(ch, _valid_parts(ch, base, problems))
@@ -305,9 +306,9 @@ def _setup_character(context, ch, c, project: Project, tachie, problems: list[st
         # YMM4 の立ち絵の X / Y は画面中央からの画像の中心（ピクセル、下向き正）、Zoom は素材の大きさに対する %
         render = seq_scene(context).render
         material = load_material(ch.folder)
-        ch.height = min(3.0, max(0.1, material.height * tachie.zoom / 100 / project.height))
-        ch.position_x = max(-1.0, min(1.0, tachie.x / project.width))
-        ch.position_y = max(-1.0, min(1.0, -tachie.y / project.height))
+        setattr(ch, layout_prop(ch, "height"), min(3.0, max(0.1, material.height * tachie.zoom / 100 / project.height)))
+        setattr(ch, layout_prop(ch, "position_x"), max(-1.0, min(1.0, tachie.x / project.width)))
+        setattr(ch, layout_prop(ch, "position_y"), max(-1.0, min(1.0, -tachie.y / project.height)))
         # 左右反転は立ち絵アイテムに付く（キャラクターの TachieIsInverted は新しいアイテムの初期値）。位置は
         # 画面上の位置のまま（反転したキャラの offset の符号は apply_placement が直す）
         ch.flip_x = tachie.inverted
@@ -655,10 +656,10 @@ class TACHIE_OT_import_ymmp(bpy.types.Operator, ImportHelper):
                 if v.subtitle == "Custom":
                     # ボイスごとの字幕の位置（YMM4 の X / Y は画面中央からの右向き・下向きのピクセル、Y は字幕の下端）を、
                     # キャラの字幕の位置からずらす量（画面に対する割合）にする
-                    offset = (v.sub_x / project.width - job.ch.subtitle_x,
-                              0.5 - v.sub_y / project.height - job.ch.subtitle_y)
+                    offset = (v.sub_x / project.width - lay(job.ch, "subtitle_x"),
+                              0.5 - v.sub_y / project.height - lay(job.ch, "subtitle_y"))
                     # 文字の大きさはキャラと違うときだけセリフごとの値にする
-                    size = v.sub_size if v.sub_size and abs(v.sub_size - job.ch.font_size) > 1e-3 else 0.0
+                    size = v.sub_size if v.sub_size and abs(v.sub_size - lay(job.ch, "font_size")) > 1e-3 else 0.0
                     set_line_text_pose(strips, job.ch, v.text, offset, (size, 0.0))
                 clashes = subtitle_clashes(sed, strips)
                 if clashes:

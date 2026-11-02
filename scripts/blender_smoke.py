@@ -855,6 +855,36 @@ assert tuple(msub.location) == tuple(msub["tachie_placed_loc"])  # location は�
 metan.subtitle_rise, metan.subtitle_grow = 0.0, 1.0
 assert not keyed(msub, "transform.offset_y") and not keyed(msub, "transform.scale_x")
 assert msub.transform.offset_x == msub.transform.offset_y == 0.0 and msub.transform.scale_x == 1.0 and keyed(msub, "blend_alpha")
+# 縦長用の配置（#41）: 入れると今の配置を写し、解像度が縦長のときは縦長用を使う
+from bl_ext.user_default.blender_tachie.properties import lay, layout_prop  # noqa: E402
+
+r = scene.render
+landscape = (r.resolution_x, r.resolution_y)
+mimg = still("四国めたん")
+metan.use_portrait = True
+assert metan.portrait_height == metan.height and metan.portrait_font_size == metan.font_size
+assert layout_prop(metan, "height") == "height"  # 横長のあいだは横長用
+key_landscape = ops.appearance_key(metan)
+metan.portrait_position_x, metan.portrait_font_size, metan.portrait_subtitle_y = 0.1, 40.0, 0.3
+assert abs(mimg.transform.offset_x - metan.position_x * r.resolution_x * (-1 if mimg.use_flip_x else 1)
+           - mimg.get("tachie_pos_x", 0.0) * r.resolution_x * (-1 if mimg.use_flip_x else 1)) < 1e-3
+r.resolution_x, r.resolution_y = landscape[1], landscape[0]
+metan.portrait_height = metan.height * 0.7  # 縦長用だけ変わる
+assert lay(metan, "height") == metan.portrait_height and ops.appearance_key(metan) != key_landscape
+ops.refresh_motion_now(scene)
+offset = (0.1 + mimg.get("tachie_pos_x", 0.0)) * r.resolution_x
+assert abs(abs(mimg.transform.offset_x) - abs(offset)) < 1e-3, (mimg.transform.offset_x, offset)
+assert abs(msub.location[1] - 0.3 - msub.get("tachie_sub_y", 0.0)) < 1e-4 and msub.font_size == 40
+assert abs(metan.subtitle_pos_y - (0.5 - 0.3) * r.resolution_y) < 1e-3  # パネルの px も縦長用
+toml_portrait = out / "portrait.toml"
+run(bpy.ops.tachie.export_characters, filepath=str(toml_portrait))
+assert '[\"四国めたん\".portrait]' in toml_portrait.read_text(encoding="utf-8")
+metan.use_portrait = False
+ops.refresh_motion_now(scene)
+assert msub.font_size == metan.font_size  # 縦長でも横長用に戻る
+r.resolution_x, r.resolution_y = landscape
+ops.refresh_motion_now(scene)
+assert abs(msub.location[1] - metan.subtitle_y - msub.get("tachie_sub_y", 0.0)) < 1e-4
 s.headline_text, s.headline_seconds = "第 1 章 Blender で動画", 2.0
 scene.frame_current = 1
 run(bpy.ops.tachie.add_headline)
