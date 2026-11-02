@@ -30,7 +30,8 @@ from .motion import _channelbag, _key
 from .operators import _overlaps, _path_for_blend, _sound_error, output_dir, seq_scene
 from .tachie_studio.media_effects import outline_image
 from .tachie_studio.subtitle import char_width
-from .properties import LINE_PITCH, default_font, load_font
+from .properties import LINE_PITCH, load_font
+from .tachie_studio.fonts import default_font
 from .tachie_studio.ymmp import Media, Project, find_by_tail, front_layer
 
 # YMM4 の音量（50 が等倍）

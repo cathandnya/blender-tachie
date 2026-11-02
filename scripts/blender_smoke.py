@@ -8,6 +8,7 @@ TOML への書き出しを確かめ、途中のフレームを PNG に書き出�
 import json
 import os
 import sys
+import types
 from pathlib import Path
 
 import addon_utils
@@ -1852,6 +1853,38 @@ try:
 except RuntimeError as e:
     print("期待どおり失敗:", str(e).strip().splitlines()[-1])
 assert len(lines()) == 5
+# 途中のセリフで止まったら置いた分は残し、CANCELLED を返す（#37）
+half = bpy.data.texts.new("途中で止まる台本")
+half.from_string("ずんだもん: いち\nずんだもん: に")
+s.script = half
+render_clip = ops.render_clip
+calls = []
+frames_before = (scene.frame_current, scene.frame_end)
+
+
+def failing_clip(*args, **kwargs):
+    calls.append(1)
+    if len(calls) == 2:
+        raise ops.VoicevoxError("テストで止める")
+    return render_clip(*args, **kwargs)
+
+
+ops.render_clip = failing_clip
+reports = []
+# bpy.ops はエラーを報告すると例外にして戻り値を返さないので、execute を直接呼ぶ
+fake = types.SimpleNamespace(use_text=True, bl_label="台本を読み込む", report=lambda kind, msg: reports.append(msg))
+try:
+    result = ops.TACHIE_OT_import_script.execute(fake, bpy.context)
+finally:
+    ops.render_clip = render_clip
+assert any("2 個目のセリフ" in m for m in reports), reports
+assert result == {"CANCELLED"}, result
+assert len(lines()) == 6
+half_id = next(i for i, v in lines().items() if v[2][0]["tachie_text"] == "いち")
+for st in [st for st in sed.strips if st.get("tachie_id") == half_id]:
+    sed.strips.remove(st)
+assert len(lines()) == 5
+scene.frame_current, scene.frame_end = frames_before
 # fps・解像度は置く前に決める。出力タブで変えたら知らせて元に戻せる（置いてあるものは変換しない）
 from bl_ext.user_default.blender_tachie import timeline as timeline_mod  # noqa: E402
 

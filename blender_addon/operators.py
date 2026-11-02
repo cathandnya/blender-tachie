@@ -4508,9 +4508,15 @@ class TACHIE_OT_import_script(bpy.types.Operator, ImportHelper):
                 refresh_faces(context)
         if placed and settings.advance:
             scene.frame_current = cursor
-        if placed == len(lines):
-            self.report({"INFO"}, f"{placed} 個のセリフを並べました")
-        return {"FINISHED"} if placed else {"CANCELLED"}
+        if placed < len(lines):
+            # 途中で止まったら置いた分は残すが、全部は置けなかったので CANCELLED（bpy.ops はエラーの報告で例外に
+            # なるので、スクリプトからは例外で分かる）。CANCELLED では undo の段が積まれないので、置いた分を元に
+            # 戻せるように自分で積む
+            if placed:
+                bpy.ops.ed.undo_push(message=self.bl_label)
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"{placed} 個のセリフを並べました")
+        return {"FINISHED"}
 
 
 def _expressions(self, context):

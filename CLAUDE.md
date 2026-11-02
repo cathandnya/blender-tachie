@@ -109,6 +109,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
   `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
 - `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
+- `src/tachie_studio/fonts.py` — 字幕・見出しの既定のフォント（`default_font`）。同じ形のファイルが並ぶときは名前のウェイトで
+  Bold → Medium → Regular → 無し・DemiLight → 極端なもの（Black・Thin・Light など）の順。Linux の Noto Sans CJK と
+  Noto Sans JP は 1 つの組で比べる（Noto Sans CJK は名前順だと Black になった、#36）。
 - `blender_addon/` — Blender 拡張機能 `blender_tachie`（`blender_manifest.toml`、`properties.py`、`operators.py`、`panels.py`）。
   `blender_addon/tachie_studio` は `../src/tachie_studio` へのシンボリックリンクで、ビルド時に実体をコピーする。拡張内からは `from .tachie_studio... import`。
   シーケンサーのサイドバー「立ち絵」タブ。キャラクター設定は `Scene.tachie.characters`（.blend に保存、TOML で読み書き）。
@@ -147,7 +150,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `tachie_text` も `\n` の書き方のまま持ち（本当の改行はパネルの欄で見えない）、字幕（`properties.apply_subtitle` の
   `subtitle.breaks`）・字幕ファイル・読み上げ（`operators._Client.audio_query`）のときに改行にする。YMM4 のセリフの改行も
   `place_strips` が `\n` にそろえる（`subtitle.mark_breaks`）。
-  台本の読み込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。
+  台本の読み込み（テキストエディタの Text かファイル）は再生位置から順に、`line_gap` 秒あけて並べる。途中のセリフで
+  止まったら置いた分は残して CANCELLED（undo の段は自分で積む。#37）。
   再生成のテキストは、パネルで編集する選択中のストリップから取る（他のストリップは古いまま）。表情（パーツ）は引き継ぐ
   （`regenerate` に `preset` を渡したときだけ、そのプリセットのパーツを写す）。
   「選択中」は選ばれているアクティブなストリップだけ（`operators.active_selected`。Blender は選択を外してもアクティブな

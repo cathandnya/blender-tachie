@@ -1,4 +1,3 @@
-import glob
 import re
 import unicodedata
 
@@ -15,6 +14,7 @@ from bpy.props import (
 )
 
 from . import prefetch
+from .tachie_studio.fonts import default_font
 from .tachie_studio.subtitle import breaks, chars_per_line, wrap
 from .tachie_studio.pipeline.config import VOICE_DEFAULTS
 from .tachie_studio.voicevox import DEFAULT_URL
@@ -96,17 +96,6 @@ def system_fonts() -> list[tuple[str, str]]:
                     name = unicodedata.normalize("NFC", os.path.splitext(f)[0])
                     found.setdefault(name, os.path.join(root, f))
     return sorted(found.items())
-
-
-def default_font() -> str:
-    for pattern in ("/System/Library/Fonts/*W6.ttc", "/System/Library/Fonts/*W3.ttc",
-                    "C:/Windows/Fonts/meiryo*.ttc", "C:/Windows/Fonts/YuGoth*.ttc",
-                    "/usr/share/fonts/**/NotoSansCJK*.tt[cf]", "/usr/share/fonts/**/NotoSansJP*.[ot]tf"):
-        for path in sorted(glob.glob(pattern, recursive=True)):
-            name = unicodedata.normalize("NFC", path)
-            if any(key in name.lower() for key in ("ヒラギノ角ゴシック", "meiryo", "yugoth", "notosanscjk", "notosansjp")):
-                return path
-    return ""
 
 
 class TachieSoundEffect(bpy.types.PropertyGroup):
