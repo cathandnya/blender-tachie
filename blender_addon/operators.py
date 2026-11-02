@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import os
+import posixpath
 import sys
 import shutil
 import tempfile
@@ -156,6 +157,10 @@ def _migrate_on_load(*_args):
             except ERRORS as e:
                 print("表情のパーツを書けません:", e)
             timeline.remember(scene)  # 前の版の .blend は置いたときの fps を覚えていない（セリフの動きの fps）
+            if scene.sequence_editor is not None:  # 開いた直後なので、プリフェッチはまだこのファイルを描いていない
+                for strip in scene.sequence_editor.strips_all:
+                    if strip.type == "IMAGE" and strip.get("tachie_still"):
+                        rebase_still_paths(strip)
     _applied_signatures.clear()  # 前に開いていた .blend の記録（同じ名前のシーンでも別のもの）
     # ファイルを開くと Blender は登録してあったタイマー（persistent でないもの）を消すので、待っていた自動の反映の印も戻す
     # （戻さないと「待っている」のまま残り、以後の自動の反映が止まる）
@@ -1216,17 +1221,43 @@ def face_segments(sed, ch, start: int, end: int) -> list[tuple[int, int, dict]]:
 
 
 def _still_elements(paths: list) -> tuple[Path, list[str]]:
-    """立ち絵のコマの画像（合成キャッシュの中）→ (ストリップのフォルダ, コマごとのファイル名)。1 つの表情だけならその表情の
-    フォルダ、いくつもの表情にまたがればキャッシュのフォルダからの相対パス（Blender のストリップはファイル名に
-    サブフォルダを書ける。前はコマごとのハードリンクを 1 つのフォルダに並べていて、長い立ち絵ほど時間がかかった）。"""
+    """立ち絵のコマの画像（合成キャッシュの中）→ (ストリップのフォルダ, コマごとのファイル名)。フォルダは最初のコマの表情の
+    フォルダで、ほかの表情のコマは `../<表情>/e1_l0.png`（Blender のストリップはファイル名にフォルダを書ける。前はコマごとの
+    ハードリンクを 1 つのフォルダに並べていて、長い立ち絵ほど時間がかかった）。
+    最初のコマのファイル名にはフォルダを書かない: Blender はパスを書き換えるとき（初めての保存で相対パスにする・
+    絶対パスにするなど）にフォルダと最初のコマのファイル名をつないで分け直すので、`<表情>/e1_l0.png` だとフォルダに
+    表情のフォルダが入り、ほかのコマが見つからなくなった（そのあとプリフェッチが見つからない画像を描いて落ちた）。"""
     names = [str(p) for p in paths]  # 長い立ち絵は数万コマあるので pathlib を通さずに文字列で切る
-    parents = {os.path.dirname(n) for n in names}
-    if len(parents) == 1:
-        root = next(iter(parents))
-    else:
-        root = os.path.commonpath(list(parents))
-    cut = len(os.path.join(root, ""))
-    return Path(root), [n[cut:].replace(os.sep, "/") for n in names]
+    root = os.path.dirname(names[0])
+    prefixes: dict[str, str] = {}
+    files = []
+    for n in names:
+        parent, base = os.path.split(n)
+        if parent not in prefixes:
+            prefixes[parent] = "" if parent == root else os.path.relpath(parent, root).replace(os.sep, "/") + "/"
+        files.append(prefixes[parent] + base)
+    return Path(root), files
+
+
+def rebase_still_paths(strip) -> bool:
+    """前の版の書き方（directory が素材のフォルダ、コマが `<表情>/e1_l0.png`）の立ち絵を、最初のコマの表情のフォルダからの
+    書き方（`_still_elements`）に直す。画像は同じものを指す。保存のときに Blender がフォルダを壊す前に（開いたときに）直す。
+    キャラが無い・素材の無い立ち絵も直す。直したら True。"""
+    first = strip.elements[0].filename if len(strip.elements) else ""
+    if "/" not in first:
+        return False
+    sub = posixpath.dirname(first)
+    prefixes: dict[str, str] = {}
+    names = []
+    for e in strip.elements:
+        parent, base = posixpath.split(e.filename)
+        if parent not in prefixes:
+            prefixes[parent] = "" if parent == sub else posixpath.relpath(parent or ".", sub) + "/"
+        names.append(prefixes[parent] + base)
+    strip.directory = os.path.join(strip.directory, *sub.split("/"), "")
+    for e, name in zip(strip.elements, names):
+        e.filename = name
+    return True
 
 
 def _same_dir(a: str, b: Path) -> bool:
@@ -1263,10 +1294,7 @@ def _image_strip(sed, ch, name: str, start: int, paths: list, channel: int | Non
         sed.strips.remove(reuse)
     strip = sed.strips.new_image(name=name, filepath=str(directory / files[0]),
                                  channel=channel or ch.channel, frame_start=start, fit_method="ORIGINAL")
-    if not _same_dir(strip.directory, directory):  # ファイル名にサブフォルダを含む
-        strip.directory = os.path.join(str(directory), "")
-        strip.elements[0].filename = files[0]
-    for f in files[1:]:
+    for f in files[1:]:  # 最初のコマはフォルダを含まないので、new_image のフォルダがそのまま `directory`
         strip.elements.append(f)
     strip.right_handle = start + frames
     strip.blend_type = "ALPHA_OVER"

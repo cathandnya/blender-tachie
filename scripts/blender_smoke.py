@@ -517,7 +517,8 @@ assert sed.active_strip["tachie_id"] == zunda_id and sound(zunda_id).sound.filep
 zs = still("ずんだもん")
 # 位置・長さが同じ立ち絵は消さずにコマのファイル名だけ書き換える（合成キャッシュの画像を直接指す）
 assert zs.as_pointer() == zs_ptr and zs.channel == zs_channel
-assert any("/" in e.filename for e in zs.elements) and "faces" not in zs.directory
+assert any(e.filename.startswith("../") for e in zs.elements) and "faces" not in zs.directory
+assert "/" not in zs.elements[0].filename  # 最初のコマにフォルダを書くと、Blender がパスを書き換えるときにフォルダを壊す
 assert not ops._needs_apply(scene)  # 操作の中で反映済み（自動の反映でもう一度描き直さない）
 assert expression_dir(zs, l) == komari and expression_dir(zs, r - 1) == komari
 assert expression_dir(zs, l - 1) == base and expression_dir(zs, r) == base
@@ -680,10 +681,11 @@ zs = still("ずんだもん")
 old_cache = Path(prefs.output_dir) / "cache"
 src = Path(bpy.path.abspath(zs.directory))
 names = {e.filename for e in zs.elements}
-for name in names:
-    (old_cache / name).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src / name, old_cache / name)
-zs.directory = str(old_cache) + os.sep
+for name in names:  # 表情のフォルダごと写す（ほかの表情のコマは ../<表情>/）
+    dst = old_cache / src.name / name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src / name, dst)
+zs.directory = str(old_cache / src.name) + os.sep
 assert not ops.missing_images(zs)
 run(bpy.ops.tachie.apply_faces)
 assert ops._under(Path(bpy.path.abspath(still("ずんだもん").directory)), ops.shared_cache_dir()) is not None
@@ -2141,6 +2143,24 @@ sed.use_prefetch, scene[prefetch_mod.SAVED_PAUSED] = False, True
 bpy.ops.wm.save_as_mainfile(filepath=str(out / "smoke.blend"))
 sed.use_prefetch = True
 del scene[prefetch_mod.SAVED_PAUSED]
+# 初めての保存などで Blender がパスを相対・絶対に書き換えても、立ち絵のコマが見つかる（最初のコマにフォルダを書かない）
+stills = [x for x in sed.strips if x.type == "IMAGE" and x.get("tachie_still")]
+assert stills and any(e.filename.startswith("../") for x in stills for e in x.elements)
+# 前の版の書き方（directory が素材のフォルダ、コマが <表情>/e1_l0.png）は、開いたとき（load_post）に直す
+old_still = next(x for x in stills if any(e.filename.startswith("../") for e in x.elements))
+new_dir, new_names = old_still.directory, [e.filename for e in old_still.elements]
+expr = Path(new_dir).name
+old_still.directory = str(Path(new_dir).parent) + os.sep
+for e in old_still.elements:
+    e.filename = e.filename[3:] if e.filename.startswith("../") else f"{expr}/{e.filename}"
+assert not ops.missing_images(old_still)
+ops._migrate_on_load()
+assert os.path.normpath(old_still.directory) == os.path.normpath(new_dir)
+assert [e.filename for e in old_still.elements] == new_names
+bpy.ops.file.make_paths_relative()
+assert all(x.directory.startswith("//") and not ops.missing_images(x) for x in stills), [x.directory for x in stills]
+bpy.ops.file.make_paths_absolute()
+assert not any(ops.missing_images(x) for x in stills)
 
 # キャラクター追加の初期値: アドオン設定 → 素材の tachie.toml → 素材の preset.ini（YMM4 の表情プリセット）→ 固定値
 from bl_ext.user_default.blender_tachie import operators as ops  # noqa: E402
