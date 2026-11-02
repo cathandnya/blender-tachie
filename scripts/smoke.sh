@@ -21,9 +21,11 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 rm -rf "$TACHIE_CACHE_DIR"
 "$BLENDER" -b -noaudio "$OUT/smoke.blend" --python-exit-code 1 --python-expr '
 import bpy
-from bl_ext.user_default.blender_tachie import operators as ops
+from bl_ext.user_default.blender_tachie import operators as ops, prefetch
 stills = [s for sc in bpy.data.scenes if sc.sequence_editor for s in sc.sequence_editor.strips
           if s.type == "IMAGE" and s.get("tachie_still")]
 assert stills and not any(ops.missing_images(s) for s in stills), "開いたときに立ち絵を作り直していない"
+sc = bpy.context.scene
+assert sc.sequence_editor.use_prefetch and prefetch.SAVED_PAUSED not in sc, "止めたまま保存したプリフェッチを戻していない"
 print("OK (background reopen)")
 ' </dev/null

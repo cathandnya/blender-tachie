@@ -220,19 +220,28 @@ def _move_temp_output(filepath, *_args):
         copied.add(rel)
         return True
 
+    targets = []
+    for scene in bpy.data.scenes:
+        sed = scene.sequence_editor
+        for s in sed.strips_all if sed else ():
+            if s.type == "SOUND" and s.sound and (rel := _under(Path(bpy.path.abspath(s.sound.filepath)), temp)):
+                targets.append((s, rel))
+            elif s.type == "IMAGE" and (rel := _under(Path(bpy.path.abspath(s.directory)), temp)):
+                targets.append((s, rel))
+    if not targets:  # 移すものが無ければプリフェッチを止めない（止めると止めたまま保存される）
+        return
     moved = 0
     with prefetch.paused():  # 裏で描いている途中のストリップの参照を書き換えると落ちることがある
-        for scene in bpy.data.scenes:
-            sed = scene.sequence_editor
-            for s in sed.strips_all if sed else ():
-                if s.type == "SOUND" and s.sound and (rel := _under(Path(bpy.path.abspath(s.sound.filepath)), temp)):
-                    if copy(rel) and copy(rel.with_suffix(".json")):  # 音声と口の動き
-                        s.sound.filepath = str(dest / rel)  # 相対パスにするかは Blender の保存の設定に任せる
-                        moved += 1
-                elif s.type == "IMAGE" and (rel := _under(Path(bpy.path.abspath(s.directory)), temp)):
-                    if copy(rel):
-                        s.directory = str(dest / rel) + os.sep
-                        moved += 1
+        for s, rel in targets:
+            if s.type == "SOUND":
+                if copy(rel) and copy(rel.with_suffix(".json")):  # 音声と口の動き
+                    s.sound.filepath = str(dest / rel)  # 相対パスにするかは Blender の保存の設定に任せる
+                    moved += 1
+            elif copy(rel):
+                s.directory = str(dest / rel) + os.sep
+                moved += 1
+    # 止めたプリフェッチは少し待ってから戻すので、この保存には止めたまま入る。開いたときに戻す印を付ける
+    prefetch.mark_pending_for_save()
     if moved:
         print(f"一時フォルダのセリフ・立ち絵 {moved} 本を {dest} にコピーしました")
 

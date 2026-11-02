@@ -2128,7 +2128,13 @@ for i, (l, r) in enumerate(spans):
     scene.frame_set(frame)
     scene.render.filepath = str(out / f"frame{i + 1}_{frame:04d}.png")
     bpy.ops.render.render(write_still=True)
+# プリフェッチを止めている間に保存したファイル（新規保存で一時フォルダのセリフを移したとき）は、開いたら戻す（smoke.sh で確かめる）
+from bl_ext.user_default.blender_tachie import prefetch as prefetch_mod  # noqa: E402
+
+sed.use_prefetch, scene[prefetch_mod.SAVED_PAUSED] = False, True
 bpy.ops.wm.save_as_mainfile(filepath=str(out / "smoke.blend"))
+sed.use_prefetch = True
+del scene[prefetch_mod.SAVED_PAUSED]
 
 # キャラクター追加の初期値: アドオン設定 → 素材の tachie.toml → 素材の preset.ini（YMM4 の表情プリセット）→ 固定値
 from bl_ext.user_default.blender_tachie import operators as ops  # noqa: E402

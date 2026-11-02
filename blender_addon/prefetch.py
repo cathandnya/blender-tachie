@@ -21,6 +21,8 @@ _pending: set[str] = set()  # 書き換えたあと、少し待ってからプ�
 _wanted: set[str] = set()  # アドオンが止めたことのあるシーン（undo / redo で止めた状態に戻ったら戻す）
 _resume_at = 0.0  # 最後に書き換え終えてから RESUME_SECONDS 後（time.monotonic）
 RESUME_SECONDS = 0.5
+# 止めている間に保存したシーンの印（.blend に use_prefetch = False のまま入るので、開いたときに戻す）
+SAVED_PAUSED = "tachie_prefetch_paused"
 
 
 @contextmanager
@@ -90,6 +92,17 @@ def _restore(names) -> None:
         sed = scene.sequence_editor if scene is not None else None
         if sed is not None:
             sed.use_prefetch = True
+        if scene is not None and SAVED_PAUSED in scene:
+            del scene[SAVED_PAUSED]
+
+
+def mark_pending_for_save() -> None:
+    """保存の前（save_pre）に止めて、まだ戻していないシーンに印を付ける。保存する .blend には止めたまま入るので、
+    開いたとき（`_on_load_post`）に戻す。戻したときに印も消す（`_restore`）。"""
+    for name in _pending:
+        scene = bpy.data.scenes.get(name)
+        if scene is not None:
+            scene[SAVED_PAUSED] = True
 
 
 def _schedule() -> None:
@@ -142,15 +155,22 @@ def _on_load_pre(*_args):
     _wanted.clear()
 
 
+@persistent
+def _on_load_post(*_args):
+    _restore([scene.name for scene in bpy.data.scenes if SAVED_PAUSED in scene])
+
+
 def register() -> None:
     bpy.app.handlers.save_pre.append(_on_save_pre)
     bpy.app.handlers.load_pre.append(_on_load_pre)
+    bpy.app.handlers.load_post.append(_on_load_post)
     bpy.app.handlers.undo_post.append(_on_undo)
     bpy.app.handlers.redo_post.append(_on_undo)
 
 
 def unregister() -> None:
     for handlers, func in ((bpy.app.handlers.save_pre, _on_save_pre), (bpy.app.handlers.load_pre, _on_load_pre),
+                           (bpy.app.handlers.load_post, _on_load_post),
                            (bpy.app.handlers.undo_post, _on_undo), (bpy.app.handlers.redo_post, _on_undo)):
         if func in handlers:
             handlers.remove(func)
