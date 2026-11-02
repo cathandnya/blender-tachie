@@ -841,6 +841,20 @@ assert sed.channels[lane("name", "四国めたん")].name == "四国めたん �
 assert msub.channel == lane("subtitle", "四国めたん") < name_strip.channel
 assert name_strip.location[1] > msub.location[1] and name_strip.left_handle == msub.left_handle
 assert [v for _, v in keyed(msub, "blend_alpha")] == [0.0, 1.0] and keyed(name_strip, "blend_alpha")
+# 下から浮き上がる・拡大（#39）は transform に打つ。変えるとすぐ作り直し、0 / 1 に戻すとキーを消す
+metan.subtitle_rise, metan.subtitle_grow, metan.subtitle_motion_seconds = 0.05, 0.8, 0.5
+rise = keyed(msub, "transform.offset_y")
+res_x, res_y = scene.render.resolution_x, scene.render.resolution_y
+start_y = (msub.location[1] - 0.5) * res_y * 0.2 - 0.05 * res_y  # 下端が動かないように縮めた分 + 浮き上がる量
+assert [(f - msub.left_handle, round(v)) for f, v in rise] == [(0, round(start_y)), (15, 0)], rise
+assert [round(v, 4) for _, v in keyed(msub, "transform.scale_x")] == [0.8, 1.0] and keyed(name_strip, "transform.scale_y")
+if abs(msub.location[0] - 0.5) > 1e-6:
+    assert keyed(msub, "transform.offset_x")
+assert tuple(msub.transform.origin) == (0.5, 0.5)
+assert tuple(msub.location) == tuple(msub["tachie_placed_loc"])  # location は動かさない（#32 の判定）
+metan.subtitle_rise, metan.subtitle_grow = 0.0, 1.0
+assert not keyed(msub, "transform.offset_y") and not keyed(msub, "transform.scale_x")
+assert msub.transform.offset_x == msub.transform.offset_y == 0.0 and msub.transform.scale_x == 1.0 and keyed(msub, "blend_alpha")
 s.headline_text, s.headline_seconds = "第 1 章 Blender で動画", 2.0
 scene.frame_current = 1
 run(bpy.ops.tachie.add_headline)

@@ -255,7 +255,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
   キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。
   字幕の装飾（#12）: テキストストリップの box（`use_box` / `box_color` / `box_margin` / `box_roundness`）。キャラ名は
-  セリフの 4 本目のストリップ（`tachie_role = "name"`、キャラ名のレーン、字幕の行数から高さを見積もる `properties.apply_name`）。字幕のフェードインは `motion.refresh_motion` が blend_alpha に打つ。
+  セリフの 4 本目のストリップ（`tachie_role = "name"`、キャラ名のレーン、字幕の行数から高さを見積もる `properties.apply_name`）。字幕のフェードインは `motion.refresh_motion` が blend_alpha に打つ。下から浮き上がる（`subtitle_rise`、画面の高さに対する割合）・
+  拡大（`subtitle_grow` = 始めの大きさ、長さは `subtitle_motion_seconds`。TOML の subtitle の rise / grow / motion_seconds。#39）は
+  transform の offset / scale に打つ（location は #32 の判定に使うので触らない）。TEXT ストリップの拡大の中心は origin = (0.5, 0.5) の
+  ときだけ画面の中央で（ほかの値では字幕の大きさで変わる）、下端の中央が動かないように縮めた分を offset でずらす。
+  浮き上がる・拡大のキーを打った字幕は `tachie_rise_keyed`（外したときに 1 回だけ offset / scale を戻す。フェードだけの字幕の変形は触らない）。
   見出しテロップは `tachie_headline` のテキストストリップ（`headline_channel`、スタイルはシーンの `headline_*` で即反映）。
   1 文字ずつ出す字幕は作っていない
   （テキストストリップに文字を段階的に出す仕組みが無い）。

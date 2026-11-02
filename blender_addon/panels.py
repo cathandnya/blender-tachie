@@ -764,6 +764,11 @@ class TACHIE_PT_subtitle(_Panel, bpy.types.Panel):
         sub.prop(ch, "box_roundness")
         layout.prop(ch, "show_name")
         layout.prop(ch, "subtitle_fade")
+        layout.prop(ch, "subtitle_rise")
+        layout.prop(ch, "subtitle_grow")
+        row = layout.row()
+        row.active = ch.subtitle_rise > 0 or ch.subtitle_grow < 1
+        row.prop(ch, "subtitle_motion_seconds")
         layout.prop(ch, "font_path", text="")
 
 

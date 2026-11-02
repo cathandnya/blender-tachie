@@ -155,13 +155,30 @@ def base_opacity(strip) -> float:
     return float(strip.get("tachie_opacity", 1.0))
 
 
-def _constant(scene, strip, attr: str) -> None:
-    """ストリップの `attr` の F カーブのキーを、なめらかにつながず切り替える（喋る時のみ表示）。"""
+def _appears(fade: float, rise: float, grow: float, seconds: float) -> bool:
+    """字幕の出し方があるか（`refresh_motion` の appear_of の値）。"""
+    return fade > 0 or rise > 0 or grow < 1
+
+
+def _interpolate(scene, owner, attr: str, interpolation: str, easing: str | None = None) -> None:
+    """`owner`（ストリップか transform）の `attr` の F カーブのキーの補間を変える。"""
     bag = _channelbag(scene)
-    path = strip.path_from_id(attr)  # 名前の " や \ もエスケープされた F カーブのパス
+    path = owner.path_from_id(attr)  # 名前の " や \ もエスケープされた F カーブのパス
     fcurve = next((f for f in bag.fcurves if f.data_path == path), None) if bag else None
     for kp in fcurve.keyframe_points if fcurve else ():
-        kp.interpolation = "CONSTANT"
+        kp.interpolation = interpolation
+        if easing:
+            kp.easing = easing
+
+
+def _ease_out(scene, owner, attr: str) -> None:
+    """速く動き始めてゆっくり止まるようにする（字幕の浮き上がる・拡大）。"""
+    _interpolate(scene, owner, attr, "CUBIC", "EASE_OUT")
+
+
+def _constant(scene, strip, attr: str) -> None:
+    """なめらかにつながず切り替える（喋る時のみ表示）。"""
+    _interpolate(scene, strip, attr, "CONSTANT")
 
 
 def _visibility(scene, strip, fps: float, talks: list[tuple[str, int, int]]) -> set[str]:
@@ -270,14 +287,17 @@ def refresh_motion(scene, lines_dir: Path) -> int:
     sync_edges(scene)
     characters = {c.name: c for c in scene.tachie.characters}
     # 消した（名前を変えた）キャラの立ち絵に付けた動きも消す（作り直さないので残ったままになる）
-    # 字幕とキャラ名のうち、フェードするものと前にフェードを打ったもの（tachie_fade_keyed）だけを触る
-    # （フェードしない字幕に手で付けた不透明度やキーフレームは消さない）
-    def fade_of(t) -> float:
+    # 字幕とキャラ名のうち、出し方（フェード・浮き上がる・拡大）のあるものと前にキーを打ったもの（tachie_fade_keyed）
+    # だけを触る（出し方の無い字幕に手で付けた不透明度・変形やキーフレームは消さない）
+    def appear_of(t) -> tuple[float, float, float, float]:
+        """(フェードの秒数, 浮き上がる量, 始めの大きさ, 動く秒数)"""
         ch = characters.get(t.get("tachie_character"))
-        return ch.subtitle_fade if ch is not None else 0.0
+        if ch is None:
+            return 0.0, 0.0, 1.0, 0.0
+        return ch.subtitle_fade, ch.subtitle_rise, ch.subtitle_grow, ch.subtitle_motion_seconds
 
     texts = [s for s in sed.strips if s.type == "TEXT" and s.get("tachie_id")
-             and (fade_of(s) > 0 or s.get("tachie_fade_keyed"))]
+             and (_appears(*appear_of(s)) or s.get("tachie_fade_keyed"))]
     clear_motion(scene, {s.name for s in sed.strips if owner(s) is not None} | {s.name for s in texts})
     images = [s for s in sed.strips if owner(s) in characters]
     fps = scene.render.fps / scene.render.fps_base
@@ -301,17 +321,49 @@ def refresh_motion(scene, lines_dir: Path) -> int:
             apply_text_size(t, ch, text)  # セリフごとの文字の大きさ・折り返し幅
         place_text(t, ch, text)
     count = 0
-    for t in texts:  # 字幕（とキャラ名）のフェードイン
+    for t in texts:  # 字幕（とキャラ名）の出し方: フェードイン・下から浮き上がる・拡大
+        fade, rise, grow, seconds = appear_of(t)
         t.blend_alpha = 1.0
-        fade = fade_of(t)
+        moves = rise > 0 or grow < 1
+        if moves or "tachie_rise_keyed" in t:  # フェードだけの字幕に手で付けた変形は戻さない
+            t.transform.offset_x = t.transform.offset_y = 0.0
+            t.transform.scale_x = t.transform.scale_y = 1.0
+        if moves:
+            t["tachie_rise_keyed"] = True
+        elif "tachie_rise_keyed" in t:
+            del t["tachie_rise_keyed"]
+        if not _appears(fade, rise, grow, seconds):
+            if "tachie_fade_keyed" in t:
+                del t["tachie_fade_keyed"]
+            continue
+        left = t.left_handle
+
+        def end_of(sec: float) -> int:
+            return max(left + 1, min(left + max(1, round(sec * fps)), t.right_handle - 1))
+
         if fade > 0:
-            end = min(t.left_handle + max(1, round(fade * fps)), t.right_handle - 1)
-            _key(t, "blend_alpha", t.left_handle, 0.0)
-            _key(t, "blend_alpha", max(end, t.left_handle + 1), 1.0)
-            t["tachie_fade_keyed"] = True
-            count += 1
-        elif "tachie_fade_keyed" in t:
-            del t["tachie_fade_keyed"]
+            _key(t, "blend_alpha", left, 0.0)
+            _key(t, "blend_alpha", end_of(fade), 1.0)
+        if moves:
+            # TEXT ストリップの拡大の中心は origin が (0.5, 0.5) のとき画面の中央（ほかの値では字幕の大きさで変わる）。
+            # 字幕の下端の中央（location、anchor_y = BOTTOM）が動かないように、縮めた分を offset でずらす。
+            # 浮き上がる・拡大は同じ長さ・同じイージングなので、途中のコマでもずらす量が合う
+            t.transform.origin = (0.5, 0.5)
+            end = end_of(seconds)
+            shrink = 1.0 - grow
+            start = ((t.location[0] - 0.5) * width * shrink, (t.location[1] - 0.5) * height * shrink - rise * height)
+            for axis, value in zip(("offset_x", "offset_y"), start):
+                if value:
+                    _key(t, f"transform.{axis}", left, value)
+                    _key(t, f"transform.{axis}", end, 0.0)
+                    _ease_out(scene, t.transform, axis)
+            if grow < 1:
+                for axis in ("scale_x", "scale_y"):
+                    _key(t, f"transform.{axis}", left, grow)
+                    _key(t, f"transform.{axis}", end, 1.0)
+                    _ease_out(scene, t.transform, axis)
+        t["tachie_fade_keyed"] = True
+        count += 1
     motion_path = motion_paths(sed, lines_dir)
     for ch in characters.values():
         mine = [s for s in images if owner(s) == ch.name]  # チャンネルでは絞らない（手で動かした立ち絵も）
@@ -418,8 +470,9 @@ def motion_signature(scene) -> str:
         return ""
     chars = scene.tachie.characters
     settings = [(c.name, round(c.talk_bounce, 4), round(c.talk_sway, 3), round(c.talk_period, 3),
-                 c.enter_effect, c.exit_effect, round(c.effect_seconds, 3), round(c.subtitle_fade, 3)) for c in chars]
-    active = any(s[1] or s[2] or s[4] != "NONE" or s[5] != "NONE" or s[7] for s in settings)
+                 c.enter_effect, c.exit_effect, round(c.effect_seconds, 3), round(c.subtitle_fade, 3),
+                 round(c.subtitle_rise, 4), round(c.subtitle_grow, 4), round(c.subtitle_motion_seconds, 3)) for c in chars]
+    active = any(s[1] or s[2] or s[4] != "NONE" or s[5] != "NONE" or _appears(*s[7:]) for s in settings)
     items = []
     for s in sed.strips:
         if s.type == "SOUND" and s.get("tachie_id"):  # 立ち絵が跳ねる・揺れる区間
@@ -433,7 +486,9 @@ def motion_signature(scene) -> str:
                 style = tuple(round(v, 2) for v in text_style(s))
                 active = active or style != (0.0, 0.0)
                 offset += style
-            items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, offset))
+            # 拡大の始めのずらす量は字幕の位置（キャラの字幕の位置・行数で変わる）と解像度で決まる
+            loc = tuple(round(v, 4) for v in s.location)
+            items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, offset, loc))
             continue
         if owner(s) is None:
             continue
@@ -449,4 +504,5 @@ def motion_signature(scene) -> str:
     edges = edges_signature(sed)  # テンプレートなどの登場・退場の動きは、ストリップの長さに合わせる
     if not active and not edges:
         return ""
-    return repr((settings, sorted(items), sorted(edges)))
+    resolution = (scene.render.resolution_x, scene.render.resolution_y)
+    return repr((settings, sorted(items), sorted(edges), resolution))

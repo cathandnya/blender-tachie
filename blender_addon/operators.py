@@ -314,7 +314,8 @@ def config_of(ch) -> CharacterConfig:
                   "line_spacing": ch.line_spacing, "y": ch.subtitle_y,
                   "x": round(ch.subtitle_x, 6), "box": ch.subtitle_box,  # x は 0 でも書く（tachie.toml の値で補われないように） "box_color": list(ch.box_color),
                   "box_margin": ch.box_margin, "box_roundness": ch.box_roundness, "name": ch.show_name,
-                  "fade": ch.subtitle_fade, **({"wrap_width": ch.subtitle_width} if ch.subtitle_width else {})},
+                  "fade": ch.subtitle_fade, "rise": round(ch.subtitle_rise, 4), "grow": round(ch.subtitle_grow, 4),
+                  "motion_seconds": round(ch.subtitle_motion_seconds, 3), **({"wrap_width": ch.subtitle_width} if ch.subtitle_width else {})},
         audio=character_audio(ch),
         engine="" if ch.engine == "DEFAULT" else engine_url(bpy.context, ch),
     )
@@ -410,7 +411,8 @@ def apply_config(ch, config: CharacterConfig) -> None:
                       ("outline_color", "outline_color"), ("outline_width", "outline_width"),
                       ("line_spacing", "line_spacing"), ("subtitle_y", "y"), ("subtitle_box", "box"), ("box_color", "box_color"),
                       ("box_margin", "box_margin"), ("box_roundness", "box_roundness"), ("show_name", "name"),
-                      ("subtitle_fade", "fade")):
+                      ("subtitle_fade", "fade"), ("subtitle_rise", "rise"), ("subtitle_grow", "grow"),
+                      ("subtitle_motion_seconds", "motion_seconds")):
         if key in sub:
             setattr(ch, prop, sub[key])
     ch.subtitle_width = sub.get("wrap_width", 0.0)  # 書き出しで 0（既定値）は省くので、書いていなければ 0

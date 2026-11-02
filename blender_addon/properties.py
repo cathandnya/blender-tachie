@@ -518,6 +518,17 @@ class TachieCharacter(bpy.types.PropertyGroup):
     subtitle_fade: FloatProperty(name="字幕のフェードイン", default=0.0, min=0.0, max=2.0, step=1, precision=2,
                                  unit="TIME_ABSOLUTE", update=_update_subtitle_fade,
                                  description="字幕（とキャラ名）が出るときにフェードする長さ（秒）。0 ならすぐ出る")
+    # 字幕の出し方（フェードと組み合わせられる。#39）。transform の offset / scale にキーを打つ（location は
+    # プレビューで動かした字幕の判定に使うので触らない）
+    subtitle_rise: FloatProperty(name="下から浮き上がる", default=0.0, min=0.0, max=0.5, subtype="FACTOR",
+                                 update=_update_subtitle_fade,
+                                 description="字幕（とキャラ名）が出るときに下から浮き上がる量（画面の高さに対する割合）。0 なら動かない")
+    subtitle_grow: FloatProperty(name="始めの大きさ", default=1.0, min=0.1, max=1.0, subtype="FACTOR",
+                                 update=_update_subtitle_fade,
+                                 description="字幕（とキャラ名）が出るときに、この大きさから元の大きさへ拡大する（字幕の下端の中央が中心）。1 なら拡大しない")
+    subtitle_motion_seconds: FloatProperty(name="動く長さ", default=0.3, min=0.01, max=2.0, step=1, precision=2,
+                                           unit="TIME_ABSOLUTE", update=_update_subtitle_fade,
+                                           description="字幕が浮き上がる・拡大する長さ（秒）")
     # 字幕の位置は画面に対する割合で持ち（解像度を変えても同じ所）、パネルでは YMM4 と同じく画面の中央からの px で見せる
     # （`subtitle_pos_x` / `subtitle_pos_y`）
     subtitle_x: FloatProperty(name="字幕の横の位置（割合）", default=0.0, min=-1.0, max=1.0, update=_update_subtitle,
