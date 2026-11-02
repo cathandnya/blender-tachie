@@ -1,10 +1,27 @@
-from tachie_studio.subtitle import chars_per_line, wrap
+from tachie_studio.subtitle import wrap
 
 
 def test_wrap_basic():
     assert wrap("あいうえおかきくけこ", 5) == "あいうえお\nかきくけこ"
     assert wrap("abcdefghij", 2.5) == "abcde\nfghij"  # 半角は 0.5
     assert wrap("短い", 10) == "短い"
+
+
+def test_wrap_keeps_words():
+    """英単語は途中で切らずに次の行へ送る。空白で改行したら空白は残さない。"""
+    assert wrap("今日はBlenderの話", 5) == "今日は\nBlenderの\n話"
+    assert wrap("hello world foo", 3) == "hello\nworld\nfoo"
+    assert wrap("Supercalifragilistic", 3) == "Superc\nalifra\ngilist\nic"  # 1 行に入らない単語は切る
+    assert wrap("  あいうえお", 5) == "  あいうえ\nお"  # 段落の頭の空白は残す
+    assert wrap("Blender.", 3.5) == "Blender."  # 句読点はぶら下げる
+    assert wrap("あいう「Blender」", 5) == "あいう\n「Blender」"  # 開き括弧は単語と一緒に送る
+    assert wrap("  Supercalifragilistic", 3) == "  Supe\nrcalif\nragili\nstic"  # 空行を作らない
+
+
+def test_wrap_measured_width():
+    """幅を測る関数を渡すと、max_width はその単位（px）になる。"""
+    widths = {"W": 30.0, "i": 10.0}
+    assert wrap("WWii iWW", 80, width_of=lambda c: widths.get(c, 20.0)) == "WWii\niWW"
 
 
 def test_wrap_hangs_punctuation():
@@ -19,10 +36,6 @@ def test_wrap_moves_opening_bracket():
 def test_wrap_keeps_newlines_and_max_lines():
     assert wrap("あいう\nえお", 10) == "あいう\nえお"
     assert wrap("あいうえおかきくけこさしす", 4, max_lines=2) == "あいうえ\nおかきくけこさしす"
-
-
-def test_chars_per_line():
-    assert chars_per_line(1920, 64) == 1920 * 0.8 / 64
 
 
 def test_breaks():

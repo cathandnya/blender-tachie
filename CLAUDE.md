@@ -108,7 +108,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
   （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
   `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
-- `src/tachie_studio/subtitle.py` — 字幕の改行（全角幅で折り返し、句読点はぶら下げ、開き括弧は次行へ）。
+- `src/tachie_studio/subtitle.py` — 字幕の改行（幅で折り返し、句読点はぶら下げ、開き括弧は次行へ、英単語（半角の英数字の並び）は
+  途中で切らずに次の行へ。幅は `width_of`。アドオンは `properties.wrap_subtitle` が字幕のフォントで測った px（`fonts.glyph_width`、
+  Pillow の送り幅。読めなければ全角 = 文字の大きさ）と折り返し幅の px で折り返す）。
 - `src/tachie_studio/fonts.py` — 字幕・見出しの既定のフォント（`default_font`）。同じ形のファイルが並ぶときは名前のウェイトで
   Bold → Medium → Regular → 無し・DemiLight → 極端なもの（Black・Thin・Light など）の順。Linux の Noto Sans CJK と
   Noto Sans JP は 1 つの組で比べる（Noto Sans CJK は名前順だと Black になった、#36）。
@@ -224,7 +226,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   写して置き直す）で見せる。
   字幕の文字の大きさと折り返し幅もセリフごとに `tachie_sub_size` / `tachie_sub_width`（px、0 はキャラの設定。
   `TEXT_STYLE_PROPS`、`properties.subtitle_metrics` / `apply_text_size`）。キャラの折り返し幅は `subtitle_width`（px、
-  0 は画面の幅の 80%、TOML の subtitle の `wrap_width`。YMM4 の折り返し幅）。1 行の文字数は 折り返し幅 ÷ 文字の大きさ。
+  0 は画面の幅の 80%、TOML の subtitle の `wrap_width`。YMM4 の折り返し幅）。フォントで測った文字の幅で折り返す。
   キャラの字幕の位置は割合で持ち（`subtitle_x`: 画面の中央からの幅に対する割合、`subtitle_y`: 下端の画面の下からの高さに
   対する割合。TOML の subtitle の `x` / `y`）、パネルは YMM4 と同じく画面の中央からの px（`subtitle_pos_x` / `subtitle_pos_y`、
   get / set で割合と換算。Y は下端で下が正）で見せる。YMM4 のキャラの字幕の X / Y もこれに写す。

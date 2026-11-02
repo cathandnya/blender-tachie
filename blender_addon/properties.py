@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from typing import Callable
 
 import bpy
 from bpy.props import (
@@ -14,8 +15,8 @@ from bpy.props import (
 )
 
 from . import prefetch
-from .tachie_studio.fonts import default_font
-from .tachie_studio.subtitle import breaks, chars_per_line, wrap
+from .tachie_studio.fonts import default_font, glyph_width
+from .tachie_studio.subtitle import WRAP_MARGIN, breaks, char_width, wrap
 from .tachie_studio.pipeline.config import VOICE_DEFAULTS
 from .tachie_studio.voicevox import DEFAULT_URL
 
@@ -314,12 +315,20 @@ def text_style(strip) -> tuple[float, float]:
     return float(strip.get("tachie_sub_size", 0.0) or 0.0), float(strip.get("tachie_sub_width", 0.0) or 0.0)
 
 
-def subtitle_metrics(strip, ch) -> tuple[float, float]:
-    """字幕の (文字の大きさ, 1 行の全角文字数の目安)。セリフごとの値 > キャラの設定。折り返し幅が 0 なら画面の幅の 80%。"""
+def subtitle_metrics(strip, ch) -> tuple[float, float, Callable[[str], float]]:
+    """字幕の (文字の大きさ, 折り返し幅 px, 1 文字の幅 px を返す関数)。セリフごとの値 > キャラの設定。折り返し幅が 0 なら
+    画面の幅の 80%。文字の幅は字幕のフォントで測る（読めなければ全角 = 文字の大きさ、半角 = その半分）。"""
     size, width = text_style(strip) if strip is not None else (0.0, 0.0)
     size = size or lay(ch, "font_size")
-    width = width or lay(ch, "subtitle_width")
-    return size, width / size if width else chars_per_line(ch.id_data.render.resolution_x, size)
+    width = width or lay(ch, "subtitle_width") or ch.id_data.render.resolution_x * (1 - 2 * WRAP_MARGIN)
+    measure = glyph_width(bpy.path.abspath(ch.font_path), size) if ch.font_path else None
+    return size, width, measure or (lambda c: char_width(c) * size)
+
+
+def wrap_subtitle(strip, ch, text: str) -> tuple[float, str]:
+    """(文字の大きさ, 字幕のテキスト（\\n の書き方）をその字幕の折り返し幅で改行したもの)。"""
+    size, width, measure = subtitle_metrics(strip, ch)
+    return size, wrap(breaks(text), width, width_of=measure)
 
 
 def text_offset(strip) -> tuple[float, float]:
@@ -335,8 +344,8 @@ def name_height(ch, text: str, strip=None) -> float:
     """キャラ名を置く高さ（字幕の上。字幕の行数から見積もる）。`strip` はキャラ名のストリップ（字幕のセリフごとの
     文字の大きさ・折り返し幅を写してある）。"""
     render = ch.id_data.render
-    size, chars = subtitle_metrics(strip, ch)
-    lines = wrap(breaks(text), chars).count("\n") + 1
+    size, wrapped = wrap_subtitle(strip, ch, text)
+    lines = wrapped.count("\n") + 1
     margin = ch.box_margin if ch.subtitle_box else 0.0
     # 1 行目の高さ + 2 行目からの行の間隔
     text_height = size * (1.25 + (lines - 1) * LINE_PITCH * ch.line_spacing)
@@ -377,8 +386,7 @@ def apply_subtitle(strip, ch, text: str) -> None:
 
 def apply_text_size(strip, ch, text: str) -> None:
     """字幕の文字の大きさと改行（セリフごとの値 > キャラの設定。変わったときだけ書く）。"""
-    size, chars = subtitle_metrics(strip, ch)
-    wrapped = wrap(breaks(text), chars)
+    size, wrapped = wrap_subtitle(strip, ch, text)
     if strip.text != wrapped:
         strip.text = wrapped
     if abs(strip.font_size - size) > 1e-6:

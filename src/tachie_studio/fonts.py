@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import glob
 import os
 import unicodedata
+from typing import Callable
+
+from .subtitle import char_width
 
 # 先の組から探す。同じ組の中はウェイトの順（Linux の Noto Sans CJK と Noto Sans JP は 1 つの組で比べる）
 DEFAULT_PATTERNS = (("/System/Library/Fonts/*W6.ttc",), ("/System/Library/Fonts/*W3.ttc",),
@@ -38,3 +42,37 @@ def default_font(patterns: tuple[tuple[str, ...], ...] = DEFAULT_PATTERNS) -> st
             if any(key in name.lower() for key in FONT_KEYS):
                 return path
     return ""
+
+
+MISSING_CHAR = "\U000F0000"  # どのフォントにも字形の無い文字（私用面）。.notdef の字形と比べる
+
+
+@functools.lru_cache(maxsize=32)
+def glyph_width(path: str, size: float) -> Callable[[str], float] | None:
+    """フォント `path` の `size` px での 1 文字の送り幅（px）を返す関数（字幕の折り返し）。読めなければ None。
+    字詰め（カーニング）は数えない。フォントに無い文字（英字のフォントの日本語など。Blender は別のフォントで描く）は
+    全角 = `size`、半角 = その半分とみなす（Pillow は字形の無い文字を .notdef の幅で返すため）。"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        font = ImageFont.truetype(path, size)
+
+        def shape(ch: str) -> bytes:
+            image = Image.new("L", (int(size * 2) + 1, int(size * 2) + 1))
+            ImageDraw.Draw(image).text((0, 0), ch, font=font, fill=255)
+            return image.tobytes()
+
+        notdef = shape(MISSING_CHAR)
+    except (OSError, ValueError, ImportError):
+        return None
+    widths: dict[str, float] = {}
+
+    def width_of(ch: str) -> float:
+        if ch not in widths:
+            if not ch.isspace() and shape(ch) == notdef:
+                widths[ch] = char_width(ch) * size
+            else:
+                widths[ch] = font.getlength(ch)
+        return widths[ch]
+
+    return width_of

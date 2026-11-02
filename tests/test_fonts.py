@@ -27,3 +27,18 @@ def test_default_font_compares_noto_families(tmp_path):
     (tmp_path / "NotoSansJP-Regular.otf").touch()
     group = (f"{tmp_path}/**/NotoSansCJK*.tt[cf]", f"{tmp_path}/**/NotoSansJP*.[ot]tf")
     assert default_font((group,)).endswith("NotoSansJP-Regular.otf")
+
+
+def test_glyph_width():
+    from tachie_studio.fonts import glyph_width
+
+    path = default_font()
+    if not path:
+        import pytest
+
+        pytest.skip("日本語フォントが無い")
+    width_of = glyph_width(path, 64)
+    assert width_of is not None
+    assert 50 < width_of("あ") <= 70  # 全角はほぼ文字の大きさ
+    assert width_of("i") < width_of("W")  # 英字は字ごとに幅が違う
+    assert glyph_width("/nonexistent.ttf", 64) is None
