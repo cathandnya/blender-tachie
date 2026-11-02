@@ -890,6 +890,25 @@ ducking.refresh_ducking(scene)
 assert abs(max(v for _, v in keyed(bgm, "volume")) - 0.6) < 1e-4
 run(bpy.ops.tachie.unset_bgm, strip=bgm.name)
 assert not keyed(bgm, "volume") and abs(bgm.volume - 0.6) < 1e-6 and "tachie_bgm" not in bgm
+# スクリプトからは名前で渡せる（選択は見ない。#40）。セリフの音声は名前で渡しても断る
+line_sound = next(x for x in sed.strips if x.type == "SOUND" and x.get("tachie_id"))
+for x in sed.strips_all:
+    x.select = False
+line_sound.select = True
+run(bpy.ops.tachie.set_bgm, strips=[{"name": bgm.name}])
+assert bgm.get("tachie_bgm") and not line_sound.get("tachie_bgm")
+run(bpy.ops.tachie.unset_bgm, strip=bgm.name)
+bgm.select = True  # 選択から: セリフの音声が混ざっていても BGM の音声だけにする
+run(bpy.ops.tachie.set_bgm)
+assert bgm.get("tachie_bgm") and not line_sound.get("tachie_bgm")
+bgm.select = False
+try:
+    bpy.ops.tachie.set_bgm(strips=[{"name": line_sound.name}])
+    raise AssertionError("セリフの音声を BGM にできてしまった")
+except RuntimeError as e:
+    assert "BGM にできません" in str(e), e
+run(bpy.ops.tachie.unset_bgm, strip=bgm.name)
+line_sound.select = False
 sed.strips.remove(bgm)
 s.duck_volume = 0.3
 

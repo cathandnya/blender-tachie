@@ -263,7 +263,8 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   `tachie_bgm_volume`）の volume に、セリフの音声ストリップ（ミュートは除く）が鳴っている区間だけ下げるキーフレームを打つ。
   切れ目が `MERGE_SECONDS` + フェード 2 回分より短ければつなぐ。設定はシーンの `duck_volume`（割合）・`duck_fade`。
   自動反映の署名は (表情, 動き, ダッキング) の 3 つ組で、ダッキングだけ変わったら `refresh_ducking` だけ呼ぶ。
-  `refresh_motion_now` もダッキングを作り直す。
+  `refresh_motion_now` もダッキングを作り直す。`tachie.set_bgm` は選択中の音声（セリフの音声・効果音は除いて警告）か、
+  `strips`（`TachieStripName` の一覧、名前で渡す。#40）。
   効果音（#14）: アドオン設定の `sound_effects`（`TachieSoundEffect`: 名前・ファイル・音量）。`tachie.add_sound_effect` は
   再生位置か選んだセリフ（`selected_targets`）の頭に置き、`tachie_se` = 名前を付ける。チャンネルはレーンより下（1 番から上）の
   空き、無ければレーンより上（`channels.sound_channel`）。

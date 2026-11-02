@@ -18,7 +18,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import channels as lanes
 from . import timeline
-from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, apply_placement, apply_subtitle, apply_text_size, clear_text_input, place_text, still_flip, system_fonts, text_offset, text_style
+from .properties import AUDIO_PROPS, BAKED_AUDIO, ENGINE_PRESETS, LINE_LAYOUTS, apply_headline, apply_name, PART_PROPS, SLOT_CATEGORIES, VOICE_PROPS, TachieStripName, apply_placement, apply_subtitle, apply_text_size, clear_text_input, place_text, still_flip, system_fonts, text_offset, text_style
 from .tachie_studio.pipeline import (CharacterConfig, FrameCache, Line, idle_frames, load_characters, load_script,
                                      parse_script, render_line)
 from .tachie_studio.pipeline.render import LineMotion, still_frames
@@ -4201,6 +4201,11 @@ def _mark_ducking_applied(scene) -> None:
     _applied_signatures[scene.name] = (faces, motion, ducking_signature(scene))
 
 
+def _line_or_se(strip) -> bool:
+    """セリフの音声か効果音（BGM にしない）。"""
+    return bool(strip.get("tachie_id") or strip.get("tachie_se"))
+
+
 class TACHIE_OT_set_bgm(bpy.types.Operator):
     """選択中の音声ストリップを BGM にする（セリフの音声が鳴っている間だけ音量を下げる）。今の音量が BGM の音量になる"""
 
@@ -4208,15 +4213,33 @@ class TACHIE_OT_set_bgm(bpy.types.Operator):
     bl_label = "選択中の音声を BGM にする"
     bl_options = {"REGISTER", "UNDO"}
 
+    # スクリプトから: bpy.ops.tachie.set_bgm(strips=[{"name": "BGM"}])。渡せば選択の代わりにそのストリップ
+    strips: bpy.props.CollectionProperty(type=TachieStripName, name="ストリップ", options={"SKIP_SAVE"})
+
     def execute(self, context):
         from .ducking import refresh_ducking, set_bgm
 
         scene = seq_scene(context)
         sed = scene.sequence_editor
-        sounds = [s for s in sed.strips if s.select and s.type == "SOUND" and not s.get("tachie_id")] \
-            if sed else []
+        if self.strips:
+            sounds = []
+            for item in self.strips:
+                s = sed.strips.get(item.name) if sed else None
+                if s is None or s.type != "SOUND":
+                    self.report({"ERROR"}, f"音声ストリップ「{item.name}」が見つかりません")
+                    return {"CANCELLED"}
+                if _line_or_se(s):
+                    self.report({"ERROR"}, f"「{item.name}」はセリフの音声か効果音なので BGM にできません")
+                    return {"CANCELLED"}
+                sounds.append(s)
+        else:
+            picked = [s for s in sed.strips if s.select and s.type == "SOUND"] if sed else []
+            sounds = [s for s in picked if not _line_or_se(s)]
+            if sounds and len(sounds) < len(picked):
+                # セリフの音声・効果音は BGM にしない（選択を外し忘れたまま押したとき）
+                self.report({"WARNING"}, f"選択中のセリフの音声・効果音 {len(picked) - len(sounds)} 本は BGM にしませんでした")
         if not sounds:
-            self.report({"ERROR"}, "BGM にする音声ストリップを選んでください（セリフの音声は除く）")
+            self.report({"ERROR"}, "BGM にする音声ストリップを選んでください（セリフの音声・効果音は除く）")
             return {"CANCELLED"}
         for s in sounds:
             set_bgm(s, True)

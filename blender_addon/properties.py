@@ -107,6 +107,10 @@ class TachieSoundEffect(bpy.types.PropertyGroup):
                           description="置くときの音量")
 
 
+class TachieStripName(bpy.types.PropertyGroup):
+    """オペレーターにストリップを名前で渡す一覧の 1 つ（`name` だけ）。"""
+
+
 class TachieTemplate(bpy.types.PropertyGroup):
     """登録したテンプレート（アドオン設定、全 .blend 共通）。中身は `tachie_studio.templates` の JSON。"""
 
@@ -857,7 +861,7 @@ class TachieAccentEdit(bpy.types.PropertyGroup):
     length_hi: FloatProperty(default=0.3)
 
 
-_classes = (TachieSoundEffect, TachieTemplate, TachiePreferences, TachieExpression, TachieCharacter, TachieYmmpCharacter,
+_classes = (TachieSoundEffect, TachieStripName, TachieTemplate, TachiePreferences, TachieExpression, TachieCharacter, TachieYmmpCharacter,
             TachieSceneSettings, TachieDictionary,
             TachieMora, TachiePhrase, TachieAccentEdit)
 
