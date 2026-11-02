@@ -264,6 +264,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   立ち絵に重なるそのキャラのセリフ（`_line_heads`）の lines/<id>.json の音量（立ち絵の区間で切る）、登場・退場はそのキャラの
   立ち絵（チャンネルは問わない）が続いて並ぶまとまりの最初と最後。
   立ち絵ごとの位置・大きさは立ち絵ストリップの `tachie_pos_x` / `tachie_pos_y` / `tachie_scale`（作り直しで引き継ぐ）。
+  この 3 つはユーザーがキーフレームを打てる（`motion.POSE_KEYS`。アドオンは打たない）。打った立ち絵は `refresh_motion` の最後に
+  `_apply_pose_curves` が、今のフレームの値（`apply_placement` が当てた元の位置）からの差をアドオンの動きの offset / scale に
+  重ねて、立ち絵の区間の毎フレームに直線のキーで打ち直す。署名はキーの値（今のフレームの値は再生で変わるため）。
+  Blender はストリップを消すと F カーブも消すので、`remake_still` が `save_pose_keys` / `restore_pose_keys` で写す
+  （名前の変更・移動・分割には Blender がキーを付けてくる）。
   拡大・回転の中心 `transform.origin` は足元 (0.5, 0)。`refresh_faces` の最後と、自動反映（`auto_signature` に
   `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
   キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。

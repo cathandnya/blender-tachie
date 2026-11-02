@@ -363,6 +363,9 @@ def draw_pose(layout, strip) -> None:
     if strip is None or "tachie_scale" not in strip:
         return
     col = layout.column(align=True)
+    # 右に ◆ を出す（キーフレームを打って動かせる。アドオンの動きに重ねる、motion._apply_pose_curves）
+    col.use_property_split = True
+    col.use_property_decorate = True
     for key, (label, *_) in POSE_PROPS.items():
         col.prop(strip, f'["{key}"]', text=label)
 

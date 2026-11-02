@@ -1715,15 +1715,17 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
     lanes.ensure_layout(seq_scene(context))
     channel = strip.channel
     flip = strip.get("tachie_flip")
-    from .motion import jump_of
+    from .motion import jump_of, restore_pose_keys, save_pose_keys
 
     jump = jump_of(strip)
     look = still_settings(strip)
+    keys = save_pose_keys(seq_scene(context), strip)  # 消して置き直すと Blender がキーフレームも消す
     # 選択とアクティブも引き継ぐ（新しいストリップは選ばれた状態でできるので、選んでいなかった立ち絵が自動の反映で
     # 選ばれたり、選んでいた立ち絵がパネルから消えたりしないように）
     selected, active = strip.select, sed.active_strip == strip
     new = place_still(context, ch, preset or "", start, frames, pose, channel, problems,
                       None if flip is None else bool(flip), jump, look, parts, reuse=strip)
+    restore_pose_keys(seq_scene(context), new, keys)
     new.select = selected
     if active:
         sed.active_strip = new

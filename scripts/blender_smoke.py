@@ -887,6 +887,40 @@ assert msub.font_size == metan.font_size  # 縦長でも横長用に戻る
 r.resolution_x, r.resolution_y = landscape
 ops.refresh_motion_now(scene)
 assert abs(msub.location[1] - metan.subtitle_y - msub.get("tachie_sub_y", 0.0)) < 1e-4
+# 立ち絵ごとの位置・大きさにキーフレームを打って動かす（アドオンの動きに重ねる）
+mimg = still("四国めたん")
+L = mimg.left_handle
+scene.frame_set(L)
+before = {f: v for f, v in keyed(mimg, "transform.offset_x")} or None
+base_x = mimg.transform.offset_x
+flip = -1 if mimg.use_flip_x else 1
+pos0 = mimg["tachie_pos_x"]
+mimg.keyframe_insert('["tachie_pos_x"]', frame=L + 10)
+mimg["tachie_pos_x"] = pos0 + 0.3
+mimg.keyframe_insert('["tachie_pos_x"]', frame=L + 20)
+mimg["tachie_pos_x"] = pos0
+sig = motion_mod.motion_signature(scene)
+ops.refresh_motion_now(scene)
+xs = dict(keyed(mimg, "transform.offset_x"))
+assert len(xs) == mimg.right_handle - L  # 毎フレームに打ち直す
+assert abs(xs[L + 20] - xs[L + 10] - flip * 0.3 * r.resolution_x) < 1e-2, (xs[L + 10], xs[L + 20])
+if before is None:
+    assert abs(xs[L + 10] - base_x) < 1e-2
+scene.frame_set(L + 30)  # 再生でキーの値が変わっても作り直さない
+assert motion_mod.motion_signature(scene) == sig
+mimg = still("四国めたん")
+mimg.right_handle += 5  # 長さが変わると消して置き直す（キーフレームは写す）
+ops.apply_faces(bpy.context)
+mimg = still("四国めたん")
+assert set(motion_mod.pose_curves(scene).get(mimg.name, {})) == {"tachie_pos_x"}
+assert [round(k.co[0]) for k in motion_mod.pose_curves(scene)[mimg.name]["tachie_pos_x"].keyframe_points] == [L + 10, L + 20]
+mimg.keyframe_delete('["tachie_pos_x"]', frame=L + 10)
+mimg.keyframe_delete('["tachie_pos_x"]', frame=L + 20)
+mimg.right_handle -= 5
+mimg["tachie_pos_x"] = pos0
+ops.apply_faces(bpy.context)
+ops.refresh_motion_now(scene)
+assert len(keyed(still("四国めたん"), "transform.offset_x")) < 10
 s.headline_text, s.headline_seconds = "第 1 章 Blender で動画", 2.0
 scene.frame_current = 1
 run(bpy.ops.tachie.add_headline)

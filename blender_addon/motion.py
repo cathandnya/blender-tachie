@@ -23,6 +23,10 @@ VOICED_RMS = 0.02
 MANAGED = ("transform.offset_x", "transform.offset_y", "transform.rotation", "blend_alpha",
            "transform.scale_x", "transform.scale_y")
 _PATH_RE = re.compile(r'^sequence_editor\.strips_all\["(?P<name>(?:[^"\\]|\\.)*)"\]\.(?P<attr>.+)$')
+# 立ち絵ごとの位置・大きさ（ユーザーがキーフレームを打てる。アドオンは打たない）と既定値
+POSE_KEYS = {"tachie_pos_x": 0.0, "tachie_pos_y": 0.0, "tachie_scale": 1.0}
+_POSE_RE = re.compile(r'^sequence_editor\.strips_all\["(?P<name>(?:[^"\\]|\\.)*)"\]\["(?P<key>%s)"\]$'
+                      % "|".join(POSE_KEYS))
 
 
 def owner(strip) -> str | None:
@@ -63,6 +67,95 @@ def clear_motion(scene, names: set[str]) -> None:
         name = m["name"].replace('\\"', '"').replace("\\\\", "\\")
         if name in names or name not in existing:
             bag.fcurves.remove(fcurve)
+
+
+def pose_curves(scene) -> dict[str, dict]:
+    """立ち絵ストリップの名前 → {位置・大きさのキー（`POSE_KEYS`）: そのキーフレームの F カーブ}。"""
+    bag = _channelbag(scene)
+    out: dict[str, dict] = {}
+    for fcurve in bag.fcurves if bag is not None else ():
+        m = _POSE_RE.match(fcurve.data_path)
+        if m is not None and len(fcurve.keyframe_points):
+            name = m["name"].replace('\\"', '"').replace("\\\\", "\\")
+            out.setdefault(name, {})[m["key"]] = fcurve
+    return out
+
+
+LINEAR = bpy.types.Keyframe.bl_rna.properties["interpolation"].enum_items["LINEAR"].value
+_POINT_ATTRS = ("interpolation", "easing", "handle_left_type", "handle_right_type")
+
+
+def save_pose_keys(scene, strip) -> list:
+    """`strip` の位置・大きさのキーフレーム（ストリップを消すと Blender が F カーブも消すので、作り直す前に覚える）。"""
+    return [(key, fcurve.extrapolation,
+             [(tuple(p.co), tuple(p.handle_left), tuple(p.handle_right), *(getattr(p, a) for a in _POINT_ATTRS))
+              for p in fcurve.keyframe_points])
+            for key, fcurve in pose_curves(scene).get(strip.name, {}).items()]
+
+
+def restore_pose_keys(scene, strip, saved: list) -> None:
+    """`save_pose_keys` で覚えたキーフレームを `strip` に打ち直す（もう F カーブがあるもの＝同じストリップは触らない）。"""
+    if not saved:
+        return
+    have = pose_curves(scene).get(strip.name, {})
+    bag = _channelbag(scene, create=True)
+    for key, extrapolation, points in saved:
+        if key in have or bag is None:
+            continue
+        path = strip.path_from_id(f'["{key}"]')
+        fcurve = bag.fcurves.find(path) or bag.fcurves.new(path)  # キーの無い F カーブが残っていればそれに打つ
+        fcurve.keyframe_points.clear()
+        fcurve.extrapolation = extrapolation
+        fcurve.keyframe_points.add(len(points))
+        for p, (co, left, right, *attrs) in zip(fcurve.keyframe_points, points):
+            p.co, p.handle_left, p.handle_right = co, left, right
+            for a, v in zip(_POINT_ATTRS, attrs):
+                setattr(p, a, v)
+        fcurve.update()
+
+
+def _pose_signature(curves: dict) -> tuple:
+    """位置・大きさのキーフレーム（打ち直したら動きを作り直す）。外挿・モディファイアも区間の値を変える。"""
+    return tuple((key, f.extrapolation, tuple(m.type for m in f.modifiers),
+                  tuple((tuple(round(v, 4) for v in (*p.co, *p.handle_left, *p.handle_right)), p.interpolation, p.easing)
+                        for p in f.keyframe_points))
+                 for key, f in sorted(curves.items()))
+
+
+def _apply_pose_curves(scene, strip, curves: dict, width: int, height: int) -> None:
+    """位置・大きさにキーフレームを打った立ち絵: 打ったキーの値（の今のフレームの値 = apply_placement が当てた元の位置）
+    からの差を、アドオンの動き（跳ねる・登場・退場など）に重ねて、立ち絵の区間の毎フレームに打ち直す。"""
+    bag = _channelbag(scene, create=True)
+    frames = range(strip.left_handle, strip.right_handle)
+    static = {k: float(strip.get(k, d)) for k, d in POSE_KEYS.items()}
+
+    def pose(key: str) -> list[float]:
+        fcurve = curves.get(key)
+        return [fcurve.evaluate(f) if fcurve else static[key] for f in frames]
+
+    flip = -1 if strip.use_flip_x else 1  # 反転したストリップは offset の向きも逆
+    changes = []  # (transform の属性, フレームごとの値, 掛けるか（でなければ足す）)
+    if "tachie_pos_x" in curves:
+        changes.append(("offset_x", [flip * (v - static["tachie_pos_x"]) * width for v in pose("tachie_pos_x")], False))
+    if "tachie_pos_y" in curves:
+        changes.append(("offset_y", [(v - static["tachie_pos_y"]) * height for v in pose("tachie_pos_y")], False))
+    if "tachie_scale" in curves:
+        base = max(static["tachie_scale"], 1e-3)
+        ratios = [max(v, 0.0) / base for v in pose("tachie_scale")]
+        changes += [("scale_x", ratios, True), ("scale_y", ratios, True)]
+    for attr, values, multiply in changes:
+        path = strip.transform.path_from_id(attr)
+        fcurve = bag.fcurves.find(path)
+        motion = [fcurve.evaluate(f) for f in frames] if fcurve else [getattr(strip.transform, attr)] * len(frames)
+        if fcurve is None:
+            fcurve = bag.fcurves.new(path)
+        else:
+            fcurve.keyframe_points.clear()
+        fcurve.keyframe_points.add(len(frames))
+        fcurve.keyframe_points.foreach_set(
+            "co", [x for f, m, v in zip(frames, motion, values) for x in (f, m * v if multiply else m + v)])
+        fcurve.keyframe_points.foreach_set("interpolation", [LINEAR] * len(frames))
+        fcurve.update()
 
 
 def voiced_segments(rms: list[float], min_gap: int) -> list[tuple[int, int]]:
@@ -414,6 +507,12 @@ def refresh_motion(scene, lines_dir: Path) -> int:
                 begin = max(last.right_handle - 1 - d, last.left_handle)
                 _edge(last, ch, ch.exit_effect, begin, last.right_handle - 1, False, width)
                 count += 1
+    # 位置・大きさのキーフレーム（ストリップタブの欄に打ったもの）を、ここまでの動きに重ねる
+    curves = pose_curves(scene)
+    for s in images:
+        if s.name in curves:
+            _apply_pose_curves(scene, s, curves[s.name], width, height)
+            count += 1
     return count
 
 
@@ -478,6 +577,7 @@ def motion_signature(scene) -> str:
     active = any(s[1] or s[2] or s[4] != "NONE" or s[5] != "NONE" or _appears(*s[7:]) for s in settings)
     # 縦長用の配置を使うキャラがいれば、解像度を変えたとき（下の resolution）に置き直す
     active = active or any(c.use_portrait for c in chars)
+    curves = pose_curves(scene)
     items = []
     for s in sed.strips:
         if s.type == "SOUND" and s.get("tachie_id"):  # 立ち絵が跳ねる・揺れる区間
@@ -500,9 +600,13 @@ def motion_signature(scene) -> str:
         look = tuple(round(float(s.get(k, d)), 4) for k, d in (
             ("tachie_opacity", 1.0), ("tachie_rotation", 0.0), ("tachie_still_fade_in", 0.0),
             ("tachie_still_fade_out", 0.0), ("tachie_speech_only", 0.0)))
-        pose = (round(s.get("tachie_pos_x", 0.0), 4), round(s.get("tachie_pos_y", 0.0), 4),
-                round(s.get("tachie_scale", 1.0), 4), s.get("tachie_flip"), s.get("tachie_jump", ""), look)
-        active = active or pose != (0.0, 0.0, 1.0, None, "", (1.0, 0.0, 0.0, 0.0, 0.0))
+        keyed = curves.get(s.name)
+        if keyed:  # キーフレームを打った値は今のフレームで変わるので、キーで比べる
+            pose = (_pose_signature(keyed), s.get("tachie_flip"), s.get("tachie_jump", ""), look)
+        else:
+            pose = (round(s.get("tachie_pos_x", 0.0), 4), round(s.get("tachie_pos_y", 0.0), 4),
+                    round(s.get("tachie_scale", 1.0), 4), s.get("tachie_flip"), s.get("tachie_jump", ""), look)
+        active = active or bool(keyed) or pose != (0.0, 0.0, 1.0, None, "", (1.0, 0.0, 0.0, 0.0, 0.0))
         items.append((s.name, int(s.content_start), s.left_handle, s.right_handle, pose))
     from .ymmp_media import edges_signature
 
