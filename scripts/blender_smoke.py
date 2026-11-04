@@ -921,6 +921,42 @@ mimg["tachie_pos_x"] = pos0
 ops.apply_faces(bpy.context)
 ops.refresh_motion_now(scene)
 assert len(keyed(still("四国めたん"), "transform.offset_x")) < 10
+# 「横へ出る」「下へ出る」「戻ってくる」: 再生位置から動く長さの間に、画面の外へ動く・元の位置へ戻るキーを打つ
+from PIL import Image  # noqa: E402
+
+mimg = still("四国めたん")
+activate(mimg)
+L, R = mimg.left_handle, mimg.right_handle
+s.still_move_seconds = 0.2
+d = round(0.2 * scene.render.fps / scene.render.fps_base)
+assert R - L > 4 * d + 4, (L, R, d)
+w0 = Image.open(Path(bpy.path.abspath(mimg.directory)) / mimg.elements[0].filename).size[0]
+x_home = mimg["tachie_pos_x"]
+scene.frame_set(L + 1)
+run(bpy.ops.tachie.still_move, kind="OUT_SIDE")
+xs = dict(keyed(mimg, "transform.offset_x"))
+scale = mimg.transform.scale_x
+assert abs(xs[L + 1 + d]) - w0 * scale / 2 >= r.resolution_x / 2, (xs[L + 1 + d], w0)  # 画面の外
+assert abs(abs(xs[L + 1]) - abs(xs[L])) < 1  # 動き出すまではそのまま
+kp = motion_mod.pose_curves(scene)[mimg.name]["tachie_pos_x"].keyframe_points
+assert [round(k.co[0]) for k in kp] == [L + 1, L + 1 + d] and kp[0].easing == "EASE_IN"
+scene.frame_set(L + 2 * d + 2)
+run(bpy.ops.tachie.still_move, kind="BACK")
+assert abs(motion_mod.pose_value(scene, mimg, "tachie_pos_x", L + 3 * d + 2) - x_home) < 1e-6
+assert abs(dict(keyed(mimg, "transform.offset_x"))[L + 3 * d + 2] - xs[L]) < 1
+scene.frame_set(L + 3 * d + 2)
+assert bpy.ops.tachie.still_move(kind="BACK") == {"CANCELLED"}  # 戻ったあとは元の位置
+scene.frame_set(L + 3 * d + 3)
+run(bpy.ops.tachie.still_move, kind="OUT_DOWN")
+h0 = Image.open(Path(bpy.path.abspath(mimg.directory)) / mimg.elements[0].filename).size[1]
+ys = dict(keyed(mimg, "transform.offset_y"))
+assert ys[L + 4 * d + 3] - h0 / 2 + h0 * scale <= -r.resolution_y / 2, ys[L + 4 * d + 3]  # 上端が画面の下より下
+for key in ("tachie_pos_x", "tachie_pos_y"):
+    fc = motion_mod.pose_curves(scene)[mimg.name][key]
+    motion_mod._channelbag(scene).fcurves.remove(fc)
+    mimg[key] = 0.0 if key == "tachie_pos_y" else x_home
+del mimg["tachie_home"]
+ops.refresh_motion_now(scene)
 s.headline_text, s.headline_seconds = "第 1 章 Blender で動画", 2.0
 scene.frame_current = 1
 run(bpy.ops.tachie.add_headline)

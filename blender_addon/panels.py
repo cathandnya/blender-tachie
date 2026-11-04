@@ -208,6 +208,13 @@ class TACHIE_PT_strip(_StripPanel, bpy.types.Panel):
             if strip.get("tachie_jump"):
                 layout.label(text="跳ねながら登場退場（YMM4 の映像エフェクト）", icon="ANIM")
             draw_pose(layout, strip)
+            if "tachie_scale" in strip:  # 再生位置から画面の外へ動かす・戻す（横の位置・縦の位置にキーを打つ）
+                col = layout.column(align=True)
+                row = col.row(align=True)
+                for kind, label, icon in (("OUT_SIDE", "横へ出る", "FORWARD"), ("OUT_DOWN", "下へ出る", "SORT_ASC"),
+                                          ("BACK", "戻ってくる", "LOOP_BACK")):
+                    row.operator("tachie.still_move", text=label, icon=icon).kind = kind
+                col.prop(seq_scene(context).tachie, "still_move_seconds")
             layout.operator("tachie.remake_still", icon="FILE_REFRESH")
         else:
             layout.label(text=f"{strip.get('tachie_character', '?')}のセリフ", icon="SPEAKER")

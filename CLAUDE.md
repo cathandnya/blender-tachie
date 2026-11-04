@@ -269,6 +269,12 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   重ねて、立ち絵の区間の毎フレームに直線のキーで打ち直す。署名はキーの値（今のフレームの値は再生で変わるため）。
   Blender はストリップを消すと F カーブも消すので、`remake_still` が `save_pose_keys` / `restore_pose_keys` で写す
   （名前の変更・移動・分割には Blender がキーを付けてくる）。
+  ストリップタブの「横へ出る」「下へ出る」「戻ってくる」（`tachie.still_move`、`STILL_MOVES`）は再生位置から
+  シーンの `still_move_seconds` の間に `motion.key_pose_move` で横・縦の位置にキーを打つ（三次、出るは EASE_IN・戻るは EASE_OUT。
+  間のキーは消す）。行き先は画像の大きさ（`_still_image_size`、拡大の中心は足元）から画面の外にちょうど出る位置 + 2%。
+  出る前の位置は `tachie_home`（画面の中にいるときだけ覚える）で、「戻ってくる」の行き先。キーはユーザーのものなので
+  画面で I キーで打ったのと同じ扱い（Blender 5 はアドオンが登録したプロパティをカスタムプロパティと別に持つので、
+  位置・大きさはカスタムプロパティのまま。欄の右の「•」を押すとキーになる）。
   拡大・回転の中心 `transform.origin` は足元 (0.5, 0)。`refresh_faces` の最後と、自動反映（`auto_signature` に
   `motion.motion_signature` を含める）で作り直す。自動反映は動きだけが変わったときは `refresh_faces` を呼ばない（`auto_signature` は (表情, 動き) の組）。
   キャラの動きの設定は変えるとすぐ作り直す。TOML では `[キャラ.layout]` の bounce / sway / period / enter / exit / effect_seconds（既定値は書かない）。

@@ -114,6 +114,32 @@ def restore_pose_keys(scene, strip, saved: list) -> None:
         fcurve.update()
 
 
+def pose_value(scene, strip, key: str, frame: int) -> float:
+    """立ち絵の位置・大きさ `key` の `frame` での値（キーフレームがあればその値）。"""
+    fcurve = pose_curves(scene).get(strip.name, {}).get(key)
+    return fcurve.evaluate(frame) if fcurve else float(strip.get(key, POSE_KEYS[key]))
+
+
+def key_pose_move(scene, strip, key: str, frame0: int, value0: float, frame1: int, value1: float,
+                  easing: str) -> None:
+    """位置・大きさ `key` に frame0 → frame1 で value0 → value1 へ動くキーフレームを打つ（間にあったキーは消す。
+    三次の補間、`easing` = EASE_IN / EASE_OUT）。"""
+    fcurve = pose_curves(scene).get(strip.name, {}).get(key)
+    if fcurve is not None:
+        for p in reversed(list(fcurve.keyframe_points)):
+            if frame0 - 0.5 < p.co[0] < frame1 + 0.5:
+                fcurve.keyframe_points.remove(p)
+    path = f'["{key}"]'
+    for frame, value in ((frame0, value0), (frame1, value1)):
+        strip[key] = value
+        strip.keyframe_insert(path, frame=frame)
+    fcurve = pose_curves(scene)[strip.name][key]
+    for p in fcurve.keyframe_points:
+        if abs(p.co[0] - frame0) < 0.5:
+            p.interpolation, p.easing = "CUBIC", easing
+    fcurve.update()
+
+
 def _pose_signature(curves: dict) -> tuple:
     """位置・大きさのキーフレーム（打ち直したら動きを作り直す）。外挿・モディファイアも区間の値を変える。"""
     return tuple((key, f.extrapolation, tuple(m.type for m in f.modifiers),

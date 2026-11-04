@@ -724,6 +724,8 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
     show_still_parts: BoolProperty(name="パーツ", default=False, description="選択中の立ち絵・セリフ・表情ストリップのパーツ（そのアイテムだけ）を出す")
     script: PointerProperty(name="台本", type=bpy.types.Text,
                             description="テキストエディタの台本（1 行に「キャラ名: セリフ」、表情は「キャラ名(表情): セリフ」）")
+    still_move_seconds: FloatProperty(name="動く長さ", default=0.5, min=0.05, max=10.0, unit="TIME_ABSOLUTE",
+                                      description="立ち絵の「横へ出る」「下へ出る」「戻ってくる」で動く時間（秒）")
     line_gap: FloatProperty(name="セリフの間隔", default=0.2, min=0.0, max=10.0, unit="TIME_ABSOLUTE",
                             description="台本を読み込むときのセリフとセリフの間（秒）")
 

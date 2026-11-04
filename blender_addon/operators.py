@@ -1720,12 +1720,16 @@ def remake_still(context, strip, preset: str | None = None, problems: list | Non
     jump = jump_of(strip)
     look = still_settings(strip)
     keys = save_pose_keys(seq_scene(context), strip)  # 消して置き直すと Blender がキーフレームも消す
+    home = strip.get(HOME_KEY)  # 「戻ってくる」の行き先（消して置き直すと無くなる）
+    home = None if home is None else tuple(home)
     # 選択とアクティブも引き継ぐ（新しいストリップは選ばれた状態でできるので、選んでいなかった立ち絵が自動の反映で
     # 選ばれたり、選んでいた立ち絵がパネルから消えたりしないように）
     selected, active = strip.select, sed.active_strip == strip
     new = place_still(context, ch, preset or "", start, frames, pose, channel, problems,
                       None if flip is None else bool(flip), jump, look, parts, reuse=strip)
     restore_pose_keys(seq_scene(context), new, keys)
+    if home is not None:
+        new[HOME_KEY] = home
     new.select = selected
     if active:
         sed.active_strip = new
@@ -1966,6 +1970,102 @@ class TACHIE_OT_flip_still(bpy.types.Operator):
             strip["tachie_flip"] = flip
         refresh_motion_now(seq_scene(context))  # 位置を当て直し、動き（スライド・ジャンプの向き）も作り直す
         return {"FINISHED"}
+
+
+STILL_MOVES = [
+    ("OUT_SIDE", "横へ出る", "再生位置から、近い方の画面の端の外へ動く（だんだん速く）"),
+    ("OUT_DOWN", "下へ出る", "再生位置から、画面の下の外へ動く（だんだん速く）"),
+    ("BACK", "戻ってくる", "再生位置から、出ていく前の位置へ戻る（だんだん遅く）"),
+]
+HOME_KEY = "tachie_home"  # 出ていく前の位置（横・縦の位置）。「戻ってくる」の行き先
+
+
+def _still_image_size(strip) -> tuple[int, int]:
+    """立ち絵の画像の大きさ（px、拡大する前）。"""
+    from PIL import Image
+
+    path = Path(bpy.path.abspath(strip.directory)) / strip.elements[0].filename
+    with Image.open(path) as image:
+        return image.size
+
+
+class TACHIE_OT_still_move(bpy.types.Operator):
+    """選択中の立ち絵を、再生位置から画面の外へ動かす・戻す（横の位置・縦の位置にキーフレームを打つ）"""
+
+    bl_idname = "tachie.still_move"
+    bl_label = "立ち絵を動かす"
+    bl_options = {"REGISTER", "UNDO"}
+
+    kind: bpy.props.EnumProperty(name="動き", items=STILL_MOVES)
+
+    @classmethod
+    def description(cls, context, properties):
+        return next(desc for key, _, desc in STILL_MOVES if key == properties.kind)
+
+    @classmethod
+    def poll(cls, context):
+        return bool((strip := active_selected(context)) and strip.get("tachie_still") and "tachie_scale" in strip)
+
+    def execute(self, context):
+        from .motion import key_pose_move, pose_value
+
+        scene = seq_scene(context)
+        strip = scene.sequence_editor.active_strip
+        try:
+            ch = find_character(scene.tachie, strip["tachie_still"])
+            w0, h0 = _still_image_size(strip)
+        except (ValueError, OSError) as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        last = strip.right_handle - 1
+        frame0 = min(max(scene.frame_current, strip.left_handle), last)
+        frame1 = min(frame0 + max(1, round(scene.tachie.still_move_seconds * scene_fps(scene))), last)
+        if frame1 <= frame0:
+            self.report({"ERROR"}, "立ち絵の終わりに近すぎて動かせません（再生位置を前にしてください）")
+            return {"CANCELLED"}
+        width, height = scene.render.resolution_x, scene.render.resolution_y
+        x0 = pose_value(scene, strip, "tachie_pos_x", frame0)
+        y0 = pose_value(scene, strip, "tachie_pos_y", frame0)
+        scale = pose_value(scene, strip, "tachie_scale", frame0)
+        margin = 0.02  # 揺れ・跳ねで端が見えないように、少し余分に出す（画面に対する割合）
+        moves = []  # (キー, 今の値, 行き先)
+        if self.kind == "BACK":
+            home = strip.get(HOME_KEY)
+            if home is None:  # 「横へ出る」「下へ出る」を使っていない（行き先が分からない）
+                self.report({"INFO"}, "「横へ出る」「下へ出る」の前の位置がありません")
+                return {"CANCELLED"}
+            moves = [(k, v, float(h)) for k, v, h in (("tachie_pos_x", x0, home[0]), ("tachie_pos_y", y0, home[1]))
+                     if abs(v - float(h)) > 1e-6]
+            if not moves:
+                self.report({"INFO"}, "元の位置にいます")
+                return {"CANCELLED"}
+            easing = "EASE_OUT"
+        else:
+            if HOME_KEY not in strip or not self._out(strip, ch, x0, y0, scale, w0, h0, width, height):
+                strip[HOME_KEY] = (x0, y0)  # 画面の中にいるときだけ覚える（出たあとにもう一度押しても行き先は変えない）
+            if self.kind == "OUT_SIDE":
+                flip = -1 if strip.use_flip_x else 1
+                center = flip * (lay(ch, "position_x") + x0) * width  # offset_x（px。反転したものは見た目と逆向き）
+                side = 1 if center >= 0 else -1
+                target = side * (width / 2 + w0 * scale / 2 + margin * width)
+                moves = [("tachie_pos_x", x0, x0 + flip * (target - center) / width)]
+            else:
+                # 拡大の中心は足元なので、上端は 中心 - 高さ/2 + 高さ × 大きさ。それが画面の下より下になるまで
+                target = -height / 2 + h0 / 2 - h0 * scale - margin * height
+                moves = [("tachie_pos_y", y0, target / height - lay(ch, "position_y"))]
+            easing = "EASE_IN"
+        for key, value0, value1 in moves:
+            key_pose_move(scene, strip, key, frame0, value0, frame1, value1, easing)
+        refresh_motion_now(scene)
+        return {"FINISHED"}
+
+    @staticmethod
+    def _out(strip, ch, x, y, scale, w0, h0, width, height) -> bool:
+        """横の位置 x・縦の位置 y で、立ち絵が画面の外にいるか。"""
+        flip = -1 if strip.use_flip_x else 1
+        center = abs(flip * (lay(ch, "position_x") + x) * width)
+        bottom = (lay(ch, "position_y") + y) * height - h0 / 2
+        return center - w0 * scale / 2 >= width / 2 or bottom + h0 * scale <= -height / 2
 
 
 class TACHIE_OT_regenerate(bpy.types.Operator):
@@ -4863,6 +4963,7 @@ _classes = (
     TACHIE_OT_accent_join,
     TACHIE_OT_accent_split,
     TACHIE_OT_flip_still,
+    TACHIE_OT_still_move,
     TACHIE_OT_clear_item_parts,
     TACHIE_OT_edit_kana,
     TACHIE_OT_edit_line_text,
