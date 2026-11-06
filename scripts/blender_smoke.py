@@ -1654,7 +1654,7 @@ assert frames_of("location") == [hd_at, hd_at + n_slide, hd_at + 99 - n_slide, h
 assert frames_of("blend_alpha")[-1] == hd_at + 99
 sed.strips.remove(header)
 templates.remove(list(templates).index(hd_tpl))
-# 場面転換: 前の場面（再生位置で終わる画像・動画）のお尻を伸ばし、前の場面自身を動かす（再生したまま。blender-tools と同じ）
+# 場面転換: 前の場面（再生位置で終わる画像・動画）のお尻を伸ばし、前の場面自身を動かす（再生したまま）
 keys_of = lambda strip, attr: [tuple(k.co) for k in ymmp_media._keyframes(scene, strip, attr)]
 pngs = []
 for i, color in enumerate(((1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0))):
@@ -1681,7 +1681,7 @@ w_res = scene.render.resolution_x
 assert keys_of(scene_a.transform, "offset_x") == [(tr_at, 0.0), (tr_at + 19, -w_res)]  # 左へ押し出す
 assert keys_of(scene_b.transform, "offset_x") == [(tr_at, w_res), (tr_at + 19, 0.0)]  # 新しい場面は右から
 assert not [x for x in sed.strips if x.type == "IMAGE" and x.name.startswith("場面転換")]  # 残像は作らない
-# 範囲に何も映らない目印を置き（blender-tools と同じ）、付ける前の状態を記録する
+# 範囲に何も映らない目印を置き、付ける前の状態を記録する
 from bl_ext.user_default.blender_tachie import transitions as tr_mod, templates as tpl_mod  # noqa: E402
 
 marks = lambda: [x for x in sed.strips if x.get(tr_mod.MARK)]
@@ -1693,7 +1693,7 @@ assert bpy.ops.tachie.insert_template(index=list(templates).index(tr_tpl)) == {"
 tr_data, _behind, _skipped = tpl_mod.template_from_strips(bpy.context, [tr_marker])
 assert tr_data["items"] == [{"type": "push", "easing": "Expo", "mode": "InOut", "angle": 0.0, "kind": "transition",
                              "frame": 0, "length": 20, "layer": tr_marker.channel}], tr_data["items"]
-# 記録は blender-tools の押し出しと同じ形（付け直す・外すは blender-tools が行う）
+# 記録の形
 token = tr_marker[tr_mod.MARK]["token"]
 tr_state = scene[tr_mod.REGISTRY][token].to_dict()
 assert {k: tr_state[k] for k in ("kind", "a", "b", "left", "right", "a_right", "b_left", "b_channel", "attr",
@@ -1712,7 +1712,7 @@ scene.frame_current = mv_at
 run(bpy.ops.tachie.insert_template, index=list(templates).index(tr_tpl))
 assert movie_a.right_handle == mv_at + 200
 assert keys_of(movie_a, "blend_alpha") == [(mv_at, 1.0), (mv_at + 199, 0.0)]
-# 速度の補正をかけた動画は動かせないので付けない（blender-tools と同じ）
+# 速度の補正をかけた動画は動かせないので付けない
 sp_at = mv_at + 400
 movie_s = sed.strips.new_movie("場面D", str(out / "clip.mp4"), 2, sp_at - 40, fit_method="FIT")
 movie_s.right_handle = sp_at

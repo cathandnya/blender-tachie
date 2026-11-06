@@ -2,7 +2,6 @@
 
 Blender 用の立ち絵アドオン。VOICEVOX の音声に合わせて口パク・まばたきする立ち絵と字幕を
 Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込める。名前やコードに YMM の名前は使わない（互換性の説明は可）。
-計画と段階は `PLAN.md` を参照。
 
 ## 構成
 - `src/tachie_studio/tachie/` — 動く立ち絵素材の読み込み（`loader.py`）と合成（`compose.py`）。Blender 非依存、Pillow のみ。
@@ -88,23 +87,21 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   （正なら幅、負なら高さを縮める。YMM4 の書き出しでは未確認）。行間は LineHeight2 % / 100 → `space_line`（1.0 で文字の約 1.16 倍）、
   キャラの字幕は `line_spacing`（TOML の subtitle の line_spacing）。
   場面転換（トランジションアイテム、フェード・プッシュ）: YMM4 は新しい場面の始まりから置き、前の場面の最後のコマで止めて
-  切り替えるが、アドオンは前の場面も再生したまま切り替える（blender-tools の押し出しと同じやり方。ユーザーの指定）。
+  切り替えるが、アドオンは前の場面も再生したまま切り替える（ユーザーの指定）。
   `ymmp._transitions` が場面転換の印の Media（`transition` に前の場面 `before`・新しい場面 `after` の Media。区間の始まりで
   終わる・始まる、下のレイヤーの一番上の画像・動画）を作り、`MediaPlacer.place` はそれを置かずに、置いた前の場面のストリップで
   `ymmp_media.transition_scenes`: 前の場面のお尻を区間の終わりまで伸ばし（素材が足りなければ最後のコマで止まる絵になると知らせる。
   同じチャンネルなら新しい場面を上の空いたチャンネルへ。伸ばす先が埋まっていれば断る）、プッシュは前の場面と新しい場面の
   offset に（角度 0 で左へ、画面 1 つ分。前の場面が区間で動いていれば断り、新しい場面が動いていれば前の場面だけ）、フェードは
-  上にある方の blend_alpha にキーを打つ。速度の補正などの効果をかけた動画（効果の元・効果のストリップ）は断る（blender-tools と
-  同じ）。ただしアドオンが付けた fps 合わせの補正（`MediaPlacer._movie` の SPEED、印 `FPS_SPEED`。フレーム番号の直線の 2 つの
+  上にある方の blend_alpha にキーを打つ。速度の補正などの効果をかけた動画（効果の元・効果のストリップ）は断る。
+  ただしアドオンが付けた fps 合わせの補正（`MediaPlacer._movie` の SPEED、印 `FPS_SPEED`。フレーム番号の直線の 2 つの
   キー、元はリタイミングしていない動画、`_fps_speed`）は扱い、`_extend` が元の動画を伸ばして終わりのキーを同じ傾きで延ばす
   （素材の終わりを超えたら最後のコマで止まる）。動かすのは画像・動画だけで、YMM4 のように画面全体（黒い余白・下のテキストなど）ではない。
-  目印と記録（`blender_addon/transitions.py`）は blender-tools の押し出しと同じ形（目印 `vtools_push` = {token}、
-  シーンの `vtools_pushes`[token]）で書き、外す・付け直す・目印を消したときに外すのは blender-tools が行う（このアドオンには
-  置かない。ユーザーの指定）。`transition_scenes` は書き換える前に `transitions.Record` に元の状態を覚え、範囲に不透明度 0 の
-  COLOR ストリップを置く。tools の押し出しに無い場合の欄（kind = fade・target・full、斜めの axes、b_keys = False、
-  前の場面を範囲の終わりで戻す a_return、fps 合わせの補正の speed_a、b_channels）は blender-tools と決めたもの（欄の一覧は
-  transitions.py の冒頭）。同じ場面に重なる場面転換（tools の押し出しも）は断る（`overlapping`）。テンプレートの登録
-  （`template_from_strips`）は目印を場面転換のアイテムにする（記録の `tr`。tools で付けた押し出しは持たないので飛ばす）。
+  目印と記録（`blender_addon/transitions.py`）は別のアドオンの押し出しと共通の形（目印 `vtools_push` = {token}、
+  シーンの `vtools_pushes`[token]）なので変えない。外す・付け直す・目印を消したときに外す機能はこのアドオンには置かない
+  （ユーザーの指定）。`transition_scenes` は書き換える前に `transitions.Record` に元の状態を覚え、範囲に不透明度 0 の
+  COLOR ストリップを置く（記録の欄の一覧は transitions.py の冒頭）。同じ場面に重なる場面転換は断る（`overlapping`）。テンプレートの登録
+  （`template_from_strips`）は目印を場面転換のアイテムにする（記録の `tr`。持たないものは飛ばす）。
   ボイスごとの字幕（JimakuVisibility が Custom）は位置（X / Y、字幕の下端）を字幕のずらす量 `tachie_sub_x` / `tachie_sub_y` に写す
   （キャラの字幕の位置との差、画面に対する割合）。文字の大きさ（FontSize × Zoom）はキャラと違えばセリフごとの
   `tachie_sub_size`。ほかの文字の設定（`CUSTOM_SUBTITLE_KEYS`）がキャラと違えば報告するだけ。
@@ -316,8 +313,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   途中で終わるときだけ終わりまで伸ばす）。前の場面（境目で終わる・またいで続く）と新しい場面（境目から始まる）を 1 本ずつ
   選んであればそれを使う（`_selected_scenes`。両方そろったときだけ: Blender は選択を覚えたままなので）。前の場面が新しい場面の
   上で続くときはプッシュのあと戻さない（`covers`、a_return なし）。
-  AI で表情を割り当てる（#27、`blender_addon/faceassign.py`、LLM 側は `tachie_studio/faceassign.py`。cathandnya/ymm4faceassign を
-  移したもの）: 選んだセリフ（プリセットのあるキャラのセリフ）をキャラごとに、シーンのセリフ全部を台本にして
+  AI で表情を割り当てる（#27、`blender_addon/faceassign.py`、LLM 側は `tachie_studio/faceassign.py`）: 選んだセリフ（プリセットのあるキャラのセリフ）をキャラごとに、シーンのセリフ全部を台本にして
   OpenAI 互換のチャット API に送り、候補（「基本の表情」+ プリセット名）の番号を JSON スキーマの enum で返させる（-1 は変えない）。
   文脈は束の手前 `llm_context_lines` 行と対象の間の直前 1 行。取りこぼしは一度だけ聞き直す。json_schema を断るサーバには
   候補の名前の文字列の enum（`build_schema(names=True)`。apfel = Apple の端末内モデルは文字列の enum しか縛れない。
@@ -422,7 +418,7 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
 - `uv run python -m tachie_studio.pipeline examples/script.txt -c examples/characters.toml -o out/demo --scale 0.5 --idle 5`
 - `uv run python scripts/build_addon.py [--install]` — 拡張機能のビルド（とインストール）
 - `scripts/smoke.sh` — Blender での結合テスト（VOICEVOX と char/ が必要、20 秒ほど）
-- CI（`.github/workflows/ci.yml`、GitHub ホストの ubuntu-latest のみ。セルフホストランナーは使わない。リポジトリは非公開なので Actions の無料枠の分数を使う）:
+- CI（`.github/workflows/ci.yml`、GitHub ホストの ubuntu-latest のみ。セルフホストランナーは使わない）:
   - test: `uv sync --locked` → `uv run pytest`（PR・リリースのタグ・手動。main への push では回さない＝PR で回す運用）。素材と VOICEVOX が無いので、それを使うテストは skip。
     結合テスト（smoke.sh）は CI では回さない（手元で回す）
   - build / release: `v*` のタグを push したときだけ。Linux 版 Blender（`BLENDER_VERSION`、actions/cache）で `build_addon.py` →

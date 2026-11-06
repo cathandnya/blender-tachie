@@ -1,9 +1,8 @@
-"""場面転換の目印と記録（blender-tools の押し出しと同じ形）。
+"""場面転換の目印と記録（別のアドオンの押し出しと共通の形）。
 
 場面転換（`ymmp_media.transition_scenes`）を付けたら、その範囲に何も映らない（不透明度 0 の）カラーストリップ（目印、
-`MARK` = {"token": 記録の番号}）を置き、付ける前の状態をシーンの `REGISTRY`[token] に持つ。どちらも blender-tools の
-押し出しと同じ名前・同じ形なので、「付け直す」「外す」・目印を消したときに外すのは blender-tools が行う（このアドオンには
-置かない）。記録の欄（blender-tools と決めたもの）:
+`MARK` = {"token": 記録の番号}）を置き、付ける前の状態をシーンの `REGISTRY`[token] に持つ。どちらも別のアドオンの
+押し出しと共通の名前・形なので変えない。「付け直す」「外す」・目印を消したときに外す機能はこのアドオンには置かない。記録の欄:
 
 - a / b: 前の場面・新しい場面のストリップの名前（新しい場面が無ければ ""）。left / right: 範囲 [left, right)。marker: 目印の名前
 - a_right: 前の場面の伸ばす前のお尻。b_left: 新しい場面の頭。b_channel: 新しい場面の移す前のチャンネル
@@ -25,8 +24,8 @@ from __future__ import annotations
 
 import uuid
 
-MARK = "vtools_push"  # 目印のストリップに持つ {"token": 記録の番号}（blender-tools と同じ）
-REGISTRY = "vtools_pushes"  # シーンに持つ記録 {番号: 付ける前の状態}（blender-tools と同じ）
+MARK = "vtools_push"  # 目印のストリップに持つ {"token": 記録の番号}
+REGISTRY = "vtools_pushes"  # シーンに持つ記録 {番号: 付ける前の状態}
 TR_KEYS = ("type", "easing", "mode", "angle")  # 記録する場面転換の設定（テンプレートに登録するとき使う）
 
 
@@ -110,7 +109,7 @@ def _free_channel(scene, start: int, end: int, used: list[int]) -> int:
 
 
 def overlapping(scene, names: set[str], start: int, end: int) -> bool:
-    """`names` の場面に、[start, end) と重なる場面転換（blender-tools で付けた押し出しも）がもうあるか。"""
+    """`names` の場面に、[start, end) と重なる場面転換がもうあるか。"""
     return any({state.get("a"), state.get("b")} & names
                and state.get("left", 0) < end and start < state.get("right", 0)
                for state in (scene.get(REGISTRY) or {}).values())

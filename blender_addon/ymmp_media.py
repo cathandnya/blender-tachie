@@ -252,21 +252,20 @@ def transition_label(kind: str) -> str:
 
 def transition_scenes(scene, before, after, tr: dict, start: int, end: int, problems: list[str]) -> bool:
     """場面転換（`tr`: type = fade / push、easing・mode・angle）を [start, end) に付ける。前の場面 `before` のお尻を `end` まで
-    伸ばし、その区間を前の場面自身で動かす（残像を作らず、前の場面も再生したまま。blender-tools の押し出しと同じやり方で、
+    伸ばし、その区間を前の場面自身で動かす（残像を作らず、前の場面も再生したまま。
     時間の位置は YMM4 と同じく境目から後ろ）。プッシュは前の場面を押し出して新しい場面 `after` を反対側から入れ
     （角度 0 で左へ、画面 1 つ分）、フェードは上にある方の不透明度を変える。速度の補正などの効果をかけた動画は動かせないので
-    断る（blender-tools と同じ）。伸ばした先に素材が無ければ最後のコマで止まった絵になる（知らせる）。
-    範囲に目印のストリップを置き、付ける前の状態を記録する（`transitions`。blender-tools の押し出しと同じ形で、
-    付け直す・外すのは blender-tools）。
+    断る。伸ばした先に素材が無ければ最後のコマで止まった絵になる（知らせる）。
+    範囲に目印のストリップを置き、付ける前の状態を記録する（`transitions`）。
     付けられなければ理由を `problems` に足して False。"""
     from . import transitions
 
     sed = scene.sequence_editor
     label = transition_label(tr["type"])
     if transitions.overlapping(scene, {before.name} | ({after.name} if after is not None else set()), start, end):
-        problems.append(f"{label}: 「{before.name}」にはもう場面転換が付いているので付けませんでした（先に外してください）")
+        problems.append(f"{label}: 「{before.name}」にはもう場面転換が付いているので付けませんでした")
         return False
-    # 速度の補正などの効果をかけた動画は断る（blender-tools と同じ）。アドオンが付けた fps 合わせの補正だけは扱う
+    # 速度の補正などの効果をかけた動画は断る。アドオンが付けた fps 合わせの補正だけは扱う
     inputs = {e.input_1 for e in sed.strips_all if getattr(e, "input_1", None) is not None}
     for s in (before, after):
         if s is not None and (s in inputs or (getattr(s, "input_1", None) is not None and not _fps_speed(scene, s))):

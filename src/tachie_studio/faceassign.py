@@ -1,9 +1,9 @@
-"""セリフから LLM で表情プリセットを選ぶ（#27。cathandnya/ymm4faceassign を Python に移したもの）。
+"""セリフから LLM で表情プリセットを選ぶ（#27）。
 
 OpenAI 互換のチャット API（LM Studio / Ollama / Gemini など）に台本を送り、各セリフにキャラの表情の候補の番号を
 返させる。Blender 同梱 Python で動くよう urllib だけで書く。
 
-ymm4faceassign の実測（docs/measurements.md）で決めたこと:
+実測で決めたこと:
 - 出力は候補の番号（名前を書かせると遅い）。JSON スキーマの enum で実在する番号だけに縛る。-1 は「どれも合わない」
 - 台本はキャラごとに束ね、他のキャラのセリフは ID 無しの文脈として混ぜる。文脈は束の手前 `context_lines` 行と、
   対象の間の直前 1 行だけ（全部送ると 1 行の推定に数十秒かかる）
@@ -201,7 +201,7 @@ def build_schema(candidates: list[str], include_reason: bool, names: bool = Fals
     """{"a": [{"i": ID, "p": 候補の番号}]}。番号は enum で実在する候補（と -1）に縛る。`names` なら p は候補の名前
     （と KEEP_NAME）の文字列の enum。
 
-    ymm4faceassign では配列の長さを minItems/maxItems で決めると、返る件数がかえって減った。
+    配列の長さを minItems/maxItems で決めると、返る件数がかえって減った。
     """
     choice = ({"type": "string", "enum": name_choices(candidates)} if names
               else {"type": "integer", "enum": [KEEP, *range(len(candidates))]})
