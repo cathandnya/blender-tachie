@@ -1,5 +1,7 @@
 # blender-tachie
 
+[![YouTube](youtube.png)](https://youtu.be/nQx4LmDHZqQ)
+
 Blender 用の立ち絵アドオンです。VOICEVOX の音声に合わせて口パク・まばたきする立ち絵と字幕を、
 Video Sequencer に並べます。YMM4 の「動く立ち絵」「シンプル立ち絵」「PSD 立ち絵」の素材と、表情プリセットも読み込めます。
 
