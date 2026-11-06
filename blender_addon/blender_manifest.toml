@@ -10,6 +10,7 @@ type = "add-on"
 # 動作を確認した 5.2 から（同梱の Pillow は cp313 用で、5.0 以前の Python 3.11 では入らない）
 blender_version_min = "5.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2026 CatHand.org"]
 # scripts/build_addon.py がビルド時に対応 OS を書き、OS ごとの zip に分ける
 platforms = ["macos-arm64", "macos-x64", "windows-x64", "windows-arm64", "linux-x64"]
 

@@ -327,3 +327,13 @@ scripts/smoke.sh   # Blender での結合テスト（VOICEVOX エンジンと ch
 ```
 
 エンジンが別のマシンなら `VOICEVOX_URL=http://<host>:50021 scripts/smoke.sh`。音声デバイスの無い環境では試聴が警告になるだけで通ります。
+
+## ライセンス
+
+GPL-3.0-or-later（[LICENSE](LICENSE)）。Copyright 2026 CatHand.org
+
+配布する zip には次のライブラリを同梱しています。それぞれのライセンス文は zip の中の wheel に入っています。
+
+- [Pillow](https://github.com/python-pillow/Pillow)（MIT-CMU）
+- [Brotli](https://github.com/google/brotli)（MIT）
+- [BudouX](https://github.com/google/budoux)（Apache-2.0）

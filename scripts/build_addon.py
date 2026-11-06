@@ -95,6 +95,7 @@ def assemble(wheels: list[Path]) -> None:
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
     shutil.copytree(ROOT / "blender_addon", BUILD, ignore=shutil.ignore_patterns("tachie_studio", "__pycache__", ".DS_Store"))
     shutil.copytree(ROOT / "src" / "tachie_studio", BUILD / "tachie_studio", ignore=ignore)
+    shutil.copy2(ROOT / "LICENSE", BUILD / "LICENSE")
     (BUILD / "wheels").mkdir()
     for w in wheels:
         shutil.copy2(w, BUILD / "wheels" / w.name)
