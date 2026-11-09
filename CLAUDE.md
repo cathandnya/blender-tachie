@@ -13,9 +13,9 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   「」の中で改行可）と CSV / TSV（`load_script` が拡張子で選ぶ。3 列目以降は無視、UTF-8 で読めなければ cp932）。
   キャラ名の欄の `(表情)` とセリフ末尾の `{発音}` はどの形でも使える。アドオンのテキストは名前の拡張子で形を選ぶ。
 - `examples/` — キャラ設定と台本の例（`char/` の素材を参照）。
-- タイムラインの fps・解像度は置く前に Blender の出力タブで決める（README）。置いたあとに変えるとずれる（Blender は fps を
-  変えると音声だけ長さと頭の切り取りを秒のまま数え直し、他のストリップ・キーフレームはフレーム数のまま。解像度を変えても
-  px の値はそのまま）。置いたものを変換する機能は作らない（作ったが戻した: リタイミングした動画のキーは API で動かすと
+- タイムラインの fps は置く前に Blender の出力タブで決める（README）。置いたあとに変えるとずれる（Blender は fps を
+  変えると音声だけ長さと頭の切り取りを秒のまま数え直し、他のストリップ・キーフレームはフレーム数のまま）。解像度は置いたあとに
+  変えてよい（自動の反映が立ち絵・字幕を置き直す。縦長用の配置 #41。.ymmp・テンプレートの画像などの px はそのまま）。置いたものを変換する機能は作らない（作ったが戻した: リタイミングした動画のキーは API で動かすと
   Blender が落ち、分割したストリップのキーの位置は別のストリップを基準にした値を返す）。動画・字幕ファイルの書き出しも
   アドオンには置かない（Blender の出力タブとレンダー。手順は README の「動画を書き出す」）。出力タブのいちばん上
   （`panels.TACHIE_PT_render_video`、HIDE_HEADER）の「動画を書き出す」（`tachie.render_video`、ウィンドウのシーン）が
@@ -23,11 +23,11 @@ Video Sequencer に並べる。YMM4 の「動く立ち絵」素材も読み込�
   書き出し先が既定（`DEFAULT_OUTPUTS`）なら .blend のフォルダの render/。解像度・fps・% は変えない。Blender 5 は
   `image_settings.media_type = "VIDEO"` にしてから `file_format = "FFMPEG"`）のあと `render.render(animation=True)`
   （`start=False` で設定だけ。smoke 用）。
-  `blender_addon/timeline.py`: 置いたときの fps・解像度をシーンの `timeline_fps` / `timeline_width` / `timeline_height` に覚え
+  `blender_addon/timeline.py`: 置いたときの fps をシーンの `timeline_fps` に覚え
   （`remember`: 何も置いていないとき・`place_strips` / `place_still` / `MediaPlacer` の頭・YMM4 の読み込みで合わせたとき（force）・
   `load_post`。前の版の .blend はセリフの動きの json の fps）、出力タブで変えられたら（`changed_from`）サイドバーの上
   （`panels.draw_timeline`。何も置いていなければ今の fps・解像度の案内）に知らせて「元に戻す」（`tachie.timeline_revert`、
-  音声は Blender が秒から数え直すので元に戻る）を出す。
+  音声は Blender が秒から数え直すので元に戻る）を出す。解像度の変更は知らせない（前は知らせていて、縦長にすると警告が出た）。
 - `src/tachie_studio/srt.py` — 字幕ファイル（SRT / WebVTT）。CLI の `--srt`（セリフを順に `--gap` 秒あけて並べた時刻）だけが使う。
 - `src/tachie_studio/ymmp.py` — YMM4 のプロジェクト（.ymmp、UTF-8 BOM の JSON）を読む（#15）。`Timelines`（古い版は `Timeline`）、
   アニメーションできる値は最初の値（`value`）。パーツは画像の Windows パスのファイル名。VoiceParameter → audio_query は

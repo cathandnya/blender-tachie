@@ -2026,7 +2026,7 @@ for st in [st for st in sed.strips if st.get("tachie_id") == half_id]:
     sed.strips.remove(st)
 assert len(lines()) == 5
 scene.frame_current, scene.frame_end = frames_before
-# fps・解像度は置く前に決める。出力タブで変えたら知らせて元に戻せる（置いてあるものは変換しない）
+# fps は置く前に決める。出力タブで変えたら知らせて元に戻せる（置いてあるものは変換しない）
 from bl_ext.user_default.blender_tachie import timeline as timeline_mod  # noqa: E402
 
 r = scene.render
@@ -2048,13 +2048,13 @@ assert r.ffmpeg.audio_codec == "AAC" and r.ffmpeg.codec == "AV1"  # 音声なし
 r.image_settings.media_type = "IMAGE"
 sound_lengths = {cid: sound(cid).duration for cid in lines()}
 r.fps = 24
-assert timeline_mod.changed_from(scene) == (30, 1920, 1080)
+assert timeline_mod.changed_from(scene) == 30
 run(bpy.ops.tachie.timeline_revert)
 assert r.fps == 30 and timeline_mod.changed_from(scene) is None
 assert {cid: sound(cid).duration for cid in lines()} == sound_lengths  # 音声は Blender が秒から数え直して元の長さ
-r.resolution_x, r.resolution_y = 3840, 2160
-assert timeline_mod.changed_from(scene) is not None
-run(bpy.ops.tachie.timeline_revert)
+r.resolution_x, r.resolution_y = 1080, 1920  # 解像度は知らせない（縦長に切り替えて作る。立ち絵・字幕は置き直す）
+assert timeline_mod.changed_from(scene) is None
+r.resolution_x, r.resolution_y = fps_before[1:]
 assert (r.fps, r.resolution_x, r.resolution_y) == fps_before
 # 声のエンジン（VOICEVOX 互換）: キャラごとに URL を指定する（ここでは同じエンジンを別の URL 表記で）
 # （VOICEVOX_URL で別のマシンを指定したときは、末尾に / を付けた表記にする）

@@ -735,10 +735,8 @@ class TachieSceneSettings(bpy.types.PropertyGroup):
                                           "下の番号は動画・背景・効果音・BGM を置く場所")
     applied_layout: StringProperty(default="")  # 前に当てたレーン（JSON）
     layout_version: IntProperty(default=0)  # 0 は古い .blend（レーンに並べ直す前）
-    # 置いたときのタイムラインの fps・解像度（0 は覚えていない）。出力タブで変えられたら知らせる（timeline.changed_from）
+    # 置いたときのタイムラインの fps（0 は覚えていない）。出力タブで変えられたら知らせる（timeline.changed_from）
     timeline_fps: FloatProperty(default=0.0)
-    timeline_width: IntProperty(default=0)
-    timeline_height: IntProperty(default=0)
     # 以下の *_channel は古い .blend の設定で、使わない（見出しの headline_channel だけレーンから自動で書く）
     audio_channel: IntProperty(name="音声", default=2, min=1, max=128)
     name_channel: IntProperty(name="キャラ名", default=11, min=1, max=128,

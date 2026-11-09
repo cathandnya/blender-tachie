@@ -806,7 +806,7 @@ def place_strips(context, ch, clip, lines_dir: Path, text: str, start: int, voic
     `parts` はセリフの表情のパーツ（None なら合成したときのプリセット `clip.extra["expression"]` のパーツを写す）。
     """
     scene = seq_scene(context)
-    timeline.remember(scene)  # 最初に置いたときの fps・解像度（出力タブで変えられたら知らせる）
+    timeline.remember(scene)  # 最初に置いたときの fps（出力タブで変えられたら知らせる）
     settings = scene.tachie
     label = clip.extra.get("expression", "")
     if parts is None:
@@ -4609,9 +4609,8 @@ class TACHIE_OT_render_video(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def set_timeline(scene, fps: float, width: int, height: int) -> None:
+def set_timeline(scene, fps: float) -> None:
     r = scene.render
-    r.resolution_x, r.resolution_y = width, height
     if abs(fps - round(fps)) < 1e-6:
         r.fps, r.fps_base = round(fps), 1.0
     else:  # 29.97 など（NTSC）
@@ -4620,10 +4619,10 @@ def set_timeline(scene, fps: float, width: int, height: int) -> None:
 
 
 class TACHIE_OT_timeline_revert(bpy.types.Operator):
-    """fps・解像度を、置いたときの値に戻す（置いてあるものは変えない）"""
+    """fps を、置いたときの値に戻す（置いてあるものは変えない）"""
 
     bl_idname = "tachie.timeline_revert"
-    bl_label = "置いたときの fps・解像度に戻す"
+    bl_label = "置いたときの fps に戻す"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -4631,7 +4630,7 @@ class TACHIE_OT_timeline_revert(bpy.types.Operator):
         return timeline.changed_from(seq_scene(context)) is not None
 
     def execute(self, context):
-        set_timeline(seq_scene(context), *timeline.changed_from(seq_scene(context)))
+        set_timeline(seq_scene(context), timeline.changed_from(seq_scene(context)))
         refresh_faces(context)
         return {"FINISHED"}
 

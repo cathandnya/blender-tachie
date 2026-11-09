@@ -75,21 +75,21 @@ class TACHIE_MT_characters(bpy.types.Menu):
 
 
 def draw_timeline(layout, scene) -> None:
-    """何も置いていなければ fps・解像度を最初に決めるよう案内し、置いたときから出力タブで変えられていれば知らせて
+    """何も置いていなければ fps を最初に決めるよう案内し、置いたときから出力タブで変えられていれば知らせて
     元に戻すボタンを出す（置いてあるものは変換しない。`timeline`）。"""
     from . import timeline
 
-    fps, w, h = timeline.current(scene)
+    fps = timeline.current(scene)
     old = timeline.changed_from(scene)
     if timeline.baseline(scene) is None:
-        layout.label(text=f"{w}×{h} / {fps:g}fps（fps・解像度は置く前に出力タブで決める）", icon="INFO")
+        r = scene.render
+        layout.label(text=f"{r.resolution_x}×{r.resolution_y} / {fps:g}fps（fps は置く前に出力タブで決める）", icon="INFO")
     if old is None:
         return
     box = layout.box()
     box.alert = True
-    box.label(text=f"fps・解像度が変わっています: {old[1]}×{old[2]} / {old[0]:g}fps → {w}×{h} / {fps:g}fps",
-              icon="ERROR")
-    box.label(text="置いた音声と立ち絵・字幕の時間や大きさが合わなくなるので、元に戻してください")
+    box.label(text=f"fps が変わっています: {old:g}fps → {fps:g}fps", icon="ERROR")
+    box.label(text="置いた音声と立ち絵・字幕の時間が合わなくなるので、元に戻してください")
     box.operator("tachie.timeline_revert", text="元に戻す")
 
 
